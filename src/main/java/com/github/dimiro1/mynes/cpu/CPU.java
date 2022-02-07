@@ -1,6 +1,6 @@
 package com.github.dimiro1.mynes.cpu;
 
-import com.github.dimiro1.mynes.memory.AddressSpace;
+import com.github.dimiro1.mynes.memory.Memory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,7 +22,7 @@ public class CPU {
     private int cycles;
 
     private final List<EventListener> listeners;
-    private final AddressSpace memory;
+    private final Memory memory;
     private Interrupt pendingInterrupt = Interrupt.NIL;
 
     private final int[] cyclesPerOpcode = {
@@ -105,9 +105,9 @@ public class CPU {
             /* F */ this::beq, this::sbc, this::kil, this::isc, this::nop, this::sbc, this::inc, this::isc, this::sed, this::sbc, this::nop, this::isc, this::nop, this::sbc, this::inc, this::isc
     );
 
-    public CPU(final AddressSpace addressSpace) {
+    public CPU(final Memory memory) {
         listeners = new ArrayList<>();
-        this.memory = addressSpace;
+        this.memory = memory;
         this.init();
     }
 

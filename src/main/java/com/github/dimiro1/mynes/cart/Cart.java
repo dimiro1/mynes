@@ -1,6 +1,6 @@
 package com.github.dimiro1.mynes.cart;
 
-import com.github.dimiro1.mynes.memory.AddressSpace;
+import com.github.dimiro1.mynes.memory.Memory;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -11,7 +11,7 @@ public record Cart(
         byte[] chrROM,
         int mapperNo,
         int mirror,
-        boolean hasBattery) implements AddressSpace {
+        boolean hasBattery) implements Memory {
 
     /**
      * Loads the iNes cart file.
@@ -107,5 +107,10 @@ public record Cart(
     @Override
     public void write(int address, int data) {
         // TODO: Delegate to mapper
+    }
+
+    @Override
+    public int getLength() {
+        return 0x8000; // fixed
     }
 }
