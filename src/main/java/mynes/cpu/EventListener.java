@@ -24,6 +24,6 @@ public interface EventListener {
             final int p,
             final int sp,
             final int[] instruction,
-            final int cycles
+            final long cycles
     );
 }

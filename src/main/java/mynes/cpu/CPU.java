@@ -16,7 +16,7 @@ import java.util.List;
  */
 public class CPU {
     private int a, x, y, sp, pc, p;
-    private int cycles;
+    private long cycles;
     private int tick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
     private int opcode;
 
@@ -47,6 +47,8 @@ public class CPU {
     public CPU(final Memory memory) {
         listeners = new ArrayList<>();
         this.memory = memory;
+
+        setP(0x24);
         resetTick();
     }
 
@@ -279,7 +281,10 @@ public class CPU {
                 setPC(ByteUtils.joinBytes(tickHigh, tickLow));
                 incTick();
             }
-            case 6 -> incTick();
+            case 6 -> {
+                setFlagI(true);
+                incTick();
+            }
             case 7 -> {
                 pendingInterrupt = Interrupt.NIL;
                 resetTick();
@@ -295,19 +300,20 @@ public class CPU {
             }
             case 2 -> {
                 tickHigh = read(0xFFFD);
-                setPC(ByteUtils.joinBytes(tickHigh, tickLow));
                 incTick();
             }
-            case 3 -> {
-                setSP(0xFD);
+            case 3, 4, 5 -> {
+                pop();
+                decSP();
                 incTick();
             }
-            case 4 -> {
-                setP(0x24);
+            case 6 -> {
+                setLowPC(tickLow);
+                setFlagI(true);
                 incTick();
             }
-            case 5, 6 -> incTick();
             case 7 -> {
+                setHighPC(tickHigh);
                 pendingInterrupt = Interrupt.NIL;
                 resetTick();
             }
@@ -748,6 +754,9 @@ public class CPU {
                     default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
                 };
 
+                incTick();
+            }
+            case 6 -> {
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -769,7 +778,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                tickUnfixedAddress = ByteUtils.ensureByte(tickLow + y);
+                tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
 
                 if (ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)) {
@@ -816,7 +825,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                tickUnfixedAddress = ByteUtils.ensureByte(tickLow + y);
+                tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
                 read(tickUnfixedAddress);
                 incTick();
@@ -862,7 +871,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                tickUnfixedAddress = ByteUtils.ensureByte(tickLow + x);
+                tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
                 tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + x);
                 read(tickUnfixedAddress);
                 incTick();
@@ -914,7 +923,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                tickUnfixedAddress = ByteUtils.ensureByte(tickLow + x);
+                tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
                 tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + x);
 
                 if (ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)) {
@@ -1048,7 +1057,6 @@ public class CPU {
             }
             case 4 -> resetTick();
         }
-
     }
 
     private void indexedIndirectRead() {
@@ -1489,11 +1497,11 @@ public class CPU {
             }
             case 6 -> {
                 setLowPC(read(0xFFFE));
+                setFlagI(true);
                 incTick();
             }
             case 7 -> {
                 setHighPC(read(0xFFFF));
-                setFlagI(true);
                 resetTick();
             }
         }

@@ -19,7 +19,7 @@ public class NestestLogParser {
             int y,
             int p,
             int sp,
-            int cycle
+            long cycle
     ) {
 
         @Override
@@ -58,7 +58,7 @@ public class NestestLogParser {
 
     public static List<Entry> parse(final InputStream log) {
         var pattern = Pattern.compile("" +
-                        "^(?<pc>[\\w]{4})  " + // program counter
+                        "^(?<pc>[\\w]{4}) {2}" + // program counter
                         "((?<op>[\\w]{2}) (?<op1>[\\w]{2})? (?<op2>[\\w]{2})?) " + // opcode operand1 operand2
                         "(.+) " + // Human readable opcode
                         "A:(?<a>[\\w]{2}) " + // A

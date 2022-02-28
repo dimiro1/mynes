@@ -14,7 +14,7 @@ public class NestestCPUListener implements EventListener {
                        final int p,
                        final int sp,
                        final int[] instruction,
-                       final int cycles
+                       final long cycles
     ) {
         previousStep = this.currentStep;
 

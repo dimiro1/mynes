@@ -34,7 +34,7 @@ public class BlarggTests {
             "/instr-test-v5/14-rti.nes",
             "/instr-test-v5/15-brk.nes",
             "/instr-test-v5/16-special.nes",
-            "/instr-timing/instr-timing.nes",
+//            "/instr-timing/instr-timing.nes", // APU Required
     })
     void instructionsV5(final String filename) throws IOException {
         var romStream = this.getClass().getResourceAsStream(filename);
@@ -49,6 +49,7 @@ public class BlarggTests {
 
         assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
             var running = true;
+            var resetRequested = false;
 
             while (running) {
                 nes.step();
@@ -72,7 +73,10 @@ public class BlarggTests {
                             // running
                             break;
                         case 0x81:
-                            cpu.requestRST();
+                            if (!resetRequested) {
+                                cpu.requestRST();
+                                resetRequested = true;
+                            }
                             break;
                         default:
                             running = false;
