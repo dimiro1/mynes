@@ -17,7 +17,7 @@ import java.util.List;
 public class CPU {
     private int a, x, y, sp, pc, p;
     private long cycles;
-    private int tick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
+    private int tick, intTick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
     private int opcode;
 
     private final List<EventListener> listeners;
@@ -49,7 +49,8 @@ public class CPU {
         this.memory = memory;
 
         setP(0x24);
-        resetTick();
+        tick = 1;
+        intTick = 1;
     }
 
     /**
@@ -73,23 +74,12 @@ public class CPU {
         setPC(pc + 1);
     }
 
-    public void incTick() {
-        tick++;
-        cycles++;
-    }
-
-    public void resetTick() {
-        tick = 1;
-        cycles++;
-    }
-
     /**
      * Request a RST interrupt.
      */
     public void requestRST() {
         pendingInterrupt = Interrupt.RST;
     }
-
 
     /**
      * Request a NMI interrupt.
@@ -107,37 +97,33 @@ public class CPU {
         }
     }
 
+    /**
+     * Add an object to be notified on internal events.
+     *
+     * @param listener Object to listen to internal events.
+     */
+    public void addEventListener(final EventListener listener) {
+        if (!listeners.contains(listener)) {
+            listeners.add(listener);
+        }
+    }
+
     public void step() {
         do {
-            this.tick();
-        } while (tick != 1);
+            tick();
+        } while (isRunningInstruction() || isServingInterrupt());
     }
 
     public void tick() {
-        if (pendingInterrupt != Interrupt.NIL) {
-            handlePendingInterrupt();
+        if (canServeInterrupts()) {
+            servePendingInterrupt();
             return;
         }
 
-        if (tick == 1) {
-            // Fetch new opcode.
-            opcode = fetchOpcode();
-
-            // Notify listeners.
-            var instructionBytes = switch (lengthPerOpcode[opcode]) {
-                case 2 -> new int[]{
-                        opcode,
-                        read(pc + 1),
-                };
-                case 3 -> new int[]{
-                        opcode,
-                        read(pc + 1),
-                        read(pc + 2),
-                };
-                default -> new int[]{opcode}; // 0, 1
-            };
-
-            notifyStep(instructionBytes);
+        if (isFirstTickOfInstruction()) {
+            opcode = fetchPC();
+            notifyStep();
+            incPC();
         }
 
         switch (opcode) {
@@ -222,8 +208,44 @@ public class CPU {
         }
     }
 
-    private int fetchOpcode() {
-        return fetchPC();
+    // Increments instruction clock cycles.
+    private void incTick() {
+        tick++;
+        cycles++;
+    }
+
+    // Increments the interrupts clock cycles.
+    private void incIntTick() {
+        intTick++;
+        cycles++;
+    }
+
+    // Resets instruction clock cycles.
+    private void resetTick() {
+        tick = 1;
+        cycles++;
+    }
+
+    // Resets the interrupts clock cycles.
+    private void resetIntTick() {
+        intTick = 1;
+        cycles++;
+    }
+
+    private boolean canServeInterrupts() {
+        return tick == 1 && (pendingInterrupt != Interrupt.NIL);
+    }
+
+    private boolean isServingInterrupt() {
+        return intTick != 1;
+    }
+
+    private boolean isRunningInstruction() {
+        return tick != 1;
+    }
+
+    private boolean isFirstTickOfInstruction() {
+        return tick == 1;
     }
 
     private int fetchPC() {
@@ -236,86 +258,75 @@ public class CPU {
         return value;
     }
 
-    /**
-     * Add an object to be notified on internal events.
-     *
-     * @param listener Object to listen to internal events.
-     */
-    public void addEventListener(final EventListener listener) {
-        if (!listeners.contains(listener)) {
-            listeners.add(listener);
-        }
-    }
-
-    private void handlePendingInterrupt() {
+    private void servePendingInterrupt() {
         switch (pendingInterrupt) {
-            case IRQ -> handleInterrupt(0xFFFE);
-            case NMI -> handleInterrupt(0xFFFA);
-            case RST -> handleReset();
+            case IRQ -> serveInterrupt(0xFFFE);
+            case NMI -> serveInterrupt(0xFFFA);
+            case RST -> serveReset();
         }
     }
 
-    private void handleInterrupt(final int address) {
-        switch (tick) {
+    private void serveInterrupt(final int address) {
+        switch (intTick) {
             case 1 -> {
                 push(ByteUtils.getHigh(pc));
                 decSP();
-                incTick();
+                incIntTick();
             }
             case 2 -> {
                 push(ByteUtils.getLow(pc));
                 decSP();
-                incTick();
+                incIntTick();
             }
             case 3 -> {
                 push(p & 0x20 | 0x10);
                 decSP();
-                incTick();
+                incIntTick();
             }
             case 4 -> {
                 tickLow = read(address);
-                incTick();
+                incIntTick();
             }
             case 5 -> {
                 tickHigh = read(address + 1);
                 setPC(ByteUtils.joinBytes(tickHigh, tickLow));
-                incTick();
+                incIntTick();
             }
             case 6 -> {
                 setFlagI(true);
-                incTick();
+                incIntTick();
             }
             case 7 -> {
                 pendingInterrupt = Interrupt.NIL;
-                resetTick();
+                resetIntTick();
             }
         }
     }
 
-    private void handleReset() {
-        switch (tick) {
+    private void serveReset() {
+        switch (intTick) {
             case 1 -> {
                 tickLow = read(0xFFFC);
-                incTick();
+                incIntTick();
             }
             case 2 -> {
                 tickHigh = read(0xFFFD);
-                incTick();
+                incIntTick();
             }
             case 3, 4, 5 -> {
                 pop();
                 decSP();
-                incTick();
+                incIntTick();
             }
             case 6 -> {
                 setLowPC(tickLow);
                 setFlagI(true);
-                incTick();
+                incIntTick();
             }
             case 7 -> {
                 setHighPC(tickHigh);
                 pendingInterrupt = Interrupt.NIL;
-                resetTick();
+                resetIntTick();
             }
         }
     }
@@ -346,10 +357,7 @@ public class CPU {
 
     private void absoluteJump() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -364,10 +372,7 @@ public class CPU {
 
     private void absoluteIndirectJump() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -391,10 +396,7 @@ public class CPU {
 
     private void absoluteRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -430,10 +432,7 @@ public class CPU {
 
     private void absoluteModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -476,10 +475,7 @@ public class CPU {
 
     private void absoluteWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -503,10 +499,7 @@ public class CPU {
 
     private void zeroPageRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickAddress = fetchPCInc();
                 incTick();
@@ -538,10 +531,7 @@ public class CPU {
 
     private void zeroPageModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickAddress = fetchPCInc();
                 incTick();
@@ -580,10 +570,7 @@ public class CPU {
 
     private void zeroPageWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickAddress = fetchPCInc();
                 incTick();
@@ -603,10 +590,7 @@ public class CPU {
 
     private void zeroPageYRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -631,10 +615,7 @@ public class CPU {
 
     private void zeroPageXRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -666,10 +647,7 @@ public class CPU {
 
     private void zeroPageYWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -692,10 +670,7 @@ public class CPU {
 
     private void zeroPageXWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -718,10 +693,7 @@ public class CPU {
 
     private void zeroPageXModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -765,10 +737,7 @@ public class CPU {
 
     private void absoluteIndexedYRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -812,10 +781,7 @@ public class CPU {
 
     private void absoluteIndexedYModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -858,10 +824,7 @@ public class CPU {
 
     private void absoluteIndexedXModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -910,10 +873,7 @@ public class CPU {
 
     private void absoluteIndexedXRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -956,10 +916,7 @@ public class CPU {
 
     private void absoluteIndexedYWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -994,10 +951,7 @@ public class CPU {
 
     private void absoluteIndexedXWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -1030,10 +984,7 @@ public class CPU {
 
     private void relative(final boolean condition) {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 if (condition) {
@@ -1061,10 +1012,7 @@ public class CPU {
 
     private void indexedIndirectRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1103,10 +1051,7 @@ public class CPU {
 
     private void indexedIndirectModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1153,10 +1098,7 @@ public class CPU {
 
     private void indexedIndirectWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1189,10 +1131,7 @@ public class CPU {
 
     private void indirectIndexedRead() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1240,10 +1179,7 @@ public class CPU {
 
     private void indirectIndexedModify() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1289,10 +1225,7 @@ public class CPU {
 
     private void indirectIndexedWrite() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
                 incTick();
@@ -1323,10 +1256,7 @@ public class CPU {
 
     private void immediate() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickValue = fetchPCInc();
 
@@ -1358,10 +1288,7 @@ public class CPU {
 
     private void accumulatorOrImplied() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 fetchPC();
 
@@ -1397,12 +1324,9 @@ public class CPU {
 
     private void php() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1415,12 +1339,9 @@ public class CPU {
 
     private void pha() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1433,12 +1354,9 @@ public class CPU {
 
     private void plp() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1454,12 +1372,9 @@ public class CPU {
 
     private void pla() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1476,7 +1391,8 @@ public class CPU {
 
     private void brk() {
         switch (tick) {
-            case 1, 2 -> {
+            case 1 -> incTick();
+            case 2 -> {
                 fetchPCInc();
                 incTick();
             }
@@ -1509,12 +1425,9 @@ public class CPU {
 
     private void rti() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1540,12 +1453,9 @@ public class CPU {
 
     private void rts() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
-                fetchOpcode();
+                fetchPC();
                 incTick();
             }
             case 3 -> {
@@ -1570,10 +1480,7 @@ public class CPU {
 
     private void jsr() {
         switch (tick) {
-            case 1 -> {
-                fetchPCInc();
-                incTick();
-            }
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
@@ -1960,7 +1867,20 @@ public class CPU {
         this.p = ByteUtils.ensureByte(p);
     }
 
-    private void notifyStep(final int[] instruction) {
+    private void notifyStep() {
+        var instructionBytes = switch (lengthPerOpcode[opcode]) {
+            case 2 -> new int[]{
+                    opcode,
+                    read(pc + 1),
+            };
+            case 3 -> new int[]{
+                    opcode,
+                    read(pc + 1),
+                    read(pc + 2),
+            };
+            default -> new int[]{opcode}; // 0, 1
+        };
+
         listeners.forEach(l -> l.onStep(
                 pc,
                 a,
@@ -1968,8 +1888,8 @@ public class CPU {
                 y,
                 p,
                 sp,
-                instruction,
-                cycles - 1
+                instructionBytes,
+                cycles
         ));
     }
 }

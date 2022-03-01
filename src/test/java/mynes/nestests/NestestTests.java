@@ -25,11 +25,11 @@ public class NestestTests {
         var memory = nes.getMemory();
         var cpuListener = new NestestCPUListener();
 
+        cpu.addEventListener(cpuListener);
+
         // Handle reset
         nes.step();
-
         cpu.setPC(0xC000);
-        cpu.addEventListener(cpuListener);
 
         try (var stream = this.getClass().getResourceAsStream(log)) {
             NestestLogParser.parse(stream).forEach((entry) -> {
