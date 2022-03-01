@@ -2,7 +2,6 @@ package mynes.memory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Implementation of AddressSpace that supports memory mapping.
@@ -30,12 +29,12 @@ public class MappedMemory implements Memory {
      */
     @Override
     public int read(final int address) {
-        return this.getFirstRange(address).read(address);
+        return this.getRange(address).read(address);
     }
 
     /**
      * Writes a single byte into one of the mapped memories.
-     * Important: Must write to all ranges that accepts the address.
+     * Important: If more than one memory can is assigned to the same memory space the first one will be used.
      *
      * @param address The memory address to write the value.
      * @param data    The data to write.
@@ -43,7 +42,7 @@ public class MappedMemory implements Memory {
      */
     @Override
     public void write(final int address, final int data) {
-        this.getRanges(address).forEach(m -> m.write(address, data));
+        this.getRange(address).write(address, data);
     }
 
     /**
@@ -60,17 +59,13 @@ public class MappedMemory implements Memory {
         return "mapped";
     }
 
-    private List<Memory> getRanges(final int address) {
-        return ranges.stream()
-                .filter(mapping -> mapping.accepts(address))
-                .collect(Collectors.toList());
-    }
-
-    private Memory getFirstRange(final int address) {
-        return ranges.stream()
-                .filter(mapping -> mapping.accepts(address))
-                .findFirst()
-                .orElseThrow(() -> new UnmappedAddress(address));
+    private Memory getRange(final int address) {
+        for (var mapping : ranges) {
+            if (mapping.accepts(address)) {
+                return mapping;
+            }
+        }
+        throw new UnmappedAddress(address);
     }
 
     private record MemoryRelocatable(int from, int to, Memory memory) implements Memory {
