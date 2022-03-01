@@ -994,17 +994,15 @@ public class CPU {
                 }
             }
             case 3 -> {
-                // TODO: Review this
-                tickUnfixedAddress = ByteUtils.ensureWord(pc + tickBaseAddress);
-                tickAddress = tickUnfixedAddress + (tickBaseAddress >= 0x80 ? -0x100 : 0);
+                tickAddress = ByteUtils.ensureWord(pc + (byte) tickBaseAddress);
 
                 if (ByteUtils.isDifferentPage(pc, tickAddress)) {
-                    setPC(tickAddress);
                     incTick();
                 } else {
-                    setPC(tickAddress);
                     resetTick();
                 }
+
+                setPC(tickAddress);
             }
             case 4 -> resetTick();
         }
@@ -1480,12 +1478,11 @@ public class CPU {
 
     private void jsr() {
         switch (tick) {
-            case 1 -> incTick();
+            case 1, 3 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
                 incTick();
             }
-            case 3 -> incTick();
             case 4 -> {
                 push(ByteUtils.getHigh(pc));
                 decSP();
