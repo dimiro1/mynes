@@ -933,13 +933,7 @@ public class CPU {
                 switch (opcode) {
                     case 0x99 -> write(tickAddress, a);
                     case 0x9B -> write(tickAddress, xas(tickHigh + 1));
-                    case 0x9E -> {
-                        if (y + ByteUtils.ensureByte(tickAddress - y) <= 0xFF) {
-                            write(tickAddress, x & (ByteUtils.getHigh(tickAddress) + 1));
-                        } else {
-                            write(tickAddress, read(tickAddress));
-                        }
-                    }
+                    case 0x9E -> write(tickAddress, shx(tickAddress));
                     case 0x9F -> write(tickAddress, x & a & (ByteUtils.getHigh(tickAddress) + 1));
                 }
                 resetTick();
@@ -966,13 +960,7 @@ public class CPU {
             }
             case 5 -> {
                 switch (opcode) {
-                    case 0x9C -> {
-                        if ((x + ByteUtils.ensureByte(tickAddress - x)) <= 0xFF) {
-                            write(tickAddress, y & (ByteUtils.getHigh(tickAddress) + 1));
-                        } else {
-                            write(tickAddress, read(tickAddress));
-                        }
-                    }
+                    case 0x9C -> write(tickAddress, shy(tickAddress));
                     case 0x9D -> write(tickAddress, a);
                 }
                 resetTick();
@@ -1508,6 +1496,22 @@ public class CPU {
                 setPC(ByteUtils.joinBytes(fetchPC(), tickLow));
                 resetTick();
             }
+        }
+    }
+
+    private int shx(final int address) {
+        if (y + ByteUtils.ensureByte(address - y) <= 0xFF) {
+            return x & (ByteUtils.getHigh(address) + 1);
+        } else {
+            return read(address);
+        }
+    }
+
+    private int shy(final int address) {
+        if (x + ByteUtils.ensureByte(address - x) <= 0xFF) {
+            return y & (ByteUtils.getHigh(address) + 1);
+        } else {
+            return read(address);
         }
     }
 
