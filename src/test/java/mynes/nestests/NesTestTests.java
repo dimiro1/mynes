@@ -3,13 +3,16 @@ package mynes.nestests;
 import mynes.NES;
 import mynes.cart.Cart;
 import org.junit.jupiter.api.Test;
+import org.junit.platform.commons.logging.Logger;
+import org.junit.platform.commons.logging.LoggerFactory;
 
 import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-public class NestestTests {
+public class NesTestTests {
+    Logger logger = LoggerFactory.getLogger(NesTestTests.class);
 
     @Test
     void nesTest() throws IOException {
@@ -36,15 +39,15 @@ public class NestestTests {
                 nes.step();
 
                 if (!entry.equals(cpuListener.getCurrentStep())) {
-                    System.out.printf("%X\n", memory.read(0x02));
-                    System.out.printf("%X\n", memory.read(0x03));
-                    System.out.println(cpuListener.getPreviousStep());
+                    logger.error(() -> String.format("%X\n", memory.read(0x02)));
+                    logger.error(() -> String.format("%X\n", memory.read(0x03)));
+                    logger.error(() -> cpuListener.getPreviousStep().toString());
                 }
                 assertEquals(entry, cpuListener.getCurrentStep());
             });
         }
-        System.out.printf("%X\n", memory.read(0x02));
-        System.out.println(cpuListener.getCurrentStep());
+        logger.info(() -> String.format("%X\n", memory.read(0x02)));
+        logger.info(() -> cpuListener.getPreviousStep().toString());
     }
 
     @Test
@@ -57,7 +60,10 @@ public class NestestTests {
             assertEquals(
                     new NestestLogParser.Entry(
                             0xC000,
-                            new int[]{0x4C, 0xF5, 0xC5},
+                            0x4C,
+                            0xF5,
+                            0xC5,
+                            3,
                             0,
                             0,
                             0,
@@ -71,7 +77,10 @@ public class NestestTests {
             assertEquals(
                     new NestestLogParser.Entry(
                             0xD136,
-                            new int[]{0xE1, 0x80},
+                            0xE1,
+                            0x80,
+                            0,
+                            2,
                             0x40,
                             0,
                             0x6C,

@@ -20,9 +20,9 @@ public class CPU {
     private int tick, intTick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
     private int opcode;
 
-    private final List<EventListener> listeners;
     private final Memory memory;
     private Interrupt pendingInterrupt = Interrupt.RST;
+    private final List<EventListener> listeners = new ArrayList<>();
 
     private final int[] lengthPerOpcode = {
             /*      0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F */
@@ -45,7 +45,6 @@ public class CPU {
     };
 
     public CPU(final Memory memory) {
-        listeners = new ArrayList<>();
         this.memory = memory;
 
         setP(0x24);
@@ -1865,28 +1864,11 @@ public class CPU {
     }
 
     private void notifyStep() {
-        var instructionBytes = switch (lengthPerOpcode[opcode]) {
-            case 2 -> new int[]{
-                    opcode,
-                    read(pc + 1),
-            };
-            case 3 -> new int[]{
-                    opcode,
-                    read(pc + 1),
-                    read(pc + 2),
-            };
-            default -> new int[]{opcode}; // 0, 1
-        };
+        if (listeners.size() == 0) {
+            return;
+        }
 
-        listeners.forEach(l -> l.onStep(
-                pc,
-                a,
-                x,
-                y,
-                p,
-                sp,
-                instructionBytes,
-                cycles
-        ));
+        listeners.forEach(l -> l.onStep(pc, a, x, y, p, sp, opcode,
+                read(pc + 1), read(pc + 2), lengthPerOpcode[opcode], cycles));
     }
 }

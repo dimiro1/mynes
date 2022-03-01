@@ -13,7 +13,10 @@ import java.util.stream.Collectors;
 public class NestestLogParser {
     public record Entry(
             int pc,
-            int[] instruction,
+            int opcode,
+            int operand1,
+            int operand2,
+            int opcodeLength,
             int a,
             int x,
             int y,
@@ -31,28 +34,49 @@ public class NestestLogParser {
                 return false;
             }
             Entry entry = (Entry) o;
-            return pc == entry.pc
+            var result = pc == entry.pc
                     && a == entry.a
                     && x == entry.x
                     && y == entry.y
                     && p == entry.p
                     && sp == entry.sp
                     && cycle == entry.cycle
-                    && Arrays.equals(instruction, entry.instruction);
-        }
+                    && opcode == entry.opcode
+                    && opcodeLength == entry.opcodeLength;
 
-        @Override
-        public int hashCode() {
-            int result = Objects.hash(pc, a, x, y, p, sp, cycle);
-            result = 31 * result + Arrays.hashCode(instruction);
+            if (opcodeLength == 2) {
+                result = result && (operand1 == entry.operand1);
+            }
+
+            if (opcodeLength == 3) {
+                result = result && (operand1 == entry.operand1);
+                result = result && (operand2 == entry.operand2);
+            }
+
             return result;
         }
 
         @Override
+        public int hashCode() {
+            return Objects.hash(pc, a, x, y, p, sp, cycle, opcode, operand1, operand2, opcodeLength);
+        }
+
+        @Override
         public String toString() {
-            var fmtInstruction = Arrays.stream(this.instruction).mapToObj(e -> String.format("%02X", e)).collect(Collectors.joining(", "));
+            var instruction = new String[opcodeLength];
+            instruction[0] = String.format("%02X", opcode);
+
+            if (opcodeLength == 2) {
+                instruction[1] = String.format("%02X", operand1);
+            }
+
+            if (opcodeLength == 3) {
+                instruction[1] = String.format("%02X", operand1);
+                instruction[2] = String.format("%02X", operand2);
+            }
+
             return String.format("Entry[pc=%04X, instruction=[%s], a=%02X, x=%02X, y=%02X, p=%02X, sp=%02X, cycle=%d]",
-                    this.pc, fmtInstruction, this.a, this.x, this.y, this.p, this.sp, this.cycle);
+                    this.pc, String.join(", ", instruction), this.a, this.x, this.y, this.p, this.sp, this.cycle);
         }
     }
 
@@ -83,18 +107,20 @@ public class NestestLogParser {
                 var cycle = Integer.parseInt(matcher.group("cyc"));
                 var op = Integer.parseInt(matcher.group("op"), 16);
 
-                List<Integer> instructions = new ArrayList<>();
-                instructions.add(op);
-
+                var op1 = 0;
+                var opLen = 1;
                 if (matcher.group("op1") != null) {
-                    instructions.add(Integer.parseInt(matcher.group("op1"), 16));
+                    op1 = Integer.parseInt(matcher.group("op1"), 16);
+                    opLen++;
                 }
 
+                var op2 = 0;
                 if (matcher.group("op2") != null) {
-                    instructions.add(Integer.parseInt(matcher.group("op2"), 16));
+                    op2 = Integer.parseInt(matcher.group("op2"), 16);
+                    opLen++;
                 }
 
-                return new Entry(pc, instructions.stream().mapToInt(e -> e).toArray(), a, x, y, p, sp, cycle);
+                return new Entry(pc, op, op1, op2, opLen, a, x, y, p, sp, cycle);
             }
             throw new RuntimeException(String.format("not able to parse line: %s", line));
         }).collect(Collectors.toList());
