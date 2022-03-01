@@ -5,13 +5,6 @@ package mynes.utils;
  */
 public class ByteUtils {
     /**
-     * Adds n to the lower bytes of value, returns the modified value.
-     */
-    public static int add2Low(final int value, final int n) {
-        return joinBytes(getHigh(value), getLow(value) + n);
-    }
-
-    /**
      * sets the high byte of a 16bit number.
      */
     public static int setLow(final int low, final int value) {
@@ -47,11 +40,31 @@ public class ByteUtils {
     }
 
     /**
-     * Swaps the lower 4bits with the higher 4bits.
-     * e.g: 1000 0001 -> 0001 1000
+     * Returns the high nibble of a byte.
      */
-    public static int swapNibble(final int value) {
-        return ensureByte(value) << 4 | ensureByte(value) >> 4;
+    public static int getHighNibble(final int value) {
+        return ensureNibble(value) >> 0x04;
+    }
+
+    /**
+     * Returns the lower nibble of a byte.
+     */
+    public static int getLowNibble(final int value) {
+        return ensureNibble(value);
+    }
+
+    /**
+     * Join a pair of nibbles into a byte.
+     */
+    public static int joinNibbles(final int high, final int low) {
+        return ensureNibble(high) << 4 | ensureNibble(low);
+    }
+
+    /**
+     * Joins two bits.
+     */
+    public static int joinBits(final int high, final int low) {
+        return (high & 1) << 1 | (low & 1);
     }
 
     /**
@@ -66,6 +79,13 @@ public class ByteUtils {
      */
     public static int ensureWord(final int value) {
         return value & 0xFFFF;
+    }
+
+    /**
+     * Mask the value with 0x04.
+     */
+    public static int ensureNibble(final int value) {
+        return value & 0x04;
     }
 
     /**
@@ -100,27 +120,6 @@ public class ByteUtils {
      */
     public static int getBit(int nth, int from) {
         return (from & (1 << nth)) >> nth;
-    }
-
-    /**
-     * Returns true if the nth bit of the value is high.
-     */
-    public static boolean isBitHigh(int nth, int value) {
-        return getBit(nth, value) > 0;
-    }
-
-    /**
-     * Returns true if the nth bit of the value is low.
-     */
-    public static boolean isBitLow(int nth, int value) {
-        return getBit(nth, value) == 0;
-    }
-
-    /**
-     * Returns the signed value.
-     */
-    public static int unsignedToSigned(final int value) {
-        return (byte) value;
     }
 
     /**
