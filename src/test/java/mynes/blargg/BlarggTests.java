@@ -5,8 +5,9 @@ import mynes.cart.Cart;
 import mynes.memory.Memory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.platform.commons.logging.Logger;
+import org.junit.platform.commons.logging.LoggerFactory;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,8 @@ import java.util.Arrays;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class BlarggTests {
+    Logger logger = LoggerFactory.getLogger(BlarggTests.class);
+
     @ParameterizedTest
     @ValueSource(strings = {
             "/instr-test-v5/01-basics.nes",
@@ -50,6 +53,7 @@ public class BlarggTests {
         assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
             var running = true;
             var resetRequested = false;
+            var magic = new int[]{0xDE, 0xB0, 0x61};
 
             while (running) {
                 nes.step();
@@ -60,13 +64,13 @@ public class BlarggTests {
                         memory.read(0x6003)
                 };
 
-                if (Arrays.equals(result, new int[]{0xDE, 0xB0, 0x61})) {
-                    var data = memory.read(0x6000);
+                if (Arrays.equals(result, magic)) {
+                    var status = memory.read(0x6000);
 
-                    switch (data) {
+                    switch (status) {
                         case 0x00:
                             // Success
-                            System.out.println("Screen message:\n" + getMessage(memory));
+                            logger.info(() -> "Screen message:\n" + getMessage(memory));
                             running = false;
                             break;
                         case 0x80:
@@ -80,8 +84,8 @@ public class BlarggTests {
                             break;
                         default:
                             running = false;
-                            System.out.println("Screen message:\n" + getMessage(memory));
-                            fail(String.format("expected $%02X, got $%02X", 0x80, data));
+                            logger.error(() -> "Screen message:\n" + getMessage(memory));
+                            fail(String.format("expected $%02X, got $%02X", 0x80, status));
                             break;
                     }
                 }
