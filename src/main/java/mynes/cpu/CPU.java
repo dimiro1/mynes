@@ -61,15 +61,15 @@ public class CPU {
         this.pc = ByteUtils.ensureWord(pc);
     }
 
-    public void setLowPC(final int low) {
+    private void setLowPC(final int low) {
         setPC(ByteUtils.setLow(low, pc));
     }
 
-    public void setHighPC(final int high) {
+    private void setHighPC(final int high) {
         setPC(ByteUtils.setHigh(high, pc));
     }
 
-    public void incPC() {
+    private void incPC() {
         setPC(pc + 1);
     }
 
@@ -107,12 +107,18 @@ public class CPU {
         }
     }
 
+    /**
+     * Step one instruction per call.
+     */
     public void step() {
         do {
             tick();
         } while (isRunningInstruction() || isServingInterrupt());
     }
 
+    /**
+     * Step one clock cycle per call.
+     */
     public void tick() {
         if (canServeInterrupts()) {
             servePendingInterrupt();
@@ -1300,7 +1306,7 @@ public class CPU {
                     case 0x18 -> clc();
                     case 0x2A -> setA(rol(a));
                     case 0x38 -> sec();
-                    case 0x4A -> a = lsr(a);
+                    case 0x4A -> setA(lsr(a));
                     case 0x58 -> cli();
                     case 0x6A -> setA(ror(a));
                     case 0x78 -> sei();
