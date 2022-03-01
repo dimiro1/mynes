@@ -180,14 +180,7 @@ public class CPU {
 
             case 0x9C, 0x9D -> absoluteIndexedXWrite();
 
-            case 0x10 -> relative(getFlagN() == 0);
-            case 0x30 -> relative(getFlagN() == 1);
-            case 0x50 -> relative(getFlagV() == 0);
-            case 0x70 -> relative(getFlagV() == 1);
-            case 0x90 -> relative(getFlagC() == 0);
-            case 0xB0 -> relative(getFlagC() == 1);
-            case 0xD0 -> relative(getFlagZ() == 0);
-            case 0xF0 -> relative(getFlagZ() == 1);
+            case 0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0 -> relative();
 
             case 0x01, 0x21, 0x41, 0x61, 0xA1, 0xA3, 0xC1, 0xE1 -> indexedIndirectRead();
 
@@ -981,12 +974,25 @@ public class CPU {
         }
     }
 
-    private void relative(final boolean condition) {
+    private void relative() {
         switch (tick) {
             case 1 -> incTick();
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
-                if (condition) {
+
+                var branchTaken = switch (opcode) {
+                    case 0x10 -> getFlagN() == 0;
+                    case 0x30 -> getFlagN() == 1;
+                    case 0x50 -> getFlagV() == 0;
+                    case 0x70 -> getFlagV() == 1;
+                    case 0x90 -> getFlagC() == 0;
+                    case 0xB0 -> getFlagC() == 1;
+                    case 0xD0 -> getFlagZ() == 0;
+                    case 0xF0 -> getFlagZ() == 1;
+                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                };
+
+                if (branchTaken) {
                     incTick();
                 } else {
                     resetTick();
