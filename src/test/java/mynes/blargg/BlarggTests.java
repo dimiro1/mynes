@@ -12,7 +12,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -49,22 +48,17 @@ public class BlarggTests {
         var cpu = nes.getCPU();
         var memory = nes.getMemory();
 
-
         assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
             var running = true;
             var resetRequested = false;
-            var magic = new int[]{0xDE, 0xB0, 0x61};
 
             while (running) {
                 nes.step();
 
-                var result = new int[]{
-                        memory.read(0x6001),
-                        memory.read(0x6002),
-                        memory.read(0x6003)
-                };
-
-                if (Arrays.equals(result, magic)) {
+                if (memory.read(0x6001) == 0xDE
+                        && memory.read(0x6002) == 0xB0
+                        && memory.read(0x6003) == 0x61
+                ) {
                     var status = memory.read(0x6000);
 
                     switch (status) {

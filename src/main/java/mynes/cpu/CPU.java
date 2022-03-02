@@ -231,7 +231,7 @@ public class CPU {
     }
 
     private boolean canServeInterrupts() {
-        return tick == 1 && (pendingInterrupt != Interrupt.NIL);
+        return isFirstTickOfInstruction() && (pendingInterrupt != Interrupt.NIL);
     }
 
     private boolean isServingInterrupt() {
@@ -329,7 +329,7 @@ public class CPU {
         }
     }
 
-    private void push(int data) {
+    private void push(final int data) {
         write(0x100 + sp, data);
     }
 
@@ -974,7 +974,7 @@ public class CPU {
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
 
-                var branchTaken = switch (opcode) {
+                if (switch (opcode) {
                     case 0x10 -> getFlagN() == 0;
                     case 0x30 -> getFlagN() == 1;
                     case 0x50 -> getFlagV() == 0;
@@ -984,9 +984,7 @@ public class CPU {
                     case 0xD0 -> getFlagZ() == 0;
                     case 0xF0 -> getFlagZ() == 1;
                     default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
-                };
-
-                if (branchTaken) {
+                }) {
                     incTick();
                 } else {
                     resetTick();
@@ -1569,7 +1567,6 @@ public class CPU {
         setZeroNegFlags(this.a);
     }
 
-
     private void lda(final int value) {
         setA(value);
         setZeroNegFlags(a);
@@ -1798,11 +1795,11 @@ public class CPU {
         setFlagC(res >= 0);
     }
 
-    private void setFlagN(int n) {
+    private void setFlagN(final int n) {
         setFlagN(n > 0);
     }
 
-    private void setFlagN(boolean n) {
+    private void setFlagN(final boolean n) {
         setP(ByteUtils.setOrClearBitIf(n, 7, p));
     }
 
@@ -1810,11 +1807,11 @@ public class CPU {
         return ByteUtils.getBit(7, p);
     }
 
-    private void setFlagV(int v) {
+    private void setFlagV(final int v) {
         setFlagV(v > 0);
     }
 
-    private void setFlagV(boolean v) {
+    private void setFlagV(final boolean v) {
         setP(ByteUtils.setOrClearBitIf(v, 6, p));
     }
 
@@ -1822,11 +1819,11 @@ public class CPU {
         return ByteUtils.getBit(6, p);
     }
 
-    private void setFlagD(boolean d) {
+    private void setFlagD(final boolean d) {
         setP(ByteUtils.setOrClearBitIf(d, 3, p));
     }
 
-    private void setFlagI(boolean i) {
+    private void setFlagI(final boolean i) {
         setP(ByteUtils.setOrClearBitIf(i, 2, p));
     }
 
@@ -1834,11 +1831,11 @@ public class CPU {
         return ByteUtils.getBit(2, p);
     }
 
-    private void setFlagZ(boolean z) {
+    private void setFlagZ(final boolean z) {
         setP(ByteUtils.setOrClearBitIf(z, 1, p));
     }
 
-    private void setZeroNegFlags(int value) {
+    private void setZeroNegFlags(final int value) {
         setFlagZ(value == 0);
         setFlagN(ByteUtils.getBit(7, value));
     }
@@ -1851,7 +1848,7 @@ public class CPU {
         setFlagC(c > 0);
     }
 
-    private void setFlagC(boolean c) {
+    private void setFlagC(final boolean c) {
         setP(ByteUtils.setOrClearBitIf(c, 0, p));
     }
 
