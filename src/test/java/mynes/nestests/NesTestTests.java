@@ -1,7 +1,7 @@
 package mynes.nestests;
 
-import mynes.NES;
-import mynes.cart.Cart;
+import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.cart.Cart;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.commons.logging.Logger;
 import org.junit.platform.commons.logging.LoggerFactory;

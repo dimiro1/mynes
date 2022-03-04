@@ -1,4 +1,4 @@
-package mynes.cpu;
+package com.github.dimiro1.mynes.cpu;
 
 /**
  * CPUEventListener is an interface for objects that wants to listen to internal CPU events.

@@ -1,6 +1,6 @@
 package mynes.nestests;
 
-import mynes.cpu.EventListener;
+import com.github.dimiro1.mynes.cpu.EventListener;
 
 public class NestestCPUListener implements EventListener {
     private NestestLogParser.Entry currentStep = new NestestLogParser.Entry(

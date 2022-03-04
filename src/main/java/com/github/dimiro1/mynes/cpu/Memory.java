@@ -1,7 +1,7 @@
-package mynes.cpu;
+package com.github.dimiro1.mynes.cpu;
 
-import mynes.cart.mappers.Mapper;
-import mynes.ppu.PPU;
+import com.github.dimiro1.mynes.cart.mappers.Mapper;
+import com.github.dimiro1.mynes.ppu.PPU;
 
 public class Memory {
     private final PPU ppu;

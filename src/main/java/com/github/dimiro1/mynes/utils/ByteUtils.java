@@ -1,4 +1,4 @@
-package mynes.utils;
+package com.github.dimiro1.mynes.utils;
 
 /**
  * Utility class with several methods to easily manipulate bits and bytes.

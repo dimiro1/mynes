@@ -1,4 +1,4 @@
-package mynes.cart.mappers;
+package com.github.dimiro1.mynes.cart.mappers;
 
 public class Mapper0 implements Mapper {
     private final byte[] prgROM;

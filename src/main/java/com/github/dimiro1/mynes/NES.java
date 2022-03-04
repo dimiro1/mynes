@@ -1,9 +1,9 @@
-package mynes;
+package com.github.dimiro1.mynes;
 
-import mynes.cart.Cart;
-import mynes.cpu.CPU;
-import mynes.cpu.Memory;
-import mynes.ppu.PPU;
+import com.github.dimiro1.mynes.cart.Cart;
+import com.github.dimiro1.mynes.cpu.CPU;
+import com.github.dimiro1.mynes.cpu.Memory;
+import com.github.dimiro1.mynes.ppu.PPU;
 
 public class NES {
     private final CPU cpu;

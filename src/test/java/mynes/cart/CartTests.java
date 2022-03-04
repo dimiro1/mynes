@@ -1,5 +1,7 @@
 package mynes.cart;
 
+import com.github.dimiro1.mynes.cart.BadiNesFileException;
+import com.github.dimiro1.mynes.cart.Cart;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

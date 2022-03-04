@@ -1,7 +1,7 @@
-package mynes.ppu;
+package com.github.dimiro1.mynes.ppu;
 
-import mynes.cart.mappers.Mapper;
-import mynes.utils.ByteUtils;
+import com.github.dimiro1.mynes.cart.mappers.Mapper;
+import com.github.dimiro1.mynes.utils.ByteUtils;
 
 public class PPU {
     private final Mapper mapper;

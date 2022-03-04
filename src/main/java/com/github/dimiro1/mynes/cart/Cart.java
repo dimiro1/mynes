@@ -1,8 +1,8 @@
-package mynes.cart;
+package com.github.dimiro1.mynes.cart;
 
-import mynes.cart.mappers.Mapper;
-import mynes.cart.mappers.Mapper0;
-import mynes.utils.ByteUtils;
+import com.github.dimiro1.mynes.cart.mappers.Mapper;
+import com.github.dimiro1.mynes.cart.mappers.Mapper0;
+import com.github.dimiro1.mynes.utils.ByteUtils;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

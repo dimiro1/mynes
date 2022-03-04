@@ -1,6 +1,6 @@
-package mynes.cpu;
+package com.github.dimiro1.mynes.cpu;
 
-import mynes.utils.ByteUtils;
+import com.github.dimiro1.mynes.utils.ByteUtils;
 
 import java.util.ArrayList;
 import java.util.List;

@@ -1,8 +1,8 @@
 package mynes.blargg;
 
-import mynes.NES;
-import mynes.cart.Cart;
-import mynes.cpu.Memory;
+import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.cart.Cart;
+import com.github.dimiro1.mynes.cpu.Memory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.platform.commons.logging.Logger;
