@@ -2,7 +2,7 @@ package mynes.blargg;
 
 import mynes.NES;
 import mynes.cart.Cart;
-import mynes.memory.Memory;
+import mynes.cpu.Memory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.platform.commons.logging.Logger;
@@ -36,6 +36,10 @@ public class BlarggTests {
             "/instr-test-v5/14-rti.nes",
             "/instr-test-v5/15-brk.nes",
             "/instr-test-v5/16-special.nes",
+            "/instr-misc/01-abs_x_wrap.nes",
+            "/instr-misc/02-branch_wrap.nes",
+//            "/instr-misc/03-dummy_reads.nes", // PPU Required
+//            "/instr-misc/04-dummy_reads_apu.nes", // APU Required
 //            "/instr-timing/instr-timing.nes", // APU Required
     })
     void instructionsV5(final String filename) throws IOException {

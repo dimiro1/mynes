@@ -1,6 +1,5 @@
 package mynes.cpu;
 
-import mynes.memory.Memory;
 import mynes.utils.ByteUtils;
 
 import java.util.ArrayList;

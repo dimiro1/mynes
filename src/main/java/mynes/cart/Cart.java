@@ -1,6 +1,7 @@
 package mynes.cart;
 
-import mynes.memory.Memory;
+import mynes.cart.mappers.Mapper;
+import mynes.cart.mappers.Mapper0;
 import mynes.utils.ByteUtils;
 
 import java.nio.ByteBuffer;
@@ -10,9 +11,9 @@ public record Cart(
         String filename,
         byte[] prgROM,
         byte[] chrROM,
-        int mapperNo,
+        Mapper mapper,
         int mirror,
-        boolean hasBattery) implements Memory {
+        boolean hasBattery) {
 
     /**
      * Loads the iNes cart file. https://wiki.nesdev.org/w/index.php/INES
@@ -65,31 +66,11 @@ public record Cart(
             buffer.get(chrROM);
         }
 
-        return new Cart(filename, prgROM, chrROM, mapperNum, mirror, hasBattery);
-    }
+        var mapper = switch (mapperNum) {
+            case 0 -> new Mapper0(prgROM, chrROM);
+            default -> throw new IllegalStateException("Unexpected mapper: " + mapperNum);
+        };
 
-    @Override
-    public int read(int address) {
-        // TODO: Delegate to mapper
-        if (this.prgROM.length == 0x4000 && address >= 0x4000) {
-            return this.prgROM[address % 0x4000];
-        }
-
-        return this.prgROM[address];
-    }
-
-    @Override
-    public void write(int address, int data) {
-        // TODO: Delegate to mapper
-    }
-
-    @Override
-    public int getLength() {
-        return 0x8000; // fixed
-    }
-
-    @Override
-    public String getName() {
-        return "cart";
+        return new Cart(filename, prgROM, chrROM, mapper, mirror, hasBattery);
     }
 }
