@@ -1,4 +1,4 @@
-package mynes.cart;
+package com.github.dimiro1.mynes.cart;
 
 import com.github.dimiro1.mynes.cart.BadiNesFileException;
 import com.github.dimiro1.mynes.cart.Cart;

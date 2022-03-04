@@ -1,4 +1,4 @@
-package mynes.blargg;
+package com.github.dimiro1.mynes.blargg;
 
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cart.Cart;

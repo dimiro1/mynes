@@ -1,4 +1,4 @@
-package mynes.nestests;
+package com.github.dimiro1.mynes.nestests;
 
 import java.io.BufferedReader;
 import java.io.InputStream;

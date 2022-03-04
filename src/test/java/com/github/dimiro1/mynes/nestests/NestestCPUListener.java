@@ -1,4 +1,4 @@
-package mynes.nestests;
+package com.github.dimiro1.mynes.nestests;
 
 import com.github.dimiro1.mynes.cpu.EventListener;
 

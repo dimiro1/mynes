@@ -5,7 +5,7 @@ import com.github.dimiro1.mynes.utils.ByteUtils;
 
 public class PPU {
     private final Mapper mapper;
-    private final int[] vram = new int[0x2000];
+    private final VRAM vram;
     private int ppuCtrl;
     private int ppuMask;
     private int ppuStatus;
@@ -18,9 +18,11 @@ public class PPU {
 
     public PPU(final Mapper mapper) {
         this.mapper = mapper;
+        this.vram = new VRAM();
     }
 
-    public void tick() {}
+    public void tick() {
+    }
 
     public int read(final int address) {
         return switch (address) {
