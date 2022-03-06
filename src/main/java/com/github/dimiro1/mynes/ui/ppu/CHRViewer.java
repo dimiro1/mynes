@@ -8,27 +8,32 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 
 public class CHRViewer extends JFrame {
+    private final Component parent;
     private final Mapper mapper;
     private Tile selectedTile;
     private final String title = "CHR Viewer";
+    private final JLabel selectedTileLabel = new JLabel();
 
-    public CHRViewer(final Mapper mapper) {
+    public CHRViewer(final Component parent, final Mapper mapper) {
         super();
+        this.parent = parent;
         this.mapper = mapper;
 
-        setTitle(title);
-        setSize(272, 574);
-        setResizable(false);
-        setLocationRelativeTo(null);
-        addComponents();
+        init();
     }
 
-    private void addComponents() {
+    private void init() {
+        setTitle(title);
+        setResizable(false);
+        setLocationRelativeTo(parent);
+        setLayout(new BorderLayout());
+
         var tilesPanel = new JPanel();
-        tilesPanel.setBackground(Color.BLACK);
+        tilesPanel.setPreferredSize(new Dimension(256, 512));
+        tilesPanel.setBackground(Color.GRAY);
         tilesPanel.setLayout(new GridLayout(32, 16, 1, 1));
 
-        for (var i = 0; i < 512; i++) {
+        for (var i = 0; i < 0x200; i++) {
             var tile = new Tile(i, mapper);
 
             if (i == 0) {
@@ -57,7 +62,12 @@ public class CHRViewer extends JFrame {
             tilesPanel.add(tile);
         }
 
-        add(tilesPanel);
+        add(tilesPanel, BorderLayout.NORTH);
+
+        var infoPanel = new JPanel();
+        infoPanel.add(selectedTileLabel);
+        add(infoPanel, BorderLayout.SOUTH);
+        pack();
     }
 
     private void selectTile(final Tile tile) {
@@ -69,5 +79,6 @@ public class CHRViewer extends JFrame {
         tile.highlight();
 
         setTitle(String.format("%s ($%02X)", title, tile.getTileIndex()));
+        selectedTileLabel.setText(String.format("Selected: $%02X", tile.getTileIndex()));
     }
 }

@@ -83,9 +83,8 @@ public class Tile extends JComponent {
         g2.drawImage(bufferedImage, 0, 0, 16, 16, null);
 
         if (isHighlighted) {
-            g2.setColor(Color.WHITE);
-            g2.setStroke(new BasicStroke(2));
-            g2.drawRect(0, 0, 16, 16);
+            g2.setColor(new Color(1.0f, 1.0f, 0.0f, 0.5f));
+            g2.fillRect(0, 0, 16, 16);
         }
     }
 }

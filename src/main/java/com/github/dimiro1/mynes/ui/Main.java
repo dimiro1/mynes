@@ -18,10 +18,9 @@ public class Main {
         logger.info("MyNES");
 
         SwingUtilities.invokeLater(() -> {
-            var chrViewer = new CHRViewer(cart.mapper());
-
-            chrViewer.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-            chrViewer.setVisible(true);
+            var frame = new GameUI(cart);
+            frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            frame.setVisible(true);
         });
     }
 }
