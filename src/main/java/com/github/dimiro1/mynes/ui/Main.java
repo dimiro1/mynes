@@ -1,7 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.cart.Cart;
-import com.github.dimiro1.mynes.ui.ppu.CHRViewer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +17,7 @@ public class Main {
         logger.info("MyNES");
 
         SwingUtilities.invokeLater(() -> {
-            var frame = new GameUI(cart);
+            var frame = new GameUIFrame(cart);
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
             frame.setVisible(true);
         });
