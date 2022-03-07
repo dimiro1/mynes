@@ -27,7 +27,7 @@ public class TileComponent extends JComponent {
      */
     public void refresh() {
         var byteIndex = 0;
-        for (var address = tileIndex * 16; address < tileIndex * 16 + 15; address++) {
+        for (var address = tileIndex * 16; address <= tileIndex * 16 + 15; address++) {
             tileData[byteIndex] = mapper.charRead(address);
             byteIndex++;
         }
@@ -66,12 +66,12 @@ public class TileComponent extends JComponent {
 
             for (var x = 0; x < 8; x++) {
                 var paletteColor = ByteUtils.joinBits(
-                        ByteUtils.getBit(8 - x, upper), ByteUtils.getBit(8 - x, lower));
+                        ByteUtils.getBit(7 - x, upper), ByteUtils.getBit(7 - x, lower));
 
                 var color = switch (paletteColor) {
-                    case 1 -> new Color(0, 232, 216);
-                    case 2 -> new Color(228, 0, 88);
-                    case 3 -> new Color(0, 0, 168);
+                    case 0b01 -> new Color(252, 228, 160);
+                    case 0b10 -> new Color(0, 232, 216);
+                    case 0b11 -> new Color(32, 56, 236);
                     default -> Color.BLACK;
                 };
 
