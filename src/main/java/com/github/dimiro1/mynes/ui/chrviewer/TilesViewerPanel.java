@@ -7,17 +7,24 @@ import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.util.HashSet;
+import java.util.List;
 
 
 public class TilesViewerPanel extends JPanel {
     private static final int TILE_WIDTH = 17;
     private static final int TILE_HEIGHT = 17;
 
+    /**
+     * The mode in which tiles are displayed.
+     */
     public enum Mode {
         MODE_8X8,
         MODE_8X16
     }
 
+    /**
+     * Interface that must be implemented to listen to internal events.
+     */
     public interface ChangeListener {
         void selectedTileChanged(final TileComponent tile);
     }
@@ -27,7 +34,7 @@ public class TilesViewerPanel extends JPanel {
     private TileComponent selectedTile;
     private final java.util.Set<ChangeListener> listeners = new HashSet<>();
 
-    private static final int[] arrange8x8 = new int[]{
+    private static final List<Integer> arrangement8x8 = List.of(
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
             0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
@@ -43,10 +50,10 @@ public class TilesViewerPanel extends JPanel {
             0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
             0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,
             0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF,
-            0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
-    };
+            0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF
+    );
 
-    private static final int[] arrange8x16 = new int[]{
+    private static final List<Integer> arrangement8x16 = List.of(
             0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E,
             0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F, 0x11, 0x13, 0x15, 0x17, 0x19, 0x1B, 0x1D, 0x1F,
             0x20, 0x22, 0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C, 0x3E,
@@ -62,8 +69,8 @@ public class TilesViewerPanel extends JPanel {
             0xC0, 0xC2, 0xC4, 0xC6, 0xC8, 0xCA, 0xCC, 0xCE, 0xD0, 0xD2, 0xD4, 0xD6, 0xD8, 0xDA, 0xDC, 0xDE,
             0xC1, 0xC3, 0xC5, 0xC7, 0xC9, 0xCB, 0xCD, 0xCF, 0xD1, 0xD3, 0xD5, 0xD7, 0xD9, 0xDB, 0xDD, 0xDF,
             0xE0, 0xE2, 0xE4, 0xE6, 0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6, 0xF8, 0xFA, 0xFC, 0xFE,
-            0xE1, 0xE3, 0xE5, 0xE7, 0xE9, 0xEB, 0xED, 0xEF, 0xF1, 0xF3, 0xF5, 0xF7, 0xF9, 0xFB, 0xFD, 0xFF,
-    };
+            0xE1, 0xE3, 0xE5, 0xE7, 0xE9, 0xEB, 0xED, 0xEF, 0xF1, 0xF3, 0xF5, 0xF7, 0xF9, 0xFB, 0xFD, 0xFF
+    );
 
     public TilesViewerPanel(final Mapper mapper) {
         this.mapper = mapper;
@@ -72,7 +79,7 @@ public class TilesViewerPanel extends JPanel {
         setBackground(Color.GRAY);
         setLayout(null);
 
-        reorderTiles();
+        init();
     }
 
     public void addChangeListener(final ChangeListener listener) {
@@ -84,8 +91,8 @@ public class TilesViewerPanel extends JPanel {
      */
     public void refresh() {
         for (var component : getComponents()) {
-            if (component instanceof TileComponent) {
-                ((TileComponent) component).refresh();
+            if (component instanceof TileComponent tile) {
+                tile.refresh();
             }
         }
     }
@@ -96,52 +103,60 @@ public class TilesViewerPanel extends JPanel {
 
     public void setMode(final Mode mode) {
         this.mode = mode;
-        reorderTiles();
+        sortTiles();
         repaint();
     }
 
-    /**
-     * Re-organize all visible tiles.
-     * Note: Current implementation is not efficient.
-     * It essentially removes all existing tiles and then add new ones.
-     */
-    private void reorderTiles() {
+    private void init() {
+        var arrangement = mode == Mode.MODE_8X16 ? arrangement8x16 : arrangement8x8;
+        // First table
+        addTiles(arrangement);
+        // Second table
+        addTiles(arrangement, 0x100);
+    }
+
+    // It loops over the arrangement table to find the position in the table and then calculate the x and y positions.
+    private Rectangle getTilePosition(final int tileNumber) {
+        var arrangement = (mode == Mode.MODE_8X16) ? arrangement8x16 : arrangement8x8;
+        var baseY = 0;
+        var baseAddress = 0;
+
+        if (tileNumber > 0xFF) {
+            baseY = 272;  // 272 = 16 * 17
+            baseAddress = 0x100;
+        }
+
+        var i = arrangement.indexOf(tileNumber - baseAddress);
+        var x = (i % 16) * TILE_WIDTH;
+        var y = (i / 16) * TILE_HEIGHT + baseY;
+        return new Rectangle(x, y, TILE_WIDTH, TILE_HEIGHT);
+    }
+
+    // Sort tiles based on the current selected mode.
+    private void sortTiles() {
         for (var component : getComponents()) {
-            remove(component);
-        }
-
-        if (mode == Mode.MODE_8X16) {
-            addTiles(arrange8x16);
-            addTiles(arrange8x16, 16, 0x100);
-        } else {
-            addTiles(arrange8x8);
-            addTiles(arrange8x8, 16, 0x100);
-        }
-    }
-
-    private void addTiles(final int[] tiles) {
-        addTiles(tiles, 0, 0);
-    }
-
-    private void addTiles(final int[] tiles, final int row, final int baseAddress) {
-        var x = 0;
-        var y = row * TILE_HEIGHT;
-
-        for (var i = 1; i <= tiles.length; i++) {
-            addTile(tiles[i - 1] + baseAddress, x, y);
-
-            x += TILE_WIDTH;
-            if (i % 16 == 0) {
-                x = 0;
-                y += TILE_HEIGHT;
+            if (component instanceof TileComponent tile) {
+                component.setBounds(getTilePosition(tile.getTileIndex()));
             }
         }
+        repaint();
     }
 
-    private void addTile(final int index, final int x, final int y) {
-        var tile = new TileComponent(index, mapper);
+    private void addTiles(final List<Integer> tiles) {
+        addTiles(tiles, 0);
+    }
 
-        if (index == 0) {
+    private void addTiles(final List<Integer> tiles, final int baseAddress) {
+        for (int tile : tiles) {
+            addTile(tile + baseAddress);
+        }
+    }
+
+    private void addTile(final int tileNumber) {
+        var tile = new TileComponent(tileNumber, mapper);
+        var position = getTilePosition(tileNumber);
+
+        if (tileNumber == 0) {
             selectTile(tile);
         }
 
@@ -152,19 +167,23 @@ public class TilesViewerPanel extends JPanel {
             }
 
             @Override
-            public void mouseReleased(final MouseEvent e) { /* Not used */ }
+            public void mouseReleased(final MouseEvent e) {
+                tile.setCursor(new Cursor(Cursor.DEFAULT_CURSOR));
+            }
+
+            @Override
+            public void mouseEntered(final MouseEvent e) {
+                tile.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            }
 
             @Override
             public void mousePressed(final MouseEvent e) { /* Not used */ }
 
             @Override
-            public void mouseEntered(final MouseEvent e) { /* Not used */ }
-
-            @Override
             public void mouseExited(final MouseEvent e) { /* Not used */ }
         });
 
-        tile.setBounds(x, y, TILE_WIDTH, TILE_HEIGHT);
+        tile.setBounds(position);
         add(tile);
     }
 
