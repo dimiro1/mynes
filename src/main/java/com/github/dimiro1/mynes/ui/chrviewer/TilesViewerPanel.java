@@ -33,6 +33,7 @@ public class TilesViewerPanel extends JPanel {
     private Mode mode = Mode.MODE_8X8;
     private TileComponent selectedTile;
     private final java.util.Set<ChangeListener> listeners = new HashSet<>();
+    private final int baseAddress;
 
     private static final List<Integer> arrangement8x8 = List.of(
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -73,9 +74,14 @@ public class TilesViewerPanel extends JPanel {
     );
 
     public TilesViewerPanel(final Mapper mapper) {
-        this.mapper = mapper;
+        this(mapper, 0);
+    }
 
-        setPreferredSize(new Dimension(271, 544));
+    public TilesViewerPanel(final Mapper mapper, final int baseAddress) {
+        this.mapper = mapper;
+        this.baseAddress = baseAddress;
+
+        setPreferredSize(new Dimension(272, 272));
         setBackground(Color.GRAY);
         setLayout(null);
 
@@ -104,31 +110,19 @@ public class TilesViewerPanel extends JPanel {
     public void setMode(final Mode mode) {
         this.mode = mode;
         sortTiles();
-        repaint();
     }
 
     private void init() {
-        var arrangement = mode == Mode.MODE_8X16 ? arrangement8x16 : arrangement8x8;
-        // First table
-        addTiles(arrangement);
-        // Second table
-        addTiles(arrangement, 0x100);
+        addTiles(mode == Mode.MODE_8X16 ? arrangement8x16 : arrangement8x8);
     }
 
     // It loops over the arrangement table to find the position in the table and then calculate the x and y positions.
     private Rectangle getTilePosition(final int tileNumber) {
         var arrangement = (mode == Mode.MODE_8X16) ? arrangement8x16 : arrangement8x8;
-        var baseY = 0;
-        var baseAddress = 0;
 
-        if (tileNumber > 0xFF) {
-            baseY = 272;  // 272 = 16 * 17
-            baseAddress = 0x100;
-        }
-
-        var i = arrangement.indexOf(tileNumber - baseAddress);
+        var i = arrangement.indexOf(tileNumber);
         var x = (i % 16) * TILE_WIDTH;
-        var y = (i / 16) * TILE_HEIGHT + baseY;
+        var y = (i / 16) * TILE_HEIGHT;
         return new Rectangle(x, y, TILE_WIDTH, TILE_HEIGHT);
     }
 
@@ -136,24 +130,18 @@ public class TilesViewerPanel extends JPanel {
     private void sortTiles() {
         for (var component : getComponents()) {
             if (component instanceof TileComponent tile) {
-                component.setBounds(getTilePosition(tile.getTileIndex()));
+                component.setBounds(getTilePosition(tile.getTileNumber()));
             }
         }
         repaint();
     }
 
     private void addTiles(final List<Integer> tiles) {
-        addTiles(tiles, 0);
-    }
-
-    private void addTiles(final List<Integer> tiles, final int baseAddress) {
-        for (int tile : tiles) {
-            addTile(tile + baseAddress);
-        }
+        tiles.forEach(this::addTile);
     }
 
     private void addTile(final int tileNumber) {
-        var tile = new TileComponent(tileNumber, mapper);
+        var tile = new TileComponent(tileNumber, baseAddress, mapper);
         var position = getTilePosition(tileNumber);
 
         if (tileNumber == 0) {

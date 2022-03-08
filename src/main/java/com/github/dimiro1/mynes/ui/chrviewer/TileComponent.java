@@ -8,14 +8,16 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 
 public class TileComponent extends JComponent {
-    private final int tileIndex;
+    private final int tileNumber;
     private final int[] tileData = new int[16];
     private boolean isHighlighted = false;
     private final Mapper mapper;
     private final BufferedImage bufferedImage;
+    private final int address;
 
-    public TileComponent(final int tileIndex, final Mapper mapper) {
-        this.tileIndex = tileIndex;
+    public TileComponent(final int tileNumber, final int baseAddress, final Mapper mapper) {
+        this.tileNumber = tileNumber;
+        this.address = (tileNumber * 16) + baseAddress;
         this.mapper = mapper;
         bufferedImage = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
         setSize(16, 16);
@@ -27,8 +29,9 @@ public class TileComponent extends JComponent {
      */
     public void refresh() {
         var byteIndex = 0;
-        for (var address = tileIndex * 16; address <= tileIndex * 16 + 15; address++) {
-            tileData[byteIndex] = mapper.charRead(address);
+
+        for (var i = address; i <= address + 15; i++) {
+            tileData[byteIndex] = mapper.charRead(i);
             byteIndex++;
         }
     }
@@ -36,8 +39,8 @@ public class TileComponent extends JComponent {
     /**
      * Returns the index of the tile.
      */
-    public int getTileIndex() {
-        return tileIndex;
+    public int getTileNumber() {
+        return tileNumber;
     }
 
     /**
