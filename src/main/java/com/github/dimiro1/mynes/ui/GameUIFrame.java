@@ -9,11 +9,11 @@ import java.awt.*;
 
 public class GameUIFrame extends JFrame {
     private CHRViewerFrame chrViewer;
-    private final Mapper mapper;
+    private final Cart cart;
 
     public GameUIFrame(final Cart cart) {
         super("MyNES");
-        mapper = cart.mapper();
+        this.cart = cart;
         init();
     }
 
@@ -26,7 +26,7 @@ public class GameUIFrame extends JFrame {
         var charViewerButton = new JButton("CHR Viewer");
         charViewerButton.addActionListener(e -> {
             if (chrViewer == null) {
-                chrViewer = new CHRViewerFrame(this, mapper);
+                chrViewer = new CHRViewerFrame(this, cart);
             }
             if (!chrViewer.isVisible()) {
                 chrViewer.setVisible(true);

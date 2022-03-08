@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui.chrviewer;
 
+import com.github.dimiro1.mynes.cart.Cart;
 import com.github.dimiro1.mynes.cart.mappers.Mapper;
 
 import javax.swing.*;
@@ -29,11 +30,11 @@ public class TilesViewerPanel extends JPanel {
         void selectedTileChanged(final TileComponent tile);
     }
 
-    private final Mapper mapper;
+    private final Cart cart;
     private Mode mode = Mode.MODE_8X8;
     private TileComponent selectedTile;
     private final java.util.Set<ChangeListener> listeners = new HashSet<>();
-    private final int baseAddress;
+    private int baseAddress;
 
     private static final List<Integer> arrangement8x8 = List.of(
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -73,12 +74,12 @@ public class TilesViewerPanel extends JPanel {
             0xE1, 0xE3, 0xE5, 0xE7, 0xE9, 0xEB, 0xED, 0xEF, 0xF1, 0xF3, 0xF5, 0xF7, 0xF9, 0xFB, 0xFD, 0xFF
     );
 
-    public TilesViewerPanel(final Mapper mapper) {
-        this(mapper, 0);
+    public TilesViewerPanel(final Cart cart) {
+        this(cart, 0);
     }
 
-    public TilesViewerPanel(final Mapper mapper, final int baseAddress) {
-        this.mapper = mapper;
+    public TilesViewerPanel(final Cart cart, final int baseAddress) {
+        this.cart = cart;
         this.baseAddress = baseAddress;
 
         setPreferredSize(new Dimension(272, 272));
@@ -98,15 +99,31 @@ public class TilesViewerPanel extends JPanel {
     public void refresh() {
         for (var component : getComponents()) {
             if (component instanceof TileComponent tile) {
+                tile.setBaseAddress(baseAddress);
                 tile.refresh();
             }
         }
+        repaint();
     }
 
+    /**
+     * Sets the base address in the CHR ROM of the tiles.
+     */
+    public void setBaseAddress(int baseAddress) {
+        this.baseAddress = baseAddress;
+        refresh();
+    }
+
+    /**
+     * Returns the current mode.
+     */
     public Mode getMode() {
         return mode;
     }
 
+    /**
+     * Updates the current mode.
+     */
     public void setMode(final Mode mode) {
         this.mode = mode;
         sortTiles();
@@ -141,7 +158,7 @@ public class TilesViewerPanel extends JPanel {
     }
 
     private void addTile(final int tileNumber) {
-        var tile = new TileComponent(tileNumber, baseAddress, mapper);
+        var tile = new TileComponent(tileNumber, baseAddress, cart.mapper());
         var position = getTilePosition(tileNumber);
 
         if (tileNumber == 0) {

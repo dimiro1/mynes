@@ -13,11 +13,11 @@ public class TileComponent extends JComponent {
     private boolean isHighlighted = false;
     private final Mapper mapper;
     private final BufferedImage bufferedImage;
-    private final int address;
+    private int baseAddress;
 
     public TileComponent(final int tileNumber, final int baseAddress, final Mapper mapper) {
         this.tileNumber = tileNumber;
-        this.address = (tileNumber * 16) + baseAddress;
+        this.baseAddress = baseAddress;
         this.mapper = mapper;
         bufferedImage = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
         setSize(16, 16);
@@ -29,11 +29,18 @@ public class TileComponent extends JComponent {
      */
     public void refresh() {
         var byteIndex = 0;
-
+        var address = (tileNumber * 16) + baseAddress;
         for (var i = address; i <= address + 15; i++) {
             tileData[byteIndex] = mapper.charRead(i);
             byteIndex++;
         }
+    }
+
+    /**
+     * Sets the base address in the CHR ROM of the tile.
+     */
+    public void setBaseAddress(int baseAddress) {
+        this.baseAddress = baseAddress;
     }
 
     /**
