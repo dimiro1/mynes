@@ -14,6 +14,7 @@ repositories {
 }
 
 dependencies {
+    implementation("com.formdev:flatlaf:2.0.2")
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("org.slf4j:slf4j-simple:1.7.36")
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.2")
