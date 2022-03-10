@@ -82,7 +82,6 @@ public class TilesViewerPanel extends JPanel {
         this.baseAddress = baseAddress;
 
         setPreferredSize(new Dimension(272, 272));
-        setBackground(Color.GRAY);
         setLayout(null);
 
         init();

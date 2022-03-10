@@ -1,6 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
-import com.formdev.flatlaf.FlatLightLaf;
+import com.formdev.flatlaf.FlatDarkLaf;
 import com.github.dimiro1.mynes.cart.Cart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +13,7 @@ public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) throws IOException {
-        FlatLightLaf.setup(new FlatLightLaf());
+        FlatDarkLaf.setup();
 
         var rom = new FileInputStream(args[0]);
         var cart = Cart.load(rom.readAllBytes(), args[0]);
