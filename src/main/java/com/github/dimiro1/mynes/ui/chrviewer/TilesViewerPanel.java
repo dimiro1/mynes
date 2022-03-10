@@ -1,7 +1,6 @@
 package com.github.dimiro1.mynes.ui.chrviewer;
 
 import com.github.dimiro1.mynes.cart.Cart;
-import com.github.dimiro1.mynes.cart.mappers.Mapper;
 
 import javax.swing.*;
 import java.awt.*;

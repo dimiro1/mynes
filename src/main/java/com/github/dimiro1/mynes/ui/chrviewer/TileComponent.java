@@ -8,20 +8,38 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 
 public class TileComponent extends JComponent {
-    private final int tileNumber;
+    private int tileNumber;
     private final int[] tileData = new int[16];
     private boolean isHighlighted = false;
     private final Mapper mapper;
     private final BufferedImage bufferedImage;
     private int baseAddress;
+    private final int width;
+    private final int height;
 
-    public TileComponent(final int tileNumber, final int baseAddress, final Mapper mapper) {
+    public TileComponent(
+            final int tileNumber,
+            final int baseAddress,
+            final Mapper mapper,
+            final int width,
+            final int height
+    ) {
         this.tileNumber = tileNumber;
         this.baseAddress = baseAddress;
         this.mapper = mapper;
         bufferedImage = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
-        setSize(16, 16);
+        this.width = width;
+        this.height = height;
+        setPreferredSize(new Dimension(width, height));
         refresh();
+    }
+
+    public TileComponent(
+            final int tileNumber,
+            final int baseAddress,
+            final Mapper mapper
+    ) {
+        this(tileNumber, baseAddress, mapper, 16, 16);
     }
 
     /**
@@ -34,13 +52,27 @@ public class TileComponent extends JComponent {
             tileData[byteIndex] = mapper.charRead(i);
             byteIndex++;
         }
+        repaint();
+    }
+
+    /**
+     * Change the number of the tile.
+     */
+    public void setTileNumber(final int tileNumber) {
+        if (this.tileNumber != tileNumber) {
+            this.tileNumber = tileNumber;
+            refresh();
+        }
     }
 
     /**
      * Sets the base address in the CHR ROM of the tile.
      */
-    public void setBaseAddress(int baseAddress) {
-        this.baseAddress = baseAddress;
+    public void setBaseAddress(final int baseAddress) {
+        if (this.baseAddress != baseAddress) {
+            this.baseAddress = baseAddress;
+            refresh();
+        }
     }
 
     /**
@@ -89,11 +121,11 @@ public class TileComponent extends JComponent {
             }
         }
 
-        g.drawImage(bufferedImage, 0, 0, 16, 16, null);
+        g.drawImage(bufferedImage, 0, 0, this.width, this.height, null);
 
         if (isHighlighted) {
             g.setColor(new Color(1.0f, 1.0f, 0.0f, 0.5f));
-            g.fillRect(0, 0, 16, 16);
+            g.fillRect(0, 0, this.width, this.height);
         }
     }
 }

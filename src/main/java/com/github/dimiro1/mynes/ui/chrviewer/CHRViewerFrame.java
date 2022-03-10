@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.chrviewer;
 
 import com.github.dimiro1.mynes.cart.Cart;
+import net.miginfocom.swing.MigLayout;
 
 import javax.swing.*;
 import java.awt.*;
@@ -8,8 +9,9 @@ import java.awt.*;
 public class CHRViewerFrame extends JFrame {
     private final Component parent;
     private final Cart cart;
-    private final JLabel selectedTileTopLabel = new JLabel("Selected: $00");
-    private final JLabel selectedTileBottomLabel = new JLabel("Selected: $00");
+    private final JLabel selectedLabel = new JLabel("Tile: $00");
+    private int baseAddress = 0;
+    private int selectedTileNumber;
 
     public CHRViewerFrame(final Component parent, final Cart cart) {
         super();
@@ -23,18 +25,17 @@ public class CHRViewerFrame extends JFrame {
         setTitle("CHR Viewer");
         setResizable(false);
         setLocationRelativeTo(parent);
-        setLayout(new BorderLayout());
+        setLayout(new MigLayout());
 
         var tilesViewer = new TilesViewerPanel(cart);
+        var selectedTile = new TileComponent(selectedTileNumber, baseAddress, cart.mapper(), 272, 272);
 
-        tilesViewer.addChangeListener(tile ->
-                selectedTileBottomLabel.setText(String.format("Selected: $%02X", tile.getTileNumber())));
-
-        var tilesTopInfoPanel = new JPanel();
-        tilesTopInfoPanel.add(selectedTileTopLabel);
-
-        var tilesInfoPanel = new JPanel();
-        tilesInfoPanel.add(selectedTileBottomLabel);
+        tilesViewer.addChangeListener(tile -> {
+            selectedTileNumber = tile.getTileNumber();
+            selectedLabel.setText(String.format("Tile: $%02X", selectedTileNumber));
+            selectedTile.setTileNumber(selectedTileNumber);
+            selectedTile.setBaseAddress(baseAddress);
+        });
 
         var bankSelector = new JComboBox<CHRBank>();
         for (var i = 0; i < cart.chrROM().length / 0x1000; i++) {
@@ -44,54 +45,32 @@ public class CHRViewerFrame extends JFrame {
         bankSelector.addActionListener(e -> {
             var selected = (CHRBank) bankSelector.getSelectedItem();
             if (selected != null) {
+                baseAddress = selected.address;
+                selectedTile.setBaseAddress(baseAddress);
                 tilesViewer.setBaseAddress(selected.address);
             }
         });
 
-        var bankSelectorPanel = new JPanel();
-        bankSelectorPanel.setLayout(new BorderLayout());
-        bankSelectorPanel.setBorder(BorderFactory.createEmptyBorder(0, 5, 5, 5));
-        bankSelectorPanel.add(bankSelector, BorderLayout.NORTH);
+        var mode8x16 = new JCheckBox("Tiles 8x16 Mode");
+        mode8x16.setSelected(tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16);
+        mode8x16.addActionListener(e -> tilesViewer.setMode(
+                tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16
+                        ? TilesViewerPanel.Mode.MODE_8X8
+                        : TilesViewerPanel.Mode.MODE_8X16));
 
-        var tilesViewerContainer = new JPanel();
-        tilesViewerContainer.setLayout(new BorderLayout());
-        tilesViewerContainer.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        tilesViewerContainer.add(tilesViewer, BorderLayout.NORTH);
-        tilesViewerContainer.add(tilesInfoPanel, BorderLayout.SOUTH);
-
-        var menuBar = new JMenuBar();
-        setJMenuBar(menuBar);
-
-        var viewMenu = new JMenu("View");
-        menuBar.add(viewMenu);
-
-        var viewMenuItem8x8 = new JRadioButtonMenuItem("8x8");
-        viewMenuItem8x8.setSelected(tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X8);
-        viewMenu.add(viewMenuItem8x8);
-
-        var viewMenuItem8x16 = new JRadioButtonMenuItem("8x16");
-        viewMenuItem8x16.setSelected(tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16);
-        viewMenu.add(viewMenuItem8x16);
-
-        viewMenuItem8x8.addActionListener(e -> {
-            viewMenuItem8x16.setSelected(false);
-            tilesViewer.setMode(TilesViewerPanel.Mode.MODE_8X8);
-        });
-
-        viewMenuItem8x16.addActionListener(e -> {
-            viewMenuItem8x8.setSelected(false);
-            tilesViewer.setMode(TilesViewerPanel.Mode.MODE_8X16);
-        });
-
-        add(tilesViewerContainer, BorderLayout.NORTH);
-        add(bankSelectorPanel, BorderLayout.SOUTH);
+        add(selectedLabel, "span 1");
+        add(new JLabel("Zoom"), "span 1, wrap");
+        add(tilesViewer, "span 1");
+        add(selectedTile, "span 1, growy, spany, wrap");
+        add(mode8x16, "span 2, wrap");
+        add(bankSelector, "span 1, grow");
         pack();
     }
 
     private record CHRBank(int address) {
         @Override
         public String toString() {
-            return String.format("$%04X", address);
+            return String.format("CHR: $%04X", address);
         }
     }
 }
