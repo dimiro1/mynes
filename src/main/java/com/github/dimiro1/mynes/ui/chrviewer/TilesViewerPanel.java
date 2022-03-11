@@ -98,7 +98,6 @@ public class TilesViewerPanel extends JPanel {
         for (var component : getComponents()) {
             if (component instanceof TileComponent tile) {
                 tile.setBaseAddress(baseAddress);
-                tile.refresh();
             }
         }
     }

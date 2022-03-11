@@ -36,6 +36,7 @@ public class CHRViewerFrame extends JFrame {
             selectedLabel.setText(String.format("Tile: $%02X", selectedTileNumber));
             selectedTile.setTileNumber(selectedTileNumber);
             selectedTile.setBaseAddress(baseAddress);
+            selectedTile.repaint();
         });
 
         var bankSelector = new JComboBox<CHRBank>();
@@ -47,17 +48,23 @@ public class CHRViewerFrame extends JFrame {
             var selected = (CHRBank) bankSelector.getSelectedItem();
             if (selected != null) {
                 baseAddress = selected.address;
-                selectedTile.setBaseAddress(baseAddress);
+
                 tilesViewer.setBaseAddress(selected.address);
+                tilesViewer.repaint();
+
+                selectedTile.setBaseAddress(baseAddress);
+                selectedTile.repaint();
             }
         });
 
         var mode8x16 = new JCheckBox("Tiles 8x16 Mode");
         mode8x16.setSelected(tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16);
-        mode8x16.addActionListener(e -> tilesViewer.setMode(
-                tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16
-                        ? TilesViewerPanel.Mode.MODE_8X8
-                        : TilesViewerPanel.Mode.MODE_8X16));
+        mode8x16.addActionListener(e -> {
+            tilesViewer.setMode(tilesViewer.getMode() == TilesViewerPanel.Mode.MODE_8X16
+                    ? TilesViewerPanel.Mode.MODE_8X8
+                    : TilesViewerPanel.Mode.MODE_8X16);
+            tilesViewer.repaint();
+        });
 
         add(selectedLabel, "span 1");
         add(new JLabel("Zoom"), "span 1, wrap");

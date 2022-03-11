@@ -56,7 +56,6 @@ public class TileComponent extends JComponent {
         for (var i = 0; i < 16; i++) {
             tileData[i] = mapper.charRead(address + i);
         }
-        repaint();
     }
 
     /**
