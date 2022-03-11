@@ -28,7 +28,8 @@ public class CHRViewerFrame extends JFrame {
         setLayout(new MigLayout());
 
         var tilesViewer = new TilesViewerPanel(cart);
-        var selectedTile = new TileComponent(selectedTileNumber, baseAddress, cart.mapper(), 272, 272);
+        var selectedTile = new TileComponent(
+                selectedTileNumber, baseAddress, 272, 272, cart.mapper());
 
         tilesViewer.addChangeListener(tile -> {
             selectedTileNumber = tile.getTileNumber();

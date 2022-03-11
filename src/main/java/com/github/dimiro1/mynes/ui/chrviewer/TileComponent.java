@@ -9,48 +9,52 @@ import java.awt.image.BufferedImage;
 
 public class TileComponent extends JComponent {
     private int tileNumber;
-    private final int[] tileData = new int[16];
     private boolean isHighlighted = false;
-    private final Mapper mapper;
-    private final BufferedImage bufferedImage;
     private int baseAddress;
     private final int width;
     private final int height;
 
+    private final int[] tileData = new int[16];
+    private final BufferedImage bufferedImage;
+    private final Mapper mapper;
+
     public TileComponent(
             final int tileNumber,
             final int baseAddress,
-            final Mapper mapper,
             final int width,
-            final int height
+            final int height,
+            final Mapper mapper
     ) {
         this.tileNumber = tileNumber;
         this.baseAddress = baseAddress;
         this.mapper = mapper;
-        bufferedImage = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
         this.width = width;
         this.height = height;
+        this.bufferedImage = new BufferedImage(
+                8, 8, BufferedImage.TYPE_INT_RGB);
+
         setPreferredSize(new Dimension(width, height));
         refresh();
     }
 
+    /**
+     * Creates a TileComponent with width=16px and height=16px
+     */
     public TileComponent(
             final int tileNumber,
             final int baseAddress,
             final Mapper mapper
     ) {
-        this(tileNumber, baseAddress, mapper, 16, 16);
+        this(tileNumber, baseAddress, 16, 16, mapper);
     }
 
     /**
      * Fetch tile data from memory.
      */
     public void refresh() {
-        var byteIndex = 0;
         var address = (tileNumber * 16) + baseAddress;
-        for (var i = address; i <= address + 15; i++) {
-            tileData[byteIndex] = mapper.charRead(i);
-            byteIndex++;
+        for (var i = 0; i < 16; i++) {
+            tileData[i] = mapper.charRead(address + i);
         }
         repaint();
     }
@@ -86,16 +90,20 @@ public class TileComponent extends JComponent {
      * Adds a border around the tile.
      */
     public void highlight() {
-        isHighlighted = true;
-        repaint();
+        if (!isHighlighted) {
+            isHighlighted = true;
+            repaint();
+        }
     }
 
     /**
      * Remove the border around the tile.
      */
     public void removeHighlight() {
-        isHighlighted = false;
-        repaint();
+        if (isHighlighted) {
+            isHighlighted = false;
+            repaint();
+        }
     }
 
     @Override

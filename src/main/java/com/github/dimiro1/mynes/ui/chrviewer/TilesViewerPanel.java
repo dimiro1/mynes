@@ -101,15 +101,16 @@ public class TilesViewerPanel extends JPanel {
                 tile.refresh();
             }
         }
-        repaint();
     }
 
     /**
      * Sets the base address in the CHR ROM of the tiles.
      */
     public void setBaseAddress(int baseAddress) {
-        this.baseAddress = baseAddress;
-        refresh();
+        if (this.baseAddress != baseAddress) {
+            this.baseAddress = baseAddress;
+            refresh();
+        }
     }
 
     /**
@@ -123,15 +124,16 @@ public class TilesViewerPanel extends JPanel {
      * Updates the current mode.
      */
     public void setMode(final Mode mode) {
-        this.mode = mode;
-        sortTiles();
+        if (this.mode != mode) {
+            this.mode = mode;
+            sortTiles();
+        }
     }
 
     private void init() {
         addTiles(mode == Mode.MODE_8X16 ? arrangement8x16 : arrangement8x8);
     }
 
-    // It loops over the arrangement table to find the position in the table and then calculate the x and y positions.
     private Rectangle getTilePosition(final int tileNumber) {
         var arrangement = (mode == Mode.MODE_8X16) ? arrangement8x16 : arrangement8x8;
 
