@@ -1,26 +1,21 @@
 package com.github.dimiro1.mynes.ui;
 
-import com.formdev.flatlaf.FlatDarkLaf;
-import com.github.dimiro1.mynes.cart.Cart;
+import com.formdev.flatlaf.FlatLightLaf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
-import java.io.FileInputStream;
-import java.io.IOException;
 
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
-    public static void main(String[] args) throws IOException {
-        FlatDarkLaf.setup();
+    public static void main(String[] args) {
+        FlatLightLaf.setup();
 
-        var rom = new FileInputStream(args[0]);
-        var cart = Cart.load(rom.readAllBytes(), args[0]);
         logger.info("MyNES");
 
         SwingUtilities.invokeLater(() -> {
-            var frame = new GameUIFrame(cart);
+            var frame = new GameUIFrame();
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
             frame.setVisible(true);
         });
