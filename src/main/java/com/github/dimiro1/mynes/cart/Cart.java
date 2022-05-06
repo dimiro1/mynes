@@ -16,7 +16,7 @@ public record Cart(
         boolean hasBattery) {
 
     /**
-     * Loads the iNes cart file. https://wiki.nesdev.org/w/index.php/INES
+     * Loads the iNes cart file. <a href="https://wiki.nesdev.org/w/index.php/INES">https://wiki.nesdev.org/w/index.php/INES</a>
      *
      * @param bytes    the iNes file as an array of bytes.
      * @param filename the filename.

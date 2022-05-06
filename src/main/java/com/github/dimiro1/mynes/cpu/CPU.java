@@ -9,8 +9,8 @@ import java.util.List;
  * CPU implements the R2A07 CPU found in the NES video game console.
  *
  * <ul>
- *   <li>http://nesdev.com/6502_cpu.txt
- *   <li>http://www.oxyron.de/html/opcodes02.html
+ *   <li><a href="http://nesdev.com/6502_cpu.txt">http://nesdev.com/6502_cpu.txt</a>
+ *   <li><a href="http://www.oxyron.de/html/opcodes02.html">http://www.oxyron.de/html/opcodes02.html</a>
  * </ul>
  */
 public class CPU {
