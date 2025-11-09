@@ -92,7 +92,7 @@ public class CPU {
 
     /**
      * Request a NMI interrupt.
-     * NMI has the highest priority and cannot be masked by the I flag.
+     * NMI has the highest priority and cannot be masked by I flag.
      */
     public void requestNMI() {
         // NMI always takes priority over IRQ
@@ -100,8 +100,8 @@ public class CPU {
     }
 
     /**
-     * Request a IRQ interrupt.
-     * IRQ can be masked by the I flag and has lower priority than NMI.
+     * Request an IRQ interrupt.
+     * IRQ can be masked by I flag and has lower priority than NMI.
      */
     public void requestIRQ() {
         // Only set IRQ if I flag is clear and no higher priority interrupt is pending
@@ -321,10 +321,8 @@ public class CPU {
 
     private void serveReset() {
         switch (intTick) {
-            case 1, 2 -> {
-                // Cycle 1-2: Internal operations
-                incIntTick();
-            }
+            // Cycle 1-2: Internal operations
+            case 1, 2 -> incIntTick();
             case 3, 4, 5 -> {
                 // Cycle 3-5: Dummy stack reads (SP is decremented but no actual push occurs)
                 pop();
