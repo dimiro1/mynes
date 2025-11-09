@@ -82,6 +82,14 @@ public class BUS {
     }
 
     /**
+     * Triggers a Reset (RST) interrupt on the CPU.
+     * Used during system initialization or reset button press.
+     */
+    public void triggerRST() {
+        cpu.requestRST();
+    }
+
+    /**
      * Checks if DMA transfer is currently in progress.
      *
      * @return true if DMA is active
