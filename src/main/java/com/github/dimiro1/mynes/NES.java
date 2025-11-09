@@ -1,36 +1,46 @@
 package com.github.dimiro1.mynes;
 
-import com.github.dimiro1.mynes.cart.Cart;
-import com.github.dimiro1.mynes.cpu.CPU;
-import com.github.dimiro1.mynes.cpu.Memory;
-import com.github.dimiro1.mynes.ppu.PPU;
-
 public class NES {
-    private final CPU cpu;
-    private final PPU ppu;
-    private final Memory memory;
+    private final BUS bus;
 
     public NES(final Cart cart) {
-        ppu = new PPU(cart.mapper());
-        memory = new Memory(ppu, cart.mapper());
-        cpu = new CPU(memory);
+        Controller controller1 = new StandardController();
+        Controller controller2 = new StandardController();
+        bus = new BUS(cart.mapper(), controller1, controller2);
+        bus.initialize();
     }
 
     public CPU getCPU() {
-        return cpu;
+        return bus.getCPU();
     }
 
-    public Memory getMemory() {
-        return memory;
+    public PPU getPPU() {
+        return bus.getPPU();
+    }
+
+    public MMU getMemory() {
+        return bus.getMMU();
+    }
+
+    public Controller getController1() {
+        return bus.getController1();
+    }
+
+    public Controller getController2() {
+        return bus.getController2();
+    }
+
+    public BUS getBus() {
+        return bus;
     }
 
     public void tick() {
-        cpu.tick();
-        ppu.tick();
-        ppu.tick();
+        bus.getCPU().tick();
+        bus.getPPU().tick();
+        bus.getPPU().tick();
     }
 
     public void step() {
-        this.cpu.step();
+        bus.getCPU().step();
     }
 }

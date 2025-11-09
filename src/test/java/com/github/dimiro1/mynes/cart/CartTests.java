@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.cart;
 
+import com.github.dimiro1.mynes.InvalidNesFileException;
+import com.github.dimiro1.mynes.Cart;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -35,7 +37,7 @@ public class CartTests {
         try (InputStream stream = this.getClass().getResourceAsStream(filename)) {
             assertNotNull(stream);
 
-            assertThrowsExactly(BadiNesFileException.class, () -> Cart.load(stream.readAllBytes(), filename));
+            assertThrowsExactly(InvalidNesFileException.class, () -> Cart.load(stream.readAllBytes(), filename));
         }
     }
 

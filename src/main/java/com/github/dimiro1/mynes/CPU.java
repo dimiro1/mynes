@@ -1,6 +1,4 @@
-package com.github.dimiro1.mynes.cpu;
-
-import com.github.dimiro1.mynes.utils.ByteUtils;
+package com.github.dimiro1.mynes;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,9 +18,9 @@ public class CPU {
     private int tick, intTick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
     private int opcode;
 
-    private final Memory memory;
+    private final BUS bus;
     private Interrupt pendingInterrupt = Interrupt.RST;
-    private final List<EventListener> listeners = new ArrayList<>();
+    private final List<CPUEventListener> listeners = new ArrayList<>();
 
     private final int[] lengthPerOpcode = {
             /*      0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F */
@@ -44,8 +42,8 @@ public class CPU {
             /* F */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
     };
 
-    public CPU(final Memory memory) {
-        this.memory = memory;
+    public CPU(final BUS bus) {
+        this.bus = bus;
 
         setP(0x24);
         tick = 1;
@@ -115,7 +113,7 @@ public class CPU {
      *
      * @param listener Object to listen to internal events.
      */
-    public void addEventListener(final EventListener listener) {
+    public void addEventListener(final CPUEventListener listener) {
         if (!listeners.contains(listener)) {
             listeners.add(listener);
         }
@@ -134,6 +132,12 @@ public class CPU {
      * Step one clock cycle per call.
      */
     public void tick() {
+        // DMA has priority over everything except interrupts already in progress
+        if (!isServingInterrupt() && bus.tickDMA()) {
+            cycles++;
+            return;
+        }
+
         if (canServeInterrupts()) {
             servePendingInterrupt();
             return;
@@ -366,11 +370,11 @@ public class CPU {
     }
 
     private int read(final int address) {
-        return ByteUtils.ensureByte(memory.read(ByteUtils.ensureWord(address)));
+        return ByteUtils.ensureByte(bus.read(ByteUtils.ensureWord(address)));
     }
 
     private void write(final int address, final int data) {
-        memory.write(ByteUtils.ensureWord(address), ByteUtils.ensureByte(data));
+        bus.write(ByteUtils.ensureWord(address), ByteUtils.ensureByte(data));
     }
 
     private void absoluteJump() {
@@ -1971,5 +1975,30 @@ public class CPU {
                         cycles
                 )
         );
+    }
+
+    enum Interrupt {
+        /**
+         * No interrupt pending - normal execution continues.
+         */
+        NIL,
+
+        /**
+         * Non-Maskable Interrupt - triggered by the PPU at the start of VBlank.
+         * Cannot be disabled and has the highest priority. The CPU vectors to $FFFA.
+         */
+        NMI,
+
+        /**
+         * Interrupt Request - typically triggered by external hardware or mappers.
+         * Can be disabled via the interrupt disable flag (I). The CPU vectors to $FFFE.
+         */
+        IRQ,
+
+        /**
+         * Reset interrupt - triggered on system startup or reset button press.
+         * Initializes the CPU and vectors to $FFFC.
+         */
+        RST,
     }
 }

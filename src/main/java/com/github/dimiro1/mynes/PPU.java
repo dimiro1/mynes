@@ -1,9 +1,9 @@
-package com.github.dimiro1.mynes.ppu;
+package com.github.dimiro1.mynes;
 
-import com.github.dimiro1.mynes.cart.mappers.Mapper;
-import com.github.dimiro1.mynes.utils.ByteUtils;
+import com.github.dimiro1.mynes.mappers.Mapper;
 
 public class PPU {
+    private final BUS bus;
     private final Mapper mapper;
     private final VRAM vram;
     private int ppuCtrl;
@@ -16,7 +16,8 @@ public class PPU {
     private int ppuData;
     private int oamDMA;
 
-    public PPU(final Mapper mapper) {
+    public PPU(final BUS bus, final Mapper mapper) {
+        this.bus = bus;
         this.mapper = mapper;
         this.vram = new VRAM();
     }

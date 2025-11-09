@@ -1,4 +1,4 @@
-package com.github.dimiro1.mynes.ppu;
+package com.github.dimiro1.mynes;
 
 public class VRAM {
     private final int[] patternTable0 = new int[0x1000];

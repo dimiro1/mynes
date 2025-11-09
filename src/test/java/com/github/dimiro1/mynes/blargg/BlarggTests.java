@@ -1,8 +1,8 @@
 package com.github.dimiro1.mynes.blargg;
 
 import com.github.dimiro1.mynes.NES;
-import com.github.dimiro1.mynes.cart.Cart;
-import com.github.dimiro1.mynes.cpu.Memory;
+import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.MMU;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.platform.commons.logging.Logger;
@@ -91,12 +91,12 @@ public class BlarggTests {
         });
     }
 
-    private String getMessage(final Memory memory) {
+    private String getMessage(final MMU MMU) {
         var buffer = new ByteArrayOutputStream();
         var address = 0x6004;
 
         while (true) {
-            var data = memory.read(address);
+            var data = MMU.read(address);
             if (data == 0) {
                 break;
             }

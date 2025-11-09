@@ -1,9 +1,9 @@
-package com.github.dimiro1.mynes.cpu;
+package com.github.dimiro1.mynes;
 
 /**
  * CPUEventListener is an interface for objects that wants to listen to internal CPU events.
  */
-public interface EventListener {
+public interface CPUEventListener {
     /**
      * Triggered after instruction decoding and just before the execution of the instruction.
      *

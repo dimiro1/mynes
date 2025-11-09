@@ -1,8 +1,8 @@
 package com.github.dimiro1.mynes.nestests;
 
-import com.github.dimiro1.mynes.cpu.EventListener;
+import com.github.dimiro1.mynes.CPUEventListener;
 
-public class NestestCPUListener implements EventListener {
+public class NestestCPUListener implements CPUEventListener {
     private NestestLogParser.Entry currentStep = new NestestLogParser.Entry(
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     private NestestLogParser.Entry previousStep = new NestestLogParser.Entry(

@@ -1,7 +1,7 @@
 package com.github.dimiro1.mynes.nestests;
 
 import com.github.dimiro1.mynes.NES;
-import com.github.dimiro1.mynes.cart.Cart;
+import com.github.dimiro1.mynes.Cart;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.commons.logging.Logger;
 import org.junit.platform.commons.logging.LoggerFactory;
@@ -72,7 +72,7 @@ public class NesTestTests {
                             0xfd,
                             7
                     ),
-                    lines.get(0)
+                    lines.getFirst()
             );
 
             assertEquals(
