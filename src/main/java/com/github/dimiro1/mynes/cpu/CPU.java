@@ -14,6 +14,7 @@ import java.util.List;
  * </ul>
  */
 public class CPU {
+
     private int a, x, y, sp, pc, p;
     private long cycles;
     private int tick, intTick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
@@ -60,6 +61,16 @@ public class CPU {
         this.pc = ByteUtils.ensureWord(pc);
     }
 
+    /**
+     * Sets the CPU cycle counter.
+     * This method is primarily for testing purposes.
+     *
+     * @param cycles the new cycle count.
+     */
+    public void setCycles(final long cycles) {
+        this.cycles = cycles;
+    }
+
     private void setLowPC(final int low) {
         setPC(ByteUtils.setLow(low, pc));
     }
@@ -81,16 +92,20 @@ public class CPU {
 
     /**
      * Request a NMI interrupt.
+     * NMI has the highest priority and cannot be masked by the I flag.
      */
     public void requestNMI() {
+        // NMI always takes priority over IRQ
         pendingInterrupt = Interrupt.NMI;
     }
 
     /**
      * Request a IRQ interrupt.
+     * IRQ can be masked by the I flag and has lower priority than NMI.
      */
     public void requestIRQ() {
-        if (getFlagI() == 0) {
+        // Only set IRQ if I flag is clear and no higher priority interrupt is pending
+        if (getFlagI() == 0 && pendingInterrupt != Interrupt.NMI) {
             pendingInterrupt = Interrupt.IRQ;
         }
     }
@@ -141,10 +156,10 @@ public class CPU {
             case 0x20 -> jsr();
 
             case 0x0A, 0x1A, 0x18, 0x2A, 0x38, 0x3A, 0x4A, 0x58, 0x5A, 0x6A, 0x78, 0x7A, 0x88, 0x8A, 0x98, 0x9A, 0xA8,
-                    0xAA, 0xB8, 0xBA, 0xC8, 0xCA, 0xD8, 0xDA, 0xE8, 0xEA, 0xF8, 0xFA -> accumulatorOrImplied();
+                 0xAA, 0xB8, 0xBA, 0xC8, 0xCA, 0xD8, 0xDA, 0xE8, 0xEA, 0xF8, 0xFA -> accumulatorOrImplied();
 
             case 0x09, 0x0B, 0x2B, 0x29, 0x49, 0x4B, 0x69, 0x6B, 0x80, 0x82, 0x89, 0x8B, 0xA0, 0xA2, 0xA9, 0xAB, 0xC0,
-                    0xC2, 0xC9, 0xCB, 0xE0, 0xE2, 0xE9, 0xEB -> immediate();
+                 0xC2, 0xC9, 0xCB, 0xE0, 0xE2, 0xE9, 0xEB -> immediate();
 
             case 0x4C -> absoluteJump();
 
@@ -155,18 +170,16 @@ public class CPU {
             case 0x8C, 0x8D, 0x8E, 0x8F -> absoluteWrite();
 
             case 0x04, 0x05, 0x24, 0x25, 0x44, 0x45, 0x64, 0x65, 0xA4, 0xA5, 0xA6, 0xA7, 0xC4, 0xC5, 0xE4,
-                    0xE5 -> zeroPageRead();
+                 0xE5 -> zeroPageRead();
 
             case 0x06, 0x07, 0x26, 0x27, 0x46, 0x47, 0x66, 0x67, 0xC6, 0xC7, 0xE6, 0xE7 -> zeroPageModify();
 
             case 0x84, 0x85, 0x86, 0x87 -> zeroPageWrite();
-
             case 0xB6, 0xB7 -> zeroPageYRead();
 
             case 0x15, 0x35, 0x55, 0x75, 0xB4, 0xB5, 0xD5, 0xF5, 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4 -> zeroPageXRead();
 
             case 0x96, 0x97 -> zeroPageYWrite();
-
             case 0x94, 0x95 -> zeroPageXWrite();
 
             case 0x16, 0x17, 0x36, 0x37, 0x56, 0x57, 0x76, 0x77, 0xD6, 0xD7, 0xF6, 0xF7 -> zeroPageXModify();
@@ -174,31 +187,26 @@ public class CPU {
             case 0x19, 0x39, 0x59, 0x79, 0xB9, 0xBB, 0xBE, 0xBF, 0xD9, 0xF9 -> absoluteIndexedYRead();
 
             case 0x1D, 0x3D, 0x5D, 0x7D, 0xBC, 0xBD, 0xDD, 0xFD, 0x1C, 0xFC,
-                    0xDC, 0x7C, 0x5C, 0x3C -> absoluteIndexedXRead();
+                 0xDC, 0x7C, 0x5C, 0x3C -> absoluteIndexedXRead();
 
             case 0x1B, 0x3B, 0x5B, 0x7B, 0xDB, 0xFB -> absoluteIndexedYModify();
 
             case 0x1E, 0x1F, 0x3E, 0x3F, 0x5E, 0x5F,
-                    0x7E, 0x7F, 0xDE, 0xDF, 0xFE, 0xFF -> absoluteIndexedXModify();
+                 0x7E, 0x7F, 0xDE, 0xDF, 0xFE, 0xFF -> absoluteIndexedXModify();
 
             case 0x99, 0x9B, 0x9E, 0x9F -> absoluteIndexedYWrite();
-
             case 0x9C, 0x9D -> absoluteIndexedXWrite();
-
             case 0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0 -> relative();
 
             case 0x01, 0x21, 0x41, 0x61, 0xA1, 0xA3, 0xC1, 0xE1 -> indexedIndirectRead();
 
             case 0x03, 0x23, 0x43, 0x63, 0xC3, 0xE3 -> indexedIndirectModify();
-
             case 0x81, 0x83 -> indexedIndirectWrite();
 
             case 0x11, 0x31, 0x51, 0x71, 0xB1, 0xB3, 0xD1, 0xF1 -> indirectIndexedRead();
 
             case 0x13, 0x33, 0x53, 0x73, 0xD3, 0xF3 -> indirectIndexedModify();
-
             case 0x91, 0x93 -> indirectIndexedWrite();
-
             case 0x6C -> absoluteIndirectJump();
 
             case 0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2 -> kil();
@@ -230,7 +238,9 @@ public class CPU {
     }
 
     private boolean canServeInterrupts() {
-        return isFirstTickOfInstruction() && (pendingInterrupt != Interrupt.NIL);
+        return (
+                isFirstTickOfInstruction() && (pendingInterrupt != Interrupt.NIL)
+        );
     }
 
     private boolean isServingInterrupt() {
@@ -266,34 +276,43 @@ public class CPU {
     private void serveInterrupt(final int address) {
         switch (intTick) {
             case 1 -> {
+                // Cycle 1: Internal operation (fetch opcode, but don't use it)
+                read(pc);
+                incIntTick();
+            }
+            case 2 -> {
+                // Cycle 2: Push PCH to stack
                 push(ByteUtils.getHigh(pc));
                 decSP();
                 incIntTick();
             }
-            case 2 -> {
+            case 3 -> {
+                // Cycle 3: Push PCL to stack
                 push(ByteUtils.getLow(pc));
                 decSP();
                 incIntTick();
             }
-            case 3 -> {
-                push(p & 0x20 | 0x10);
-                decSP();
-                incIntTick();
-            }
             case 4 -> {
-                tickLow = read(address);
-                incIntTick();
-            }
-            case 5 -> {
-                tickHigh = read(address + 1);
-                setPC(ByteUtils.joinBytes(tickHigh, tickLow));
-                incIntTick();
-            }
-            case 6 -> {
+                // Cycle 4: Push status register with B flag clear (0x00) and unused flag set (0x20)
+                // Hardware interrupts (IRQ/NMI) push with B=0, unlike BRK which pushes with B=1
+                push((p & 0xEF) | 0x20);
+                decSP();
                 setFlagI(true);
                 incIntTick();
             }
+            case 5 -> {
+                // Cycle 5: Fetch low byte of interrupt vector
+                tickLow = read(address);
+                incIntTick();
+            }
+            case 6 -> {
+                // Cycle 6: Fetch high byte of interrupt vector
+                tickHigh = read(address + 1);
+                incIntTick();
+            }
             case 7 -> {
+                // Cycle 7: Set PC to interrupt vector and clear pending interrupt
+                setPC(ByteUtils.joinBytes(tickHigh, tickLow));
                 pendingInterrupt = Interrupt.NIL;
                 resetIntTick();
             }
@@ -302,26 +321,30 @@ public class CPU {
 
     private void serveReset() {
         switch (intTick) {
-            case 1 -> {
-                tickLow = read(0xFFFC);
-                incIntTick();
-            }
-            case 2 -> {
-                tickHigh = read(0xFFFD);
+            case 1, 2 -> {
+                // Cycle 1-2: Internal operations
                 incIntTick();
             }
             case 3, 4, 5 -> {
+                // Cycle 3-5: Dummy stack reads (SP is decremented but no actual push occurs)
                 pop();
                 decSP();
                 incIntTick();
             }
             case 6 -> {
-                setLowPC(tickLow);
-                setFlagI(true);
+                // Cycle 6: Fetch low byte of reset vector
+                tickLow = read(0xFFFC);
                 incIntTick();
             }
             case 7 -> {
-                setHighPC(tickHigh);
+                // Cycle 7: Fetch high byte of reset vector
+                tickHigh = read(0xFFFD);
+                incIntTick();
+            }
+            case 8 -> {
+                // Cycle 8: Set PC to reset vector, set I flag, and clear pending interrupt
+                setPC(ByteUtils.joinBytes(tickHigh, tickLow));
+                setFlagI(true);
                 pendingInterrupt = Interrupt.NIL;
                 resetIntTick();
             }
@@ -459,7 +482,9 @@ public class CPU {
                     case 0xCF -> dcp(tickValue);
                     case 0xEE -> inc(tickValue);
                     case 0xEF -> isc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
                 incTick();
             }
@@ -553,7 +578,9 @@ public class CPU {
                     case 0xE6 -> inc(tickValue);
                     case 0xE7 -> isc(tickValue);
                     case 0x46, 0x56 -> lsr(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
 
                 incTick();
@@ -720,7 +747,9 @@ public class CPU {
                     case 0xD7 -> dcp(tickValue);
                     case 0xF6 -> inc(tickValue);
                     case 0xF7 -> isc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
 
                 incTick();
@@ -745,9 +774,13 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
 
-                if (ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)) {
+                if (
+                        ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
+                ) {
                     incTick();
                 } else {
                     absoluteIndexedYReadAction(read(tickUnfixedAddress));
@@ -789,7 +822,9 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
                 read(tickUnfixedAddress);
                 incTick();
             }
@@ -807,7 +842,9 @@ public class CPU {
                     case 0x7B -> rra(tickValue);
                     case 0xDB -> dcp(tickValue);
                     case 0xFB -> isc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
 
                 incTick();
@@ -832,7 +869,9 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + x);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + x
+                );
                 read(tickUnfixedAddress);
                 incTick();
             }
@@ -856,7 +895,9 @@ public class CPU {
                     case 0xDE -> dec(tickValue);
                     case 0xFF -> isc(tickValue);
                     case 0xFE -> inc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
 
                 incTick();
@@ -881,9 +922,13 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + x);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + x
+                );
 
-                if (ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)) {
+                if (
+                        ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
+                ) {
                     incTick();
                 } else {
                     absoluteIndexedXReadAction(read(tickUnfixedAddress));
@@ -924,7 +969,9 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
                 read(tickUnfixedAddress);
                 incTick();
             }
@@ -933,7 +980,10 @@ public class CPU {
                     case 0x99 -> write(tickAddress, a);
                     case 0x9B -> write(tickAddress, xas(tickHigh + 1));
                     case 0x9E -> write(tickAddress, shx(tickAddress));
-                    case 0x9F -> write(tickAddress, x & a & (ByteUtils.getHigh(tickAddress) + 1));
+                    case 0x9F -> write(
+                            tickAddress,
+                            x & a & (ByteUtils.getHigh(tickAddress) + 1)
+                    );
                 }
                 resetTick();
             }
@@ -953,7 +1003,9 @@ public class CPU {
             }
             case 4 -> {
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + x);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + x
+                );
                 read(tickUnfixedAddress);
                 incTick();
             }
@@ -973,17 +1025,21 @@ public class CPU {
             case 2 -> {
                 tickBaseAddress = fetchPCInc();
 
-                if (switch (opcode) {
-                    case 0x10 -> getFlagN() == 0;
-                    case 0x30 -> getFlagN() == 1;
-                    case 0x50 -> getFlagV() == 0;
-                    case 0x70 -> getFlagV() == 1;
-                    case 0x90 -> getFlagC() == 0;
-                    case 0xB0 -> getFlagC() == 1;
-                    case 0xD0 -> getFlagZ() == 0;
-                    case 0xF0 -> getFlagZ() == 1;
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
-                }) {
+                if (
+                        switch (opcode) {
+                            case 0x10 -> getFlagN() == 0;
+                            case 0x30 -> getFlagN() == 1;
+                            case 0x50 -> getFlagV() == 0;
+                            case 0x70 -> getFlagV() == 1;
+                            case 0x90 -> getFlagC() == 0;
+                            case 0xB0 -> getFlagC() == 1;
+                            case 0xD0 -> getFlagZ() == 0;
+                            case 0xF0 -> getFlagZ() == 1;
+                            default -> throw new IllegalStateException(
+                                    "Unexpected opcode: " + opcode
+                            );
+                        }
+                ) {
                     incTick();
                 } else {
                     resetTick();
@@ -1078,7 +1134,9 @@ public class CPU {
                     case 0x63 -> rra(tickValue);
                     case 0xC3 -> dcp(tickValue);
                     case 0xE3 -> isc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
 
                 incTick();
@@ -1136,14 +1194,18 @@ public class CPU {
             }
             case 4 -> {
                 tickHigh = read(ByteUtils.ensureByte(tickBaseAddress + 1));
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 incTick();
             }
             case 5 -> {
                 tickValue = read(tickUnfixedAddress);
 
-                if (ByteUtils.isDifferentPage(tickUnfixedAddress, tickAddress)) {
+                if (
+                        ByteUtils.isDifferentPage(tickUnfixedAddress, tickAddress)
+                ) {
                     incTick();
                 } else {
                     indirectIndexedReadAction(tickValue);
@@ -1184,7 +1246,9 @@ public class CPU {
             }
             case 4 -> {
                 tickHigh = read(ByteUtils.ensureByte(tickBaseAddress + 1));
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 incTick();
             }
@@ -1206,7 +1270,9 @@ public class CPU {
                     case 0x73 -> rra(tickValue);
                     case 0xD3 -> dcp(tickValue);
                     case 0xF3 -> isc(tickValue);
-                    default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+                    default -> throw new IllegalStateException(
+                            "Unexpected opcode: " + opcode
+                    );
                 };
                 incTick();
             }
@@ -1230,7 +1296,9 @@ public class CPU {
             }
             case 4 -> {
                 tickHigh = read(ByteUtils.ensureByte(tickBaseAddress + 1));
-                tickAddress = ByteUtils.ensureWord(ByteUtils.joinBytes(tickHigh, tickLow) + y);
+                tickAddress = ByteUtils.ensureWord(
+                        ByteUtils.joinBytes(tickHigh, tickLow) + y
+                );
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 incTick();
             }
@@ -1241,7 +1309,10 @@ public class CPU {
             case 6 -> {
                 switch (opcode) {
                     case 0x91 -> write(tickAddress, a);
-                    case 0x93 -> write(tickAddress, x & a & (ByteUtils.getHigh(tickAddress) + 1));
+                    case 0x93 -> write(
+                            tickAddress,
+                            x & a & (ByteUtils.getHigh(tickAddress) + 1)
+                    );
                 }
                 resetTick();
             }
@@ -1358,7 +1429,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                setP(pop() & 0xEF | 0x20);
+                setP((pop() & 0xEF) | 0x20);
                 resetTick();
             }
         }
@@ -1429,7 +1500,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
-                setP(pop() & 0xEF | 0x20);
+                setP((pop() & 0xEF) | 0x20);
                 incSP();
                 incTick();
             }
@@ -1517,7 +1588,9 @@ public class CPU {
         return sp & value;
     }
 
-    private void nop() { /* No Operation */ }
+    private void nop() {
+        /* No Operation */
+    }
 
     private void ldy(final int value) {
         setY(value);
@@ -1562,7 +1635,10 @@ public class CPU {
 
         setA(ByteUtils.ensureByte(r));
         setFlagC(r > 0xFF);
-        setFlagV(((a ^ value) & 0x80) == 0 && ((a ^ ByteUtils.ensureByte(r)) & 0x80) != 0);
+        setFlagV(
+                ((a ^ value) & 0x80) == 0 &&
+                        ((a ^ ByteUtils.ensureByte(r)) & 0x80) != 0
+        );
         setZeroNegFlags(this.a);
     }
 
@@ -1583,7 +1659,9 @@ public class CPU {
 
         setA(ByteUtils.ensureByte(r));
         setFlagC(r >= 0);
-        setFlagV(((a ^ value) & 0x80) != 0 && ((a ^ ByteUtils.ensureByte(r)) & 0x80) != 0);
+        setFlagV(((a ^ value) & 0x80) != 0 &&
+                ((a ^ ByteUtils.ensureByte(r)) & 0x80) != 0
+        );
         setZeroNegFlags(this.a);
     }
 
@@ -1767,7 +1845,7 @@ public class CPU {
     }
 
     private void arr(final int value) {
-        setA(((value & a) >> 1) | getFlagC() << 7);
+        setA(((value & a) >> 1) | (getFlagC() << 7));
         setFlagC(ByteUtils.getBit(6, a));
         setZeroNegFlags(a);
 
@@ -1876,11 +1954,24 @@ public class CPU {
     }
 
     private void notifyStep() {
-        if (listeners.size() == 0) {
+        if (listeners.isEmpty()) {
             return;
         }
 
-        listeners.forEach(l -> l.onStep(pc, a, x, y, p, sp, opcode,
-                read(pc + 1), read(pc + 2), lengthPerOpcode[opcode], cycles));
+        listeners.forEach(l ->
+                l.onStep(
+                        pc,
+                        a,
+                        x,
+                        y,
+                        p,
+                        sp,
+                        opcode,
+                        read(pc + 1),
+                        read(pc + 2),
+                        lengthPerOpcode[opcode],
+                        cycles
+                )
+        );
     }
 }

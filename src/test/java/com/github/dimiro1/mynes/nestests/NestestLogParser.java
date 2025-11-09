@@ -1,10 +1,11 @@
 package com.github.dimiro1.mynes.nestests;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -62,17 +63,20 @@ public class NestestLogParser {
         }
 
         @Override
+        @NotNull
         public String toString() {
-            var instruction = new String[opcodeLength];
-            instruction[0] = String.format("%02X", opcode);
+            List<String> instruction = new ArrayList<>();
 
-            if (opcodeLength == 2) {
-                instruction[1] = String.format("%02X", operand1);
+            if (opcodeLength >= 1) {
+                instruction.add(String.format("%02X", opcode));
             }
 
-            if (opcodeLength == 3) {
-                instruction[1] = String.format("%02X", operand1);
-                instruction[2] = String.format("%02X", operand2);
+            if (opcodeLength >= 2) {
+                instruction.add(String.format("%02X", operand1));
+            }
+
+            if (opcodeLength >= 3) {
+                instruction.add(String.format("%02X", operand2));
             }
 
             return String.format("Entry[pc=%04X, instruction=[%s], a=%02X, x=%02X, y=%02X, p=%02X, sp=%02X, cycle=%d]",
@@ -81,17 +85,16 @@ public class NestestLogParser {
     }
 
     public static List<Entry> parse(final InputStream log) {
-        var pattern = Pattern.compile("" +
-                        "^(?<pc>[\\w]{4}) {2}" + // program counter
-                        "((?<op>[\\w]{2}) (?<op1>[\\w]{2})? (?<op2>[\\w]{2})?) " + // opcode operand1 operand2
+        var pattern = Pattern.compile("^(?<pc>\\w{4}) {2}" + // program counter
+                        "((?<op>\\w{2}) (?<op1>\\w{2})? (?<op2>\\w{2})?) " + // opcode operand1 operand2
                         "(.+) " + // Human readable opcode
-                        "A:(?<a>[\\w]{2}) " + // A
-                        "X:(?<x>[\\w]{2}) " + // X
-                        "Y:(?<y>[\\w]{2}) " + // Y
-                        "P:(?<p>[\\w]{2}) " + // P
-                        "SP:(?<sp>[\\w]{2})" + // SP
+                        "A:(?<a>\\w{2}) " + // A
+                        "X:(?<x>\\w{2}) " + // X
+                        "Y:(?<y>\\w{2}) " + // Y
+                        "P:(?<p>\\w{2}) " + // P
+                        "SP:(?<sp>\\w{2})" + // SP
                         "(.+)" + // Ignored PPU
-                        "CYC:(?<cyc>[\\d]+)$", // Cycles
+                        "CYC:(?<cyc>\\d+)$", // Cycles
                 Pattern.CASE_INSENSITIVE
         );
         var reader = new BufferedReader(new InputStreamReader(log));

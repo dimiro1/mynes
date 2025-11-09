@@ -33,9 +33,10 @@ public class NesTestTests {
         // Handle reset
         nes.step();
         cpu.setPC(0xC000);
+        cpu.setCycles(7);
 
         try (var stream = this.getClass().getResourceAsStream(log)) {
-            NestestLogParser.parse(stream).forEach((entry) -> {
+            for (NestestLogParser.Entry entry : NestestLogParser.parse(stream)) {
                 nes.step();
 
                 if (!entry.equals(cpuListener.getCurrentStep())) {
@@ -44,10 +45,10 @@ public class NesTestTests {
                     logger.error(() -> cpuListener.getPreviousStep().toString());
                 }
                 assertEquals(entry, cpuListener.getCurrentStep());
-            });
+            }
         }
         logger.info(() -> String.format("%X\n", memory.read(0x02)));
-        logger.info(() -> cpuListener.getPreviousStep().toString());
+        logger.info(() -> cpuListener.getCurrentStep().toString());
     }
 
     @Test
