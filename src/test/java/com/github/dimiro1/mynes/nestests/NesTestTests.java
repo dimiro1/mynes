@@ -38,6 +38,9 @@ public class NesTestTests {
     private static final int TEST_RESULT_LOW = 0x02;     // Low byte of test result code
     private static final int TEST_RESULT_HIGH = 0x03;    // High byte of test result code
 
+    // Last log line is CYC:26554, and its RTS takes another six cycles
+    private static final long EXPECTED_FINAL_CYCLES = 26_560;
+
     /**
      * Runs the full nestest ROM and validates execution against the golden log.
      * <p>
@@ -91,11 +94,21 @@ public class NesTestTests {
             }
         }
 
-        // Log final test results
+        // Check the result codes the ROM itself reports. Matching the golden log line by line
+        // is the stronger check, but these catch anything the log does not cover.
         var resultLow = memory.read(TEST_RESULT_LOW);
         var resultHigh = memory.read(TEST_RESULT_HIGH);
         logger.info(() -> String.format("Test completed. Result code: $%02X%02X", resultHigh, resultLow));
         logger.info(() -> "Final state: " + cpuListener.getCurrentStep());
+
+        assertEquals(0, resultLow, "official opcode failures reported at $02");
+        assertEquals(0, resultHigh, "unofficial opcode failures reported at $03");
+
+        // The log stops at the last instruction, whose six cycle RTS is still to come.
+        assertEquals(
+                EXPECTED_FINAL_CYCLES, cpu.getState().cycles(),
+                "total cycle count after the last logged instruction has retired"
+        );
     }
 
     /**

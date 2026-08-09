@@ -43,7 +43,7 @@ public class ByteUtils {
      * Returns the high nibble of a byte.
      */
     public static int getHighNibble(final int value) {
-        return ensureNibble(value) >> 0x04;
+        return ensureNibble(value >> 4);
     }
 
     /**
@@ -82,10 +82,10 @@ public class ByteUtils {
     }
 
     /**
-     * Mask the value with 0x04.
+     * Mask the value with 0x0F.
      */
     public static int ensureNibble(final int value) {
-        return value & 0x04;
+        return value & 0x0F;
     }
 
     /**

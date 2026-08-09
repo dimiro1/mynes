@@ -13,14 +13,71 @@ import java.util.List;
  */
 public class CPU {
 
+    /**
+     * The constant the accumulator is OR'd with by the unstable immediate opcodes XAA ($8B) and
+     * LXA ($AB). Real hardware has no single answer here -- the value depends on the chip and
+     * even on its temperature -- so this matches the reference implementation the Tom Harte test
+     * set was generated from.
+     */
+    private static final int UNSTABLE_MAGIC = 0xEE;
+
+    private static final int NMI_VECTOR = 0xFFFA;
+    private static final int RST_VECTOR = 0xFFFC;
+    private static final int IRQ_VECTOR = 0xFFFE;
+
     private int a, x, y, sp, pc, p;
     private long cycles;
     private int tick, intTick, tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
     private int opcode;
 
-    private final BUS bus;
-    private Interrupt pendingInterrupt = Interrupt.RST;
+    private final CPUBus bus;
     private final List<CPUEventListener> listeners = new ArrayList<>();
+
+    /**
+     * Reset is a one-shot request: there is no line for a device to keep holding, so the flag is
+     * cleared as soon as the reset sequence starts. Set at construction so a fresh CPU boots
+     * through the reset vector.
+     */
+    private boolean rstPending = true;
+
+    /**
+     * NMI is edge triggered: the falling edge arms this latch and only the vector fetch of the
+     * sequence that services it disarms the latch again. That is what stops one edge from being
+     * serviced twice, and what lets an NMI raised during an IRQ or BRK sequence take over its
+     * vector fetch.
+     */
+    private boolean nmiPending;
+
+    /**
+     * IRQ is level triggered: the device holds the line and the CPU keeps seeing it on every
+     * poll until the device lets go. Nothing here latches it, so an IRQ that is masked when it
+     * is polled is still there to be serviced once the I flag clears.
+     */
+    private boolean irqLine;
+
+    /**
+     * Set by a poll that saw a serviceable interrupt, cleared by the instruction boundary that
+     * acts on it. Being sticky is what makes the timing work: the poll happens on the last cycle
+     * of an instruction but the sequence cannot start until the instruction has finished.
+     */
+    private boolean interruptPending;
+
+    /**
+     * The interrupt sequence currently executing, if any.
+     */
+    private Sequence sequence = Sequence.NONE;
+
+    /**
+     * The vector an interrupt sequence (or BRK) settled on. Chosen at the cycle the low byte is
+     * fetched, not when the sequence starts.
+     */
+    private int interruptVector;
+
+    /**
+     * True when the last cycle was spent held off the bus by a DMA transfer rather than doing
+     * any work of the CPU's own.
+     */
+    private boolean stalled;
 
     private final int[] lengthPerOpcode = {
             /*      0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F */
@@ -42,7 +99,7 @@ public class CPU {
             /* F */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
     };
 
-    public CPU(final BUS bus) {
+    public CPU(final CPUBus bus) {
         this.bus = bus;
 
         setP(0x24);
@@ -69,6 +126,44 @@ public class CPU {
         this.cycles = cycles;
     }
 
+    /**
+     * Returns the architectural state of the CPU.
+     *
+     * @return a snapshot of the registers and the cycle counter.
+     */
+    public State getState() {
+        return new State(a, x, y, sp, pc, p, cycles);
+    }
+
+    /**
+     * Overwrites the architectural state of the CPU.
+     * <p>
+     * Besides the registers this drops any partially executed instruction, any interrupt
+     * sequence in flight and every pending interrupt request -- including the power-on RST
+     * that a freshly constructed CPU starts with. After this call the next {@link #tick()}
+     * fetches an opcode from the supplied program counter.
+     * <p>
+     * This method is primarily for testing purposes.
+     *
+     * @param state the state to load.
+     */
+    public void loadState(final State state) {
+        setA(state.a());
+        setX(state.x());
+        setY(state.y());
+        setSP(state.sp());
+        setPC(state.pc());
+        setP(state.p());
+        cycles = state.cycles();
+        tick = 1;
+        intTick = 1;
+        rstPending = false;
+        nmiPending = false;
+        irqLine = false;
+        interruptPending = false;
+        sequence = Sequence.NONE;
+    }
+
     private void setLowPC(final int low) {
         setPC(ByteUtils.setLow(low, pc));
     }
@@ -85,27 +180,31 @@ public class CPU {
      * Request a RST interrupt.
      */
     public void requestRST() {
-        pendingInterrupt = Interrupt.RST;
+        rstPending = true;
     }
 
     /**
-     * Request a NMI interrupt.
-     * NMI has the highest priority and cannot be masked by I flag.
+     * Signal the falling edge of the NMI line.
+     * <p>
+     * NMI cannot be masked by the I flag and takes priority over IRQ. Because the line is edge
+     * triggered, calling this twice before the CPU gets to service it still produces a single
+     * interrupt.
      */
     public void requestNMI() {
-        // NMI always takes priority over IRQ
-        pendingInterrupt = Interrupt.NMI;
+        nmiPending = true;
     }
 
     /**
-     * Request an IRQ interrupt.
-     * IRQ can be masked by I flag and has lower priority than NMI.
+     * Assert or release the IRQ line.
+     * <p>
+     * The line is level triggered and shared: a device holds it until whatever raised it has
+     * been acknowledged. Asserting it while the I flag is set does not lose the request, the CPU
+     * simply keeps ignoring it until the flag clears.
+     *
+     * @param asserted true to pull the line low, false to release it.
      */
-    public void requestIRQ() {
-        // Only set IRQ if I flag is clear and no higher priority interrupt is pending
-        if (getFlagI() == 0 && pendingInterrupt != Interrupt.NMI) {
-            pendingInterrupt = Interrupt.IRQ;
-        }
+    public void setIRQLine(final boolean asserted) {
+        irqLine = asserted;
     }
 
     /**
@@ -121,11 +220,14 @@ public class CPU {
 
     /**
      * Step one instruction per call.
+     * <p>
+     * An OAM DMA transfer holds the CPU off the bus for over five hundred cycles without any
+     * instruction running, so the stall is absorbed here rather than being reported as a step.
      */
     public void step() {
         do {
             tick();
-        } while (isRunningInstruction() || isServingInterrupt());
+        } while (stalled || isRunningInstruction() || isServingInterrupt());
     }
 
     /**
@@ -133,10 +235,13 @@ public class CPU {
      */
     public void tick() {
         // DMA has priority over everything except interrupts already in progress
-        if (!isServingInterrupt() && bus.tickDMA()) {
+        if (!isServingInterrupt() && bus.tickDMA(cycles)) {
+            stalled = true;
             cycles++;
             return;
         }
+
+        stalled = false;
 
         if (canServeInterrupts()) {
             servePendingInterrupt();
@@ -241,10 +346,25 @@ public class CPU {
         cycles++;
     }
 
+    /**
+     * Samples the interrupt lines.
+     * <p>
+     * Called at the start of every cycle that can be an instruction's last one, before that
+     * cycle does its work. Sampling <em>before</em> the work is what gives the flag-changing
+     * instructions their documented behaviour for free: CLI, SEI and PLP write the I flag on
+     * their last cycle, so the poll still sees the old flag and the change only takes effect for
+     * the following instruction. RTI restores the flag three cycles earlier, so its own poll
+     * already sees the restored value and it is not delayed.
+     */
+    private void pollInterrupts() {
+        if (nmiPending || (irqLine && getFlagI() == 0)) {
+            interruptPending = true;
+        }
+    }
+
     private boolean canServeInterrupts() {
-        return (
-                isFirstTickOfInstruction() && (pendingInterrupt != Interrupt.NIL)
-        );
+        return isFirstTickOfInstruction()
+                && (sequence != Sequence.NONE || rstPending || interruptPending);
     }
 
     private boolean isServingInterrupt() {
@@ -270,54 +390,78 @@ public class CPU {
     }
 
     private void servePendingInterrupt() {
-        switch (pendingInterrupt) {
-            case IRQ -> serveInterrupt(0xFFFE);
-            case NMI -> serveInterrupt(0xFFFA);
-            case RST -> serveReset();
+        if (sequence == Sequence.NONE) {
+            // Reset outranks everything. IRQ and NMI share one sequence and are only told
+            // apart at the vector fetch.
+            sequence = rstPending ? Sequence.RESET : Sequence.INTERRUPT;
+            rstPending = false;
+            interruptPending = false;
+        }
+
+        if (sequence == Sequence.RESET) {
+            serveReset();
+        } else {
+            serveInterrupt();
         }
     }
 
-    private void serveInterrupt(final int address) {
+    /**
+     * Picks the vector for an interrupt sequence, at the cycle it is fetched rather than when
+     * the sequence started.
+     * <p>
+     * An NMI raised while an IRQ or BRK sequence was still pushing therefore hijacks it: the
+     * sequence finishes as an NMI, the edge latch is spent, and only one interrupt is serviced.
+     * A BRK hijacked this way still pushed its status byte with the B flag set, because that
+     * happened before this point.
+     */
+    private int takeVector() {
+        if (nmiPending) {
+            nmiPending = false;
+            return NMI_VECTOR;
+        }
+
+        return IRQ_VECTOR;
+    }
+
+    private void serveInterrupt() {
         switch (intTick) {
-            case 1 -> {
-                // Cycle 1: Internal operation (fetch opcode, but don't use it)
+            case 1, 2 -> {
+                // Cycles 1-2: The instruction fetch that was already under way, twice over.
+                // Both bytes are discarded; the CPU is committed to the interrupt by now.
                 read(pc);
                 incIntTick();
             }
-            case 2 -> {
-                // Cycle 2: Push PCH to stack
+            case 3 -> {
+                // Cycle 3: Push PCH to stack
                 push(ByteUtils.getHigh(pc));
                 decSP();
                 incIntTick();
             }
-            case 3 -> {
-                // Cycle 3: Push PCL to stack
+            case 4 -> {
+                // Cycle 4: Push PCL to stack
                 push(ByteUtils.getLow(pc));
                 decSP();
                 incIntTick();
             }
-            case 4 -> {
-                // Cycle 4: Push status register with B flag clear (0x00) and unused flag set (0x20)
+            case 5 -> {
+                // Cycle 5: Push status register with B flag clear (0x00) and unused flag set (0x20)
                 // Hardware interrupts (IRQ/NMI) push with B=0, unlike BRK which pushes with B=1
                 push((p & 0xEF) | 0x20);
                 decSP();
                 setFlagI(true);
                 incIntTick();
             }
-            case 5 -> {
-                // Cycle 5: Fetch low byte of interrupt vector
-                tickLow = read(address);
-                incIntTick();
-            }
             case 6 -> {
-                // Cycle 6: Fetch high byte of interrupt vector
-                tickHigh = read(address + 1);
+                // Cycle 6: Choose and fetch low byte of interrupt vector
+                interruptVector = takeVector();
+                tickLow = read(interruptVector);
                 incIntTick();
             }
             case 7 -> {
-                // Cycle 7: Set PC to interrupt vector and clear pending interrupt
+                // Cycle 7: Fetch high byte of interrupt vector and end the sequence
+                tickHigh = read(interruptVector + 1);
                 setPC(ByteUtils.joinBytes(tickHigh, tickLow));
-                pendingInterrupt = Interrupt.NIL;
+                sequence = Sequence.NONE;
                 resetIntTick();
             }
         }
@@ -335,19 +479,19 @@ public class CPU {
             }
             case 6 -> {
                 // Cycle 6: Fetch low byte of reset vector
-                tickLow = read(0xFFFC);
+                tickLow = read(RST_VECTOR);
                 incIntTick();
             }
             case 7 -> {
                 // Cycle 7: Fetch high byte of reset vector
-                tickHigh = read(0xFFFD);
+                tickHigh = read(RST_VECTOR + 1);
                 incIntTick();
             }
             case 8 -> {
-                // Cycle 8: Set PC to reset vector, set I flag, and clear pending interrupt
+                // Cycle 8: Set PC to reset vector, set I flag, and end the sequence
                 setPC(ByteUtils.joinBytes(tickHigh, tickLow));
                 setFlagI(true);
-                pendingInterrupt = Interrupt.NIL;
+                sequence = Sequence.NONE;
                 resetIntTick();
             }
         }
@@ -385,6 +529,7 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                pollInterrupts();
                 tickHigh = fetchPC();
                 setPC(ByteUtils.joinBytes(tickHigh, tickLow));
                 resetTick();
@@ -409,6 +554,7 @@ public class CPU {
                 incTick();
             }
             case 5 -> {
+                pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow + 1);
                 setHighPC(read(tickAddress));
                 resetTick();
@@ -428,6 +574,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickValue = read(ByteUtils.joinBytes(tickHigh, tickLow));
 
                 switch (opcode) {
@@ -491,6 +638,7 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -509,6 +657,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
                 switch (opcode) {
                     case 0x8C -> write(tickAddress, y);
@@ -529,6 +678,7 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                pollInterrupts();
                 tickValue = read(tickAddress);
 
                 switch (opcode) {
@@ -588,6 +738,7 @@ public class CPU {
                 incTick();
             }
             case 5 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -602,6 +753,7 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                pollInterrupts();
                 switch (opcode) {
                     case 0x84 -> write(tickAddress, y);
                     case 0x85 -> write(tickAddress, a);
@@ -627,6 +779,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickValue = read(tickAddress);
 
                 switch (opcode) {
@@ -652,6 +805,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickValue = read(tickAddress);
 
                 switch (opcode) {
@@ -684,6 +838,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 switch (opcode) {
                     case 0x96 -> write(tickAddress, x);
                     case 0x97 -> write(tickAddress, a & x);
@@ -707,6 +862,7 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 switch (opcode) {
                     case 0x94 -> write(tickAddress, y);
                     case 0x95 -> write(tickAddress, a);
@@ -757,6 +913,7 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -775,21 +932,27 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + y);
                 tickAddress = ByteUtils.ensureWord(
                         ByteUtils.joinBytes(tickHigh, tickLow) + y
                 );
+
+                // The read happens either way: the CPU cannot know the high byte needs fixing
+                // until it has already put the unfixed address on the bus.
+                tickValue = read(tickUnfixedAddress);
 
                 if (
                         ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
                 ) {
                     incTick();
                 } else {
-                    absoluteIndexedYReadAction(read(tickUnfixedAddress));
+                    absoluteIndexedYReadAction(tickValue);
                     resetTick(); // no need to execute cycle 5
                 }
             }
             case 5 -> {
+                pollInterrupts();
                 absoluteIndexedYReadAction(read(tickAddress));
                 resetTick();
             }
@@ -852,6 +1015,7 @@ public class CPU {
                 incTick();
             }
             case 7 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -905,6 +1069,7 @@ public class CPU {
                 incTick();
             }
             case 7 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -923,21 +1088,27 @@ public class CPU {
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 tickUnfixedAddress = ByteUtils.joinBytes(tickHigh, tickLow + x);
                 tickAddress = ByteUtils.ensureWord(
                         ByteUtils.joinBytes(tickHigh, tickLow) + x
                 );
+
+                // The read happens either way: the CPU cannot know the high byte needs fixing
+                // until it has already put the unfixed address on the bus.
+                tickValue = read(tickUnfixedAddress);
 
                 if (
                         ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
                 ) {
                     incTick();
                 } else {
-                    absoluteIndexedXReadAction(read(tickUnfixedAddress));
+                    absoluteIndexedXReadAction(tickValue);
                     resetTick(); // no need to execute cycle 5
                 }
             }
             case 5 -> {
+                pollInterrupts();
                 absoluteIndexedXReadAction(read(tickAddress));
                 resetTick();
             }
@@ -978,14 +1149,16 @@ public class CPU {
                 incTick();
             }
             case 5 -> {
+                pollInterrupts();
                 switch (opcode) {
                     case 0x99 -> write(tickAddress, a);
-                    case 0x9B -> write(tickAddress, xas(tickHigh + 1));
-                    case 0x9E -> write(tickAddress, shx(tickAddress));
-                    case 0x9F -> write(
-                            tickAddress,
-                            x & a & (ByteUtils.getHigh(tickAddress) + 1)
-                    );
+                    case 0x9B -> {
+                        // TAS/SHS also copies A & X into the stack pointer.
+                        setSP(a & x);
+                        storeHigh(sp);
+                    }
+                    case 0x9E -> storeHigh(x);
+                    case 0x9F -> storeHigh(a & x);
                 }
                 resetTick();
             }
@@ -1012,8 +1185,9 @@ public class CPU {
                 incTick();
             }
             case 5 -> {
+                pollInterrupts();
                 switch (opcode) {
-                    case 0x9C -> write(tickAddress, shy(tickAddress));
+                    case 0x9C -> storeHigh(y);
                     case 0x9D -> write(tickAddress, a);
                 }
                 resetTick();
@@ -1021,10 +1195,20 @@ public class CPU {
         }
     }
 
+    /**
+     * Conditional branches, and the one place where the interrupt poll does not simply happen on
+     * the last cycle.
+     * <p>
+     * Cycle 2 always polls -- it is the last cycle when the branch is not taken. Cycle 3, the
+     * last cycle of a taken branch that stays inside the page, does <em>not</em>: that is the
+     * documented branch quirk, and it delays an interrupt raised during cycle 2 by a whole
+     * instruction. Cycle 4, reached only when the branch crosses a page, polls normally.
+     */
     private void relative() {
         switch (tick) {
             case 1 -> incTick();
             case 2 -> {
+                pollInterrupts();
                 tickBaseAddress = fetchPCInc();
 
                 if (
@@ -1048,7 +1232,14 @@ public class CPU {
                 }
             }
             case 3 -> {
+                // Deliberately no poll here; see the branch quirk above.
+                // The CPU has already started fetching the next opcode while it adds the offset.
+                fetchPC();
+
                 tickAddress = ByteUtils.ensureWord(pc + (byte) tickBaseAddress);
+                tickUnfixedAddress = ByteUtils.joinBytes(
+                        ByteUtils.getHigh(pc), ByteUtils.getLow(tickAddress)
+                );
 
                 if (ByteUtils.isDifferentPage(pc, tickAddress)) {
                     incTick();
@@ -1058,7 +1249,13 @@ public class CPU {
 
                 setPC(tickAddress);
             }
-            case 4 -> resetTick();
+            case 4 -> {
+                pollInterrupts();
+                // The extra cycle is spent reading from the target with the old high byte,
+                // which is what makes a page-crossing branch cost four cycles instead of three.
+                read(tickUnfixedAddress);
+                resetTick();
+            }
         }
     }
 
@@ -1083,6 +1280,7 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
                 tickValue = read(tickAddress);
 
@@ -1144,6 +1342,7 @@ public class CPU {
                 incTick();
             }
             case 8 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -1171,6 +1370,7 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
 
                 switch (opcode) {
@@ -1203,6 +1403,7 @@ public class CPU {
                 incTick();
             }
             case 5 -> {
+                pollInterrupts();
                 tickValue = read(tickUnfixedAddress);
 
                 if (
@@ -1215,6 +1416,7 @@ public class CPU {
                 }
             }
             case 6 -> {
+                pollInterrupts();
                 tickValue = read(tickAddress);
                 indirectIndexedReadAction(tickValue);
                 resetTick();
@@ -1279,6 +1481,7 @@ public class CPU {
                 incTick();
             }
             case 8 -> {
+                pollInterrupts();
                 write(tickAddress, tickValue);
                 resetTick();
             }
@@ -1309,12 +1512,10 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 switch (opcode) {
                     case 0x91 -> write(tickAddress, a);
-                    case 0x93 -> write(
-                            tickAddress,
-                            x & a & (ByteUtils.getHigh(tickAddress) + 1)
-                    );
+                    case 0x93 -> storeHigh(a & x);
                 }
                 resetTick();
             }
@@ -1325,6 +1526,7 @@ public class CPU {
         switch (tick) {
             case 1 -> incTick();
             case 2 -> {
+                pollInterrupts();
                 tickValue = fetchPCInc();
 
                 switch (opcode) {
@@ -1338,7 +1540,7 @@ public class CPU {
                     case 0xA0 -> ldy(tickValue);
                     case 0xA2 -> ldx(tickValue);
                     case 0xA9 -> lda(tickValue);
-                    case 0xAB -> lax(tickValue);
+                    case 0xAB -> lxa(tickValue);
                     case 0xC0 -> cpy(tickValue);
                     case 0xC9 -> cmp(tickValue);
                     case 0xCB -> axs(tickValue);
@@ -1357,6 +1559,7 @@ public class CPU {
         switch (tick) {
             case 1 -> incTick();
             case 2 -> {
+                pollInterrupts();
                 fetchPC();
 
                 switch (opcode) {
@@ -1397,6 +1600,7 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                pollInterrupts();
                 push(p | 0x30);
                 decSP();
                 resetTick();
@@ -1412,6 +1616,7 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                pollInterrupts();
                 push(a);
                 decSP();
                 resetTick();
@@ -1427,10 +1632,14 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                // The stack pointer is incremented during this cycle, so the address that goes
+                // out on the bus is still the old one and the byte read is discarded.
+                pop();
                 incSP();
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 setP((pop() & 0xEF) | 0x20);
                 resetTick();
             }
@@ -1445,10 +1654,13 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                // Discarded stack read while the stack pointer is incremented.
+                pop();
                 incSP();
                 incTick();
             }
             case 4 -> {
+                pollInterrupts();
                 setA(pop());
                 setZeroNegFlags(a);
                 resetTick();
@@ -1479,12 +1691,15 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
-                setLowPC(read(0xFFFE));
+                // BRK picks its vector the same way an interrupt sequence does, so an NMI that
+                // arrived while the status byte was being pushed hijacks it.
+                interruptVector = takeVector();
+                setLowPC(read(interruptVector));
                 setFlagI(true);
                 incTick();
             }
             case 7 -> {
-                setHighPC(read(0xFFFF));
+                setHighPC(read(interruptVector + 1));
                 resetTick();
             }
         }
@@ -1498,6 +1713,8 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                // Discarded stack read while the stack pointer is incremented.
+                pop();
                 incSP();
                 incTick();
             }
@@ -1512,6 +1729,7 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 setHighPC(pop());
                 resetTick();
             }
@@ -1526,6 +1744,8 @@ public class CPU {
                 incTick();
             }
             case 3 -> {
+                // Discarded stack read while the stack pointer is incremented.
+                pop();
                 incSP();
                 incTick();
             }
@@ -1539,6 +1759,10 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
+                // The address pulled off the stack is one short of the return address, so the
+                // last cycle reads from it before correcting it, and that read is discarded.
+                fetchPC();
                 incPC();
                 resetTick();
             }
@@ -1547,9 +1771,14 @@ public class CPU {
 
     private void jsr() {
         switch (tick) {
-            case 1, 3 -> incTick();
+            case 1 -> incTick();
             case 2 -> {
                 tickLow = fetchPCInc();
+                incTick();
+            }
+            case 3 -> {
+                // Discarded stack read, one cycle before the return address is pushed over it.
+                pop();
                 incTick();
             }
             case 4 -> {
@@ -1563,31 +1792,39 @@ public class CPU {
                 incTick();
             }
             case 6 -> {
+                pollInterrupts();
                 setPC(ByteUtils.joinBytes(fetchPC(), tickLow));
                 resetTick();
             }
         }
     }
 
-    private int shx(final int address) {
-        if (y + ByteUtils.ensureByte(address - y) <= 0xFF) {
-            return x & (ByteUtils.getHigh(address) + 1);
-        } else {
-            return read(address);
-        }
-    }
+    /**
+     * The store instruction shared by the unstable SH family: SHA ($93/$9F), SHY ($9C),
+     * SHX ($9E) and TAS ($9B).
+     * <p>
+     * These AND the register with the high byte of the operand address plus one. The high byte
+     * used is the one that was <em>fetched</em>, not the one page-crossing would have corrected
+     * it to, because the AND happens while the address is still being fixed up.
+     * <p>
+     * When the index does carry into the high byte the fix-up collides with that AND and the
+     * value ends up on the address bus in place of the high byte, so the store lands in the
+     * page the value names rather than in the intended one. Emulating that "H corruption"
+     * matters because the same quirk is what makes these opcodes usable at all: software picks
+     * operands that never cross a page.
+     * <p>
+     * Verified against all 10,000 Tom Harte cases of each of the five opcodes.
+     *
+     * @param register the register (or combination of registers) being stored.
+     */
+    private void storeHigh(final int register) {
+        var value = ByteUtils.ensureByte(register & ByteUtils.ensureByte(tickHigh + 1));
 
-    private int shy(final int address) {
-        if (x + ByteUtils.ensureByte(address - x) <= 0xFF) {
-            return y & (ByteUtils.getHigh(address) + 1);
-        } else {
-            return read(address);
-        }
-    }
+        var address = ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
+                ? ByteUtils.joinBytes(value, ByteUtils.getLow(tickAddress))
+                : tickAddress;
 
-    private int xas(final int value) {
-        setSP(x & a);
-        return sp & value;
+        write(address, value);
     }
 
     private void nop() {
@@ -1855,16 +2092,34 @@ public class CPU {
         setFlagV(ByteUtils.getBit(6, a) != ByteUtils.getBit(5, a));
     }
 
+    /**
+     * XAA/ANE ($8B). Unstable: the accumulator is OR'd with a constant that depends on the
+     * particular chip and its temperature before the AND. {@link #UNSTABLE_MAGIC} is the value
+     * the Tom Harte reference implementation uses. Does not touch the carry flag.
+     */
     private void xaa(final int value) {
-        setA(a & (x & value));
-        setFlagC(ByteUtils.getBit(7, a));
+        setA((a | UNSTABLE_MAGIC) & x & value);
         setZeroNegFlags(a);
     }
 
+    /**
+     * LXA/ATX ($AB). Unstable in the same way as {@link #xaa(int)}; loads both A and X.
+     */
+    private void lxa(final int value) {
+        setA((a | UNSTABLE_MAGIC) & value);
+        setX(a);
+        setZeroNegFlags(a);
+    }
+
+    /**
+     * LAS/LAR ($BB). ANDs memory with the stack pointer and puts the result in A, X and SP.
+     */
     private void las(final int value) {
-        setP(value);
-        setA(p);
-        setX(p);
+        var res = ByteUtils.ensureByte(value & sp);
+        setA(res);
+        setX(res);
+        setSP(res);
+        setZeroNegFlags(res);
     }
 
     private void axs(final int value) {
@@ -1955,50 +2210,61 @@ public class CPU {
         this.p = ByteUtils.ensureByte(p);
     }
 
+    /**
+     * Hands the state of the instruction about to run to the listeners.
+     * <p>
+     * The operand bytes have to be looked at without going through the bus, and only as far as
+     * the instruction actually reaches: a real read of $2002 or $4016 would clear a latch or
+     * clock a controller's shift register, so tracing the machine would change what it does.
+     */
     private void notifyStep() {
         if (listeners.isEmpty()) {
             return;
         }
 
+        var length = lengthPerOpcode[opcode];
+        var operand1 = length > 1 ? bus.peek(ByteUtils.ensureWord(pc + 1)) : 0;
+        var operand2 = length > 2 ? bus.peek(ByteUtils.ensureWord(pc + 2)) : 0;
+
         listeners.forEach(l ->
-                l.onStep(
-                        pc,
-                        a,
-                        x,
-                        y,
-                        p,
-                        sp,
-                        opcode,
-                        read(pc + 1),
-                        read(pc + 2),
-                        lengthPerOpcode[opcode],
-                        cycles
-                )
+                l.onStep(pc, a, x, y, p, sp, opcode, operand1, operand2, length, cycles)
         );
     }
 
-    enum Interrupt {
+    /**
+     * A snapshot of the architectural state of the CPU.
+     *
+     * @param a      the accumulator.
+     * @param x      the x index register.
+     * @param y      the y index register.
+     * @param sp     the stack pointer.
+     * @param pc     the program counter.
+     * @param p      the status register.
+     * @param cycles the cycle counter.
+     */
+    public record State(int a, int x, int y, int sp, int pc, int p, long cycles) {
+    }
+
+    /**
+     * The interrupt sequence the CPU is in the middle of.
+     */
+    private enum Sequence {
         /**
-         * No interrupt pending - normal execution continues.
+         * None - normal execution continues.
          */
-        NIL,
+        NONE,
 
         /**
-         * Non-Maskable Interrupt - triggered by the PPU at the start of VBlank.
-         * Cannot be disabled and has the highest priority. The CPU vectors to $FFFA.
+         * The seven cycle sequence shared by IRQ (typically raised by a mapper or the APU,
+         * vectoring to $FFFE) and NMI (raised by the PPU at the start of VBlank, vectoring to
+         * $FFFA). Which of the two it turns out to be is decided at the vector fetch.
          */
-        NMI,
+        INTERRUPT,
 
         /**
-         * Interrupt Request - typically triggered by external hardware or mappers.
-         * Can be disabled via the interrupt disable flag (I). The CPU vectors to $FFFE.
+         * The eight cycle reset sequence, run on power up and when the reset button is pressed.
+         * Vectors to $FFFC.
          */
-        IRQ,
-
-        /**
-         * Reset interrupt - triggered on system startup or reset button press.
-         * Initializes the CPU and vectors to $FFFC.
-         */
-        RST,
+        RESET,
     }
 }

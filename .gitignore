@@ -26,5 +26,8 @@ gradle-app.setting
 bin
 TODO.txt
 
+# Full Tom Harte SingleStepTests set, fetched by scripts/download-6502-tests.sh
+testdata/
+
 # Editor
 .idea

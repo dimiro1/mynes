@@ -16,8 +16,20 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # ~1.4GB of Tom Harte fixtures. The committed subset covers every opcode without
+      # this, so a cache miss that fails to download is not fatal to the test run.
+      - name: Cache 6502 test data
+        uses: actions/cache@v4
+        with:
+          path: testdata/nes6502
+          key: nes6502-${{ hashFiles('scripts/download-6502-tests.sh') }}
+
+      - name: Download 6502 test data
+        continue-on-error: true
+        run: ./scripts/download-6502-tests.sh
+
       - name: Build with Maven
-        run: mvn -B package --file pom.xml
+        run: mvn -B package -DskipTests --file pom.xml
 
       - name: Run tests
         run: mvn -B test

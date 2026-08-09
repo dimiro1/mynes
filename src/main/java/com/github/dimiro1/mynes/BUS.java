@@ -14,7 +14,7 @@ import com.github.dimiro1.mynes.mappers.Mapper;
  * </ul>
  * <p>
  */
-public class BUS {
+public class BUS implements CPUBus {
     private CPU cpu;
     private PPU ppu;
     private MMU mmu;
@@ -51,6 +51,7 @@ public class BUS {
      * @param address the memory address to read from
      * @return the byte value at that address
      */
+    @Override
     public int read(final int address) {
         return mmu.read(address);
     }
@@ -61,8 +62,20 @@ public class BUS {
      * @param address the memory address to write to
      * @param data    the byte value to write
      */
+    @Override
     public void write(final int address, final int data) {
         mmu.write(address, data);
+    }
+
+    /**
+     * Reads a byte without the side effects a real read would have.
+     *
+     * @param address the memory address to read from
+     * @return the byte value at that address
+     */
+    @Override
+    public int peek(final int address) {
+        return mmu.peek(address);
     }
 
     /**
@@ -74,11 +87,20 @@ public class BUS {
     }
 
     /**
-     * Triggers an Interrupt Request (IRQ) on the CPU.
-     * Can be called by mappers or other hardware.
+     * Asserts the shared Interrupt Request (IRQ) line.
+     * Can be called by mappers or other hardware. The line stays low until
+     * {@link #releaseIRQ()} is called, so the CPU keeps seeing the request even while the
+     * interrupt disable flag is masking it.
      */
     public void triggerIRQ() {
-        cpu.requestIRQ();
+        cpu.setIRQLine(true);
+    }
+
+    /**
+     * Releases the shared Interrupt Request (IRQ) line.
+     */
+    public void releaseIRQ() {
+        cpu.setIRQLine(false);
     }
 
     /**
@@ -101,10 +123,12 @@ public class BUS {
     /**
      * Performs one cycle of DMA transfer if active.
      *
+     * @param cpuCycle the current CPU cycle counter; OAM DMA alignment depends on its parity
      * @return true if DMA is in progress
      */
-    public boolean tickDMA() {
-        return mmu.tickDMA();
+    @Override
+    public boolean tickDMA(final long cpuCycle) {
+        return mmu.tickDMA(cpuCycle);
     }
 
     /**
