@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper0;
+import com.github.dimiro1.mynes.mappers.Mirroring;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -30,8 +31,8 @@ public class MMUTests {
 
     @BeforeEach
     void setUp() {
-        var mapper = new Mapper0(new byte[0x4000], new byte[0x2000]);
-        ppu = new PPU(null, mapper);
+        var mapper = new Mapper0(new byte[0x4000], new byte[0x2000], Mirroring.HORIZONTAL);
+        ppu = new PPU(level -> { }, mapper);
         mmu = new MMU(ppu, mapper, null, null);
     }
 
@@ -57,11 +58,14 @@ public class MMUTests {
 
         @Test
         void ppuRegistersAreMirroredEveryEightBytes() {
-            mmu.write(0x2000, 0x11);
-            assertEquals(0x11, mmu.read(0x3FF8), "the last mirror of $2000");
+            // OAM is the only PPU register pair that reads back what was written without any
+            // buffering or side effects, so the round trip has to go through $2003 and $2004.
+            // $3FF3 and $3FFC are the last mirrors of those two.
+            mmu.write(0x3FF3, 0x10);
+            mmu.write(0x3FFC, 0x42);
 
-            mmu.write(0x3FFF, 0x22);
-            assertEquals(0x22, mmu.read(0x2007), "the last mirror of $2007");
+            mmu.write(0x2003, 0x10);
+            assertEquals(0x42, mmu.read(0x2004), "the write through the last mirror should land");
         }
 
         @Test
@@ -86,7 +90,7 @@ public class MMUTests {
             assertEquals(ALIGNED_DMA_CYCLES, stalled);
             assertFalse(mmu.isDMAInProgress(), "the transfer should have finished");
             assertEquals(
-                    0xFF, ppu.read(OAM_DATA_REGISTER),
+                    0xFF, readOAM(0xFF),
                     "the last byte of the page should be the last thing written to OAMDATA"
             );
         }
@@ -112,13 +116,24 @@ public class MMUTests {
             mmu.write(OAM_DMA, 0x03);
             runToCompletion(0);
 
-            assertEquals(0xFF, ppu.read(OAM_DATA_REGISTER));
+            assertEquals(0xFF, readOAM(0xFF));
         }
 
         @Test
         void doesNotStallWhenIdle() {
             assertFalse(mmu.tickDMA(0), "no transfer requested");
             assertFalse(mmu.isDMAInProgress());
+        }
+
+        /**
+         * Reads one byte of OAM.
+         * <p>
+         * A whole page transfer leaves OAMADDR back where it started, so the address has to be
+         * pointed at the byte of interest before $2004 will show it.
+         */
+        private int readOAM(final int address) {
+            mmu.write(0x2003, address);
+            return ppu.read(OAM_DATA_REGISTER);
         }
 
         private void fillPage(final int page) {

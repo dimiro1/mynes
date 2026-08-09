@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.mappers.Mapper0;
+import com.github.dimiro1.mynes.mappers.Mapper3;
+import com.github.dimiro1.mynes.mappers.Mirroring;
 
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
@@ -134,7 +136,8 @@ public record Cart(
 
         // Create mapper instance
         var mapper = switch (mapperNumber) {
-            case 0 -> new Mapper0(prgROM, chrROM);
+            case 0 -> new Mapper0(prgROM, chrROM, Mirroring.fromINES(mirror));
+            case 3 -> new Mapper3(prgROM, chrROM, Mirroring.fromINES(mirror));
             default -> throw new UnsupportedMapperException(mapperNumber, filename);
         };
 

@@ -49,6 +49,20 @@ public class CPU {
     private boolean nmiPending;
 
     /**
+     * The current level of the /NMI line, as the last device to drive it left it.
+     * <p>
+     * This is the line itself, not a request: {@link #nmiPending} is the latch, and it is armed
+     * by the edge between two consecutive samples of this field, never by the level.
+     */
+    private boolean nmiLine;
+
+    /**
+     * What {@link #nmiLine} read the last time the CPU looked at it, which is what an edge is
+     * measured against.
+     */
+    private boolean nmiLineLastSample;
+
+    /**
      * IRQ is level triggered: the device holds the line and the CPU keeps seeing it on every
      * poll until the device lets go. Nothing here latches it, so an IRQ that is masked when it
      * is polled is still there to be serviced once the I flag clears.
@@ -159,9 +173,12 @@ public class CPU {
         intTick = 1;
         rstPending = false;
         nmiPending = false;
+        nmiLine = false;
+        nmiLineLastSample = false;
         irqLine = false;
         interruptPending = false;
         sequence = Sequence.NONE;
+        stalled = false;
     }
 
     private void setLowPC(final int low) {
@@ -192,6 +209,53 @@ public class CPU {
      */
     public void requestNMI() {
         nmiPending = true;
+    }
+
+    /**
+     * Drives the /NMI line.
+     * <p>
+     * Unlike {@link #requestNMI()} this is the line and not the edge: only a transition from
+     * released to asserted arms the latch, and only {@link #sampleNMI()} looks. A device that
+     * asserts and releases the line between two samples is therefore never seen, which is exactly
+     * what makes the PPU's documented NMI suppression windows work.
+     *
+     * @param level true to assert the line, false to release it.
+     */
+    public void setNMILine(final boolean level) {
+        nmiLine = level;
+    }
+
+    /**
+     * Samples the /NMI line, latching a request if it has just been asserted.
+     * <p>
+     * Separate from {@link #tick()} because the sample does not happen at a cycle boundary. The
+     * 6502 looks at /NMI during φ2, a little after it has finished the cycle's bus access, and on
+     * an NTSC NES that gap is about one PPU dot wide -- which is exactly the width of the window
+     * where reading $2002 stops an NMI that has already been requested. Whoever clocks the CPU is
+     * responsible for calling this at the right point; see {@link NES#tick()}.
+     * <p>
+     * Runs on cycles spent stalled by a DMA transfer and on cycles in the middle of an interrupt
+     * sequence too, because the sampling circuit does not care what the rest of the chip is doing.
+     * An edge latched mid-sequence is what lets an NMI hijack an IRQ or BRK at its vector fetch.
+     */
+    public void sampleNMI() {
+        if (nmiLine && !nmiLineLastSample) {
+            nmiPending = true;
+        }
+
+        nmiLineLastSample = nmiLine;
+    }
+
+    /**
+     * Whether the CPU is between instructions.
+     * <p>
+     * True when nothing is half executed: no instruction in flight, no interrupt sequence in
+     * flight, and the last cycle was not one spent held off the bus by a DMA transfer.
+     *
+     * @return true if the next {@link #tick()} starts something new.
+     */
+    public boolean isAtInstructionBoundary() {
+        return !stalled && tick == 1 && intTick == 1;
     }
 
     /**
@@ -227,11 +291,14 @@ public class CPU {
     public void step() {
         do {
             tick();
-        } while (stalled || isRunningInstruction() || isServingInterrupt());
+        } while (!isAtInstructionBoundary());
     }
 
     /**
      * Step one clock cycle per call.
+     * <p>
+     * This is the cycle's work only. The /NMI line is sampled by {@link #sampleNMI()}, which
+     * happens slightly later in the cycle than the bus access does.
      */
     public void tick() {
         // DMA has priority over everything except interrupts already in progress
@@ -369,10 +436,6 @@ public class CPU {
 
     private boolean isServingInterrupt() {
         return intTick != 1;
-    }
-
-    private boolean isRunningInstruction() {
-        return tick != 1;
     }
 
     private boolean isFirstTickOfInstruction() {

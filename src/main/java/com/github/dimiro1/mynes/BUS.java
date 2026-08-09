@@ -14,7 +14,7 @@ import com.github.dimiro1.mynes.mappers.Mapper;
  * </ul>
  * <p>
  */
-public class BUS implements CPUBus {
+public class BUS implements CPUBus, PPUBus {
     private CPU cpu;
     private PPU ppu;
     private MMU mmu;
@@ -79,11 +79,19 @@ public class BUS implements CPUBus {
     }
 
     /**
-     * Triggers a Non-Maskable Interrupt (NMI) on the CPU.
-     * Typically called by the PPU at the start of VBlank.
+     * Drives the /NMI line the PPU shares with the CPU.
+     * <p>
+     * Null guarded because {@link #initialize()} builds the PPU first, and the PPU settles the
+     * line as part of its own construction; there is no CPU to tell yet, and a CPU that has just
+     * been built sees the line released anyway.
+     *
+     * @param level true while the line is asserted.
      */
-    public void triggerNMI() {
-        cpu.requestNMI();
+    @Override
+    public void setNMILine(final boolean level) {
+        if (cpu != null) {
+            cpu.setNMILine(level);
+        }
     }
 
     /**
