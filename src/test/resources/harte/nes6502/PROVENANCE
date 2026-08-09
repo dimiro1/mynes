@@ -1,0 +1,7 @@
+Tom Harte SingleStepTests, nes6502/v1
+Source:      https://github.com/SingleStepTests/65x02
+Commit:      2f6980a2d95757486c7bee24355c360e40e2a224
+Sample:      first 500 of 10000 cases per opcode
+Files:       256
+Regenerate:  scripts/download-6502-tests.sh && scripts/sample-6502-tests.sh
+License:     MIT, (c) Thomas Harte and contributors

@@ -12,10 +12,10 @@ public class Mapper0 implements Mapper {
     @Override
     public int prgRead(final int address) {
         if (prgROM.length == 0x4000 && address >= 0x4000) {
-            return prgROM[address % 0x4000];
+            return Byte.toUnsignedInt(prgROM[address % 0x4000]);
         }
 
-        return prgROM[address];
+        return Byte.toUnsignedInt(prgROM[address]);
     }
 
     @Override
@@ -23,7 +23,7 @@ public class Mapper0 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return chrROM[address];
+        return Byte.toUnsignedInt(chrROM[address]);
     }
 
     @Override

@@ -34,12 +34,21 @@ public class MMU {
     // Save RAM ($6000-$7FFF) - battery-backed SRAM
     private final int[] saveRAM = new int[0x2000];
 
-    // DMA state
+    // OAM DMA state
     private boolean dmaInProgress = false;
     private int dmaPage = 0;
     private int dmaAddress = 0;
     private int dmaData = 0;
-    private boolean dmaSync = false;
+
+    // The cycle that halts the CPU. Always spent, and always before anything is transferred.
+    private boolean dmaHaltPending = false;
+
+    // An extra idle cycle, spent only when the halt landed on an odd cycle, so that the 256
+    // reads all happen on the same phase. This is where the 513 vs 514 cycle difference comes from.
+    private boolean dmaAlignPending = false;
+
+    // DMA alternates between reading a byte and writing it to OAM, starting with a read.
+    private boolean dmaReadPhase = true;
 
     public MMU(final PPU ppu, final Mapper mapper, final Controller controller1, final Controller controller2) {
         this.ppu = ppu;
@@ -86,6 +95,24 @@ public class MMU {
 
         // PRG ROM ($8000-$FFFF) - mapper controlled
         return mapper.prgRead(addr - 0x8000);
+    }
+
+    /**
+     * Reads a byte without the side effects a real read would have.
+     * <p>
+     * Reading a PPU or controller register is not free -- it advances the controller shift
+     * register, clears latches, and so on -- so a debugger or tracer that wants to look at
+     * memory has to go around those. Registers read back as zero here rather than as whatever
+     * the hardware would have returned.
+     */
+    public int peek(final int address) {
+        int addr = address & 0xFFFF;
+
+        if (addr >= 0x2000 && addr < 0x4020) {
+            return 0;
+        }
+
+        return read(addr);
     }
 
     /**
@@ -154,7 +181,10 @@ public class MMU {
                 // OAM DMA - triggers sprite DMA transfer
                 dmaPage = data & 0xFF;
                 dmaAddress = 0;
-                dmaSync = true;
+                dmaData = 0;
+                dmaHaltPending = true;
+                dmaAlignPending = false;
+                dmaReadPhase = true;
                 dmaInProgress = true;
             }
             case 0x4016 -> {
@@ -171,33 +201,42 @@ public class MMU {
     }
 
     /**
-     * Performs one cycle of DMA transfer if active.
-     * DMA takes 513 or 514 CPU cycles (depending on alignment).
+     * Performs one cycle of OAM DMA if a transfer is active.
+     * <p>
+     * A write to $4014 copies a whole 256 byte page into OAM, one byte at a time, with the CPU
+     * held off the bus throughout. The cost is one halt cycle, then an alignment cycle if the
+     * halt landed on an odd cycle, then 256 read/write pairs: 513 cycles when aligned and 514
+     * when not.
      *
-     * @return true if DMA is in progress
+     * @param cpuCycle the current CPU cycle counter; alignment depends on its parity
+     * @return true if the CPU must stall this cycle
      */
-    public boolean tickDMA() {
+    public boolean tickDMA(final long cpuCycle) {
         if (!dmaInProgress) {
             return false;
         }
 
-        // DMA requires one dummy cycle for synchronization on odd CPU cycles
-        if (dmaSync) {
-            dmaSync = false;
+        if (dmaHaltPending) {
+            dmaHaltPending = false;
+            dmaAlignPending = (cpuCycle & 1) != 0;
             return true;
         }
 
-        // Even cycles: read from CPU memory
-        // Odd cycles: write to PPU OAM ($2004)
-        if (dmaAddress % 2 == 0) {
-            int sourceAddr = (dmaPage << 8) | dmaAddress;
-            dmaData = read(sourceAddr);
-        } else {
-            ppu.write(0x04, dmaData); // Write to OAMDATA
-            dmaAddress++;
+        if (dmaAlignPending) {
+            dmaAlignPending = false;
+            return true;
         }
 
-        // DMA completes after 256 bytes transferred (512 cycles + potential sync cycle)
+        if (dmaReadPhase) {
+            dmaData = read((dmaPage << 8) | dmaAddress);
+            dmaReadPhase = false;
+            return true;
+        }
+
+        ppu.write(0x04, dmaData); // Write to OAMDATA
+        dmaReadPhase = true;
+        dmaAddress++;
+
         if (dmaAddress >= 0x100) {
             dmaInProgress = false;
             dmaAddress = 0;

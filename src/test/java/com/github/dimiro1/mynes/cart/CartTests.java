@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.cart;
 
 import com.github.dimiro1.mynes.InvalidNesFileException;
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.UnsupportedMapperException;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -39,6 +40,54 @@ public class CartTests {
 
             assertThrowsExactly(InvalidNesFileException.class, () -> Cart.load(stream.readAllBytes(), filename));
         }
+    }
+
+    /**
+     * The mapper number is split across the high nibbles of flags 6 and 7. Reading it wrongly is
+     * silent: an unsupported cart loads as mapper 0 and then misbehaves at run time instead of
+     * being rejected here.
+     */
+    @Test
+    void loadUnsupportedMapper() {
+        var rom = synthesizeRom(0x10, 0x00);  // mapper 1
+
+        var thrown = assertThrowsExactly(
+                UnsupportedMapperException.class,
+                () -> Cart.load(rom, "mapper1.nes")
+        );
+
+        assertTrue(thrown.getMessage().contains("1"), "should name the mapper: " + thrown.getMessage());
+    }
+
+    @Test
+    void loadReadsTheMapperNumberFromBothFlagBytes() {
+        // Mapper 66 = 0x42: low nibble from flags 6, high nibble from flags 7.
+        var rom = synthesizeRom(0x20, 0x40);
+
+        var thrown = assertThrowsExactly(
+                UnsupportedMapperException.class,
+                () -> Cart.load(rom, "mapper66.nes")
+        );
+
+        assertTrue(thrown.getMessage().contains("66"), "should name the mapper: " + thrown.getMessage());
+    }
+
+    /**
+     * Builds a minimal but valid iNES image: a header, one 16KB PRG bank and no CHR banks.
+     */
+    private byte[] synthesizeRom(final int flags6, final int flags7) {
+        var rom = new byte[16 + 0x4000];
+
+        rom[0] = 'N';
+        rom[1] = 'E';
+        rom[2] = 'S';
+        rom[3] = 0x1A;
+        rom[4] = 1;  // one PRG bank
+        rom[5] = 0;  // no CHR banks
+        rom[6] = (byte) flags6;
+        rom[7] = (byte) flags7;
+
+        return rom;
     }
 
     private String md5(byte[] data) {
