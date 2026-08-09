@@ -7,13 +7,17 @@ A Work in Progress Nes emulator.
 - Cycle stepped CPU;
 - Dot accurate NTSC PPU: background and sprite pipelines, loopy scroll registers, sprite 0 hit,
   the sprite overflow bug, open bus decay and colour emphasis, into a 256x240 ARGB framebuffer;
+- Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
+  overscan cropped and the picture scaled to the window;
 - CHR debug window;
 - Most of blargg tests are passing;
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;
 
-Mappers 0 (NROM) and 3 (CNROM) are supported. There is no APU yet, and the PPU's framebuffer is
-not wired to the game window yet.
+Mappers 0 (NROM) and 3 (CNROM) are supported. Nothing is wired to the controllers yet, so games
+run but cannot be played. There is no APU, no PAL timing and no save states, and three PPU
+details are still missing: the $2006 delayed VRAM address, the write-ignore window while the PPU
+warms up, and OAM decay.
 
 ## Tests
 

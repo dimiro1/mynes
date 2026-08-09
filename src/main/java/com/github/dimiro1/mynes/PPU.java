@@ -69,8 +69,17 @@ public class PPU {
      */
     private static final int MASK_WRITE_DELAY_DOTS = 2;
 
-    private static final int SCREEN_WIDTH = 256;
-    private static final int SCREEN_HEIGHT = 240;
+    /**
+     * The width of the picture in pixels, and equally the number of dots of a scanline the beam
+     * draws on.
+     */
+    public static final int SCREEN_WIDTH = 256;
+
+    /**
+     * The height of the picture in scanlines. A front end normally shows fewer than this: a real
+     * television hides the top and bottom of the picture behind the bezel.
+     */
+    public static final int SCREEN_HEIGHT = 240;
 
     // PPUCTRL ($2000) bits. The two nametable bits are not here: they are written straight into
     // the temporary VRAM address, which is where the PPU actually keeps them.

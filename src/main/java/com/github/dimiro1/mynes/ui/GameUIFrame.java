@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.FileInputStream;
@@ -18,8 +20,11 @@ public class GameUIFrame extends JFrame {
     private static final Logger logger = LoggerFactory.getLogger("UI");
 
     private final JFileChooser fileChooser;
+    private final ScreenComponent screen = new ScreenComponent();
     private CHRViewerFrame chrViewerFrame;
     private Cart cart;
+    private NES nes;
+    private EmulatorRunner runner;
 
     public GameUIFrame() {
         super("MyNES");
@@ -33,7 +38,7 @@ public class GameUIFrame extends JFrame {
     }
 
     private void init() {
-        setPreferredSize(new Dimension(256, 224));
+        add(screen, BorderLayout.CENTER);
 
         var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
@@ -87,6 +92,9 @@ public class GameUIFrame extends JFrame {
         });
 
 
+        // The viewer reads the mapper's character memory from this thread while the emulation
+        // thread runs. Deliberately unsynchronised: reading an array element cannot tear, so the
+        // worst case is a debug window showing a tile a frame out of date.
         debugMenuCHRViewer.addActionListener(
                 e -> {
                     if (cart == null) {
@@ -111,16 +119,42 @@ public class GameUIFrame extends JFrame {
         fileMenuQuit.addActionListener(e ->
                 this.dispatchEvent(new WindowEvent(this, WindowEvent.WINDOW_CLOSING)));
 
+        // Quit goes through here too, and Main closes on WINDOW_CLOSING.
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(final WindowEvent e) {
+                if (runner != null) {
+                    runner.stop();
+                }
+            }
+        });
+
         pack();
         setLocationRelativeTo(null);
     }
 
+    /**
+     * Loads a ROM and starts running it, replacing whatever was running before.
+     * <p>
+     * The cartridge is parsed before the running machine is touched, so a file that turns out not
+     * to be a ROM leaves the current game playing.
+     */
     private void loadRom(final File selectedFile) throws IOException {
         logger.info("loading rom {}", selectedFile.getName());
 
+        Cart loaded;
         try (var rom = new FileInputStream(selectedFile)) {
-            cart = Cart.load(rom.readAllBytes(), selectedFile.getName());
+            loaded = Cart.load(rom.readAllBytes(), selectedFile.getName());
         }
+
+        if (runner != null) {
+            runner.stop();
+        }
+
+        cart = loaded;
+        nes = new NES(cart);
+        runner = new EmulatorRunner(nes, screen);
+        runner.start();
 
         logger.info("loaded rom {}", selectedFile.getName());
     }
