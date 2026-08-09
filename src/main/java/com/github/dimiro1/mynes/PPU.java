@@ -2,53 +2,1415 @@ package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
 
+/**
+ * PPU implements the 2C02 picture processing unit found in the NTSC NES.
+ * <p>
+ * The chip is a state machine clocked three times per CPU cycle, and almost everything it is
+ * known for -- the VBlank flag races, the sprite overflow bug, the $2007 increment glitch -- is a
+ * consequence of what it happens to be doing on a particular dot. So this is written as a dot
+ * machine: {@link #tick()} does the work belonging to the current {@code (scanline, dot)} and
+ * then moves on, and the register handlers below look at where the beam is rather than at a pile
+ * of separately maintained flags.
+ * <p>
+ * A frame is 341 dots by 262 scanlines:
+ * <ul>
+ *   <li>0-239: visible, one pixel per dot for the first 256 dots</li>
+ *   <li>240: post-render, the PPU idles</li>
+ *   <li>241-260: vertical blank; the VBlank flag is set on dot 1 of line 241</li>
+ *   <li>261: pre-render, which behaves like a visible line except that nothing is drawn and the
+ *       status flags are cleared on dot 1</li>
+ * </ul>
+ * With rendering enabled, odd frames drop the last dot of the pre-render line, so a frame is
+ * 89342 dots normally and 89341 then.
+ *
+ * @see <a href="https://www.nesdev.org/wiki/PPU_rendering">NESdev: PPU rendering</a>
+ * @see <a href="https://www.nesdev.org/wiki/PPU_scrolling">NESdev: PPU scrolling</a>
+ */
 public class PPU {
-    private final BUS bus;
-    private final Mapper mapper;
+    /**
+     * The last dot of a scanline. 341 dots numbered 0 to 340.
+     */
+    private static final int LAST_DOT = 340;
+
+    /**
+     * The first scanline that is not drawn.
+     */
+    private static final int POST_RENDER_LINE = 240;
+
+    /**
+     * The scanline VBlank starts on.
+     */
+    private static final int VBLANK_START_LINE = 241;
+
+    /**
+     * The last scanline of a frame, which prepares the shifters for line 0 rather than drawing.
+     */
+    private static final int PRE_RENDER_LINE = 261;
+
+    /**
+     * The dot of {@link #VBLANK_START_LINE} the VBlank flag is set on, and equally the dot of
+     * {@link #PRE_RENDER_LINE} the status flags are cleared on.
+     * <p>
+     * Also the dot a $2002 read has to land on to suppress the flag entirely: see
+     * {@link #preventVBlankFlag}.
+     */
+    private static final int STATUS_DOT = 1;
+
+    /**
+     * How many frames an open bus bit holds its charge for.
+     * <p>
+     * The real decay is around 600 milliseconds, which is about 36 frames, and it varies between
+     * consoles and with temperature. This is the value {@code ppu_open_bus.nes} is happy with.
+     */
+    private static final int OPEN_BUS_DECAY_FRAMES = 36;
+
+    /**
+     * How many dots a write to $2001 takes to reach the rendering hardware.
+     */
+    private static final int MASK_WRITE_DELAY_DOTS = 2;
+
+    private static final int SCREEN_WIDTH = 256;
+    private static final int SCREEN_HEIGHT = 240;
+
+    // PPUCTRL ($2000) bits. The two nametable bits are not here: they are written straight into
+    // the temporary VRAM address, which is where the PPU actually keeps them.
+    private static final int CTRL_INCREMENT_32 = 0x04;
+    private static final int CTRL_SPRITE_TABLE = 0x08;
+    private static final int CTRL_BACKGROUND_TABLE = 0x10;
+    private static final int CTRL_TALL_SPRITES = 0x20;
+    private static final int CTRL_NMI_ENABLE = 0x80;
+
+    // PPUMASK ($2001) bits.
+    private static final int MASK_GREYSCALE = 0x01;
+    private static final int MASK_SHOW_BACKGROUND_LEFT = 0x02;
+    private static final int MASK_SHOW_SPRITES_LEFT = 0x04;
+    private static final int MASK_SHOW_BACKGROUND = 0x08;
+    private static final int MASK_SHOW_SPRITES = 0x10;
+    private static final int MASK_RENDERING = MASK_SHOW_BACKGROUND | MASK_SHOW_SPRITES;
+
+    // PPUSTATUS ($2002) bits.
+    private static final int STATUS_SPRITE_OVERFLOW = 0x20;
+    private static final int STATUS_SPRITE_ZERO_HIT = 0x40;
+    private static final int STATUS_VBLANK = 0x80;
+
+    private final PPUBus bus;
     private final VRAM vram;
-    private int ppuCtrl;
-    private int ppuMask;
-    private int ppuStatus;
+
+    // ---------------------------------------------------------------- beam position
+
+    private int scanline = 0;
+    private int dot = 0;
+
+    /**
+     * Frames completed since power on. Doubles as the clock the open bus decay is measured
+     * against.
+     */
+    private long frame = 0;
+
+    /**
+     * Whether the frame being drawn is an odd one, which is what decides if the last dot of the
+     * pre-render line is skipped.
+     */
+    private boolean oddFrame = false;
+
+    // ---------------------------------------------------------------- registers
+
+    private int ctrl;
+
+    /**
+     * PPUMASK as the rendering hardware sees it, which is not quite what was last written: see
+     * {@link #pendingMask}.
+     */
+    private int mask;
+
+    /**
+     * The value a recent $2001 write is on its way to putting into {@link #mask}.
+     * <p>
+     * Switching rendering on or off does not happen on the dot of the write. The signal has to
+     * make its way through the pipeline first, and until it does the fetch machinery carries on
+     * as it was. Two dots is what {@code 10-even_odd_timing.nes} measures, and it is the only
+     * test in the suite that can see the difference.
+     */
+    private int pendingMask;
+
+    /**
+     * Dots left before {@link #pendingMask} lands.
+     */
+    private int maskDelay;
+
+    private boolean vblankFlag;
+    private boolean spriteZeroHit;
+    private boolean spriteOverflow;
+
+    /**
+     * Set when a $2002 read lands on the very dot the VBlank flag would have been set on. The
+     * read wins: the flag never goes up for that frame, so the game sees no VBlank at all.
+     */
+    private boolean preventVBlankFlag;
+
+    /**
+     * The current VRAM address, loopy's {@code v}. Fifteen bits, laid out as
+     * {@code yyy NN YYYYY XXXXX}: fine Y scroll, nametable select, coarse Y, coarse X. During
+     * rendering it is not an address the program set so much as a counter the PPU walks.
+     */
+    private int v;
+
+    /**
+     * The staging copy of {@link #v}, loopy's {@code t}. Writes to $2000, $2005 and $2006 land
+     * here, and rendering copies pieces of it into {@code v} at fixed dots.
+     */
+    private int t;
+
+    /**
+     * Fine X scroll, loopy's {@code x}. Three bits, and the only part of the scroll position that
+     * never goes anywhere near {@code v}.
+     */
+    private int fineX;
+
+    /**
+     * The shared write latch, loopy's {@code w}. $2005 and $2006 both take two writes and share
+     * this one flag, which is why interleaving them is such a good way to confuse a game, and why
+     * reading $2002 resets it.
+     */
+    private boolean writeLatch;
+
+    /**
+     * The one byte buffer behind $2007. A read of anything but palette RAM returns the previous
+     * contents of this and only then refills it, so the first read after setting an address is
+     * stale.
+     */
+    private int readBuffer;
+
     private int oamAddress;
-    private int oamData;
-    private int ppuScroll;
-    private int ppuAddress;
-    private int ppuData;
-    private int oamDMA;
+    private final int[] oam = new int[256];
 
-    public PPU(final BUS bus, final Mapper mapper) {
+    /**
+     * Palette RAM. Thirty two entries of six bits, inside the PPU rather than on its bus.
+     */
+    private final int[] palette = new int[32];
+
+    // ---------------------------------------------------------------- background pipeline
+
+    /**
+     * The four bytes of the tile currently being fetched. They sit here until the eight dot fetch
+     * is over and {@link #reloadShifters()} hands them to the shift registers.
+     */
+    private int nameTableLatch;
+    private int attributeLatch;
+    private int patternLowLatch;
+    private int patternHighLatch;
+
+    /**
+     * The pattern shift registers, sixteen bits each: the tile on screen in the top half and the
+     * one after it in the bottom half. A pixel is whichever bit fine X points at.
+     */
+    private int patternShiftLow;
+    private int patternShiftHigh;
+
+    /**
+     * The attribute shift registers, alongside the pattern ones and holding the palette number
+     * for the same pixels.
+     */
+    private int attributeShiftLow;
+    private int attributeShiftHigh;
+
+    // ---------------------------------------------------------------- sprite pipeline
+
+    /**
+     * The eight sprites the PPU has picked out for the next scanline, four bytes each. Filled with
+     * $FF at the start of every visible line and then written by the evaluation state machine.
+     */
+    private final int[] secondaryOAM = new int[32];
+
+    /**
+     * Which sprite of the sixty four in OAM the evaluation is looking at, and which of its four
+     * bytes. The pair is a single counter on real hardware, and the fact that the overflow scan
+     * increments them independently is the whole of the sprite overflow bug.
+     */
+    private int evaluationSprite;
+    private int evaluationByte;
+
+    /**
+     * Where in secondary OAM the next byte goes.
+     */
+    private int evaluationSlot;
+
+    /**
+     * The byte read on the odd dot, acted on at the even one.
+     */
+    private int evaluationLatch;
+
+    private EvaluationStep evaluationStep = EvaluationStep.FIND_SPRITE;
+
+    /**
+     * How many of the three bytes that follow an in-range sprite found by the overflow scan are
+     * still to be read.
+     */
+    private int overflowReadsLeft;
+
+    /**
+     * The sprite the evaluation started from, which is whatever OAMADDR pointed at when the
+     * scanline reached dot 65. Sprite 0 hit is really "the first sprite examined", not "sprite
+     * number zero", and the two only differ when a game leaves OAMADDR somewhere else.
+     */
+    private int firstSpriteExamined;
+
+    private int spritesFound;
+
+    /**
+     * Whether the sprite that landed in the first secondary OAM slot was the first one examined,
+     * and so the one that can set the sprite 0 hit flag. One flag for the line being evaluated
+     * and one for the line being drawn.
+     */
+    private boolean spriteZeroOnNextLine;
+    private boolean spriteZeroOnThisLine;
+
+    /**
+     * The sprite output units, loaded during dots 257-320 and drained across the next scanline.
+     */
+    private int spriteCount;
+    private final int[] spriteX = new int[8];
+    private final int[] spriteAttributes = new int[8];
+    private final int[] spritePatternLow = new int[8];
+    private final int[] spritePatternHigh = new int[8];
+
+    // ---------------------------------------------------------------- open bus
+
+    /**
+     * The PPU's own open bus, a row of eight tiny capacitors on the data pins. Reading a
+     * write-only register, or a bit the PPU does not drive, comes back as whatever is still
+     * charged here.
+     */
+    private int openBus;
+
+    /**
+     * The frame each open bus bit was last refreshed on. Per bit rather than per byte because
+     * different reads refresh different bits.
+     */
+    private final long[] openBusRefreshedOn = new long[8];
+
+    // ---------------------------------------------------------------- output
+
+    private final int[] frameBuffer = new int[SCREEN_WIDTH * SCREEN_HEIGHT];
+
+    public PPU(final PPUBus bus, final Mapper mapper) {
         this.bus = bus;
-        this.mapper = mapper;
-        this.vram = new VRAM();
+        this.vram = new VRAM(mapper);
+
+        bus.setNMILine(false);
     }
 
+    /**
+     * Advances the PPU by one dot.
+     * <p>
+     * The work belonging to the current dot happens first and the position moves afterwards, so
+     * that a CPU access arriving between two of these sees the state the hardware would have had
+     * at that point in the scanline.
+     */
     public void tick() {
+        if (maskDelay > 0 && --maskDelay == 0) {
+            mask = pendingMask;
+        }
+
+        if (isRenderingLine()) {
+            if (scanline == PRE_RENDER_LINE && dot == STATUS_DOT) {
+                endVBlank();
+            }
+
+            if (isRenderingEnabled()) {
+                backgroundTick();
+                spriteTick();
+            }
+
+            // The picture comes out whether or not anything is being rendered: with rendering off
+            // the screen is a flat sheet of the backdrop colour rather than nothing at all.
+            if (scanline < POST_RENDER_LINE && dot >= 1 && dot <= SCREEN_WIDTH) {
+                renderPixel();
+            }
+        } else if (scanline == VBLANK_START_LINE && dot == STATUS_DOT) {
+            startVBlank();
+        }
+
+        advance();
     }
 
-    public int read(final int address) {
-        return switch (address) {
-            case 0x0 -> ByteUtils.ensureByte(ppuCtrl);
-            case 0x1 -> ByteUtils.ensureByte(ppuMask);
-            case 0x2 -> ByteUtils.ensureByte(ppuStatus);
-            case 0x3 -> ByteUtils.ensureByte(oamAddress);
-            case 0x4 -> ByteUtils.ensureByte(oamData);
-            case 0x5 -> ByteUtils.ensureByte(ppuScroll);
-            case 0x6 -> ByteUtils.ensureByte(ppuAddress);
-            case 0x7 -> ByteUtils.ensureByte(oamDMA);
-            default -> throw new IllegalStateException("Unexpected address: " + address);
+    /**
+     * Raises the VBlank flag, unless a $2002 read got in first.
+     */
+    private void startVBlank() {
+        if (!preventVBlankFlag) {
+            vblankFlag = true;
+        }
+
+        preventVBlankFlag = false;
+        updateNMILine();
+    }
+
+    /**
+     * Clears every status flag at the top of the pre-render line.
+     */
+    private void endVBlank() {
+        vblankFlag = false;
+        spriteZeroHit = false;
+        spriteOverflow = false;
+        updateNMILine();
+    }
+
+    /**
+     * Moves the beam on by one dot, wrapping the scanline and the frame.
+     * <p>
+     * With rendering enabled an odd frame skips the last dot of the pre-render line. That one
+     * missing dot is what keeps the NTSC colour burst in step from frame to frame, and it also
+     * means a frame is not a whole number of CPU cycles, so software cannot rely on the beam
+     * being in the same place relative to the CPU on every frame.
+     */
+    private void advance() {
+        if (scanline == PRE_RENDER_LINE && dot == LAST_DOT - 1 && oddFrame && isRenderingEnabled()) {
+            startFrame();
+            return;
+        }
+
+        dot++;
+
+        if (dot > LAST_DOT) {
+            dot = 0;
+            scanline++;
+
+            if (scanline > PRE_RENDER_LINE) {
+                startFrame();
+            }
+        }
+    }
+
+    private void startFrame() {
+        scanline = 0;
+        dot = 0;
+        frame++;
+        oddFrame = !oddFrame;
+    }
+
+    // ================================================================ background pipeline
+
+    /**
+     * One dot of the background fetch pipeline, on a visible or pre-render line with rendering
+     * enabled.
+     * <p>
+     * The pipeline is always two tiles ahead of the beam. It spends eight dots per tile fetching
+     * four bytes -- nametable, attribute, pattern low, pattern high -- and the pair of shift
+     * registers it feeds are drained one pixel at a time behind it. The last sixteen dots of a
+     * scanline fetch the first two tiles of the next one, which is why the scroll registers can be
+     * changed mid-frame at all: by the time the beam reaches a scanline, its first two tiles have
+     * already been read.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_rendering#Cycles_1-256">NESdev: PPU rendering</a>
+     */
+    private void backgroundTick() {
+        var fetching = (dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336);
+
+        if ((dot >= 2 && dot <= 257) || (dot >= 322 && dot <= 337)) {
+            shiftBackground();
+        }
+
+        // Dots 9, 17, ... 257, then 329 and 337. The reload at dots 1 and 321 that this also
+        // catches is a repeat of the one at 337, so it changes nothing.
+        if ((fetching || dot == 257 || dot == 337) && (dot & 7) == 1) {
+            reloadShifters();
+        }
+
+        if (fetching) {
+            switch (dot & 7) {
+                case 1 -> nameTableLatch = vram.read(0x2000 | (v & 0x0FFF));
+                case 3 -> attributeLatch = fetchAttribute();
+                case 5 -> patternLowLatch = vram.read(patternAddress());
+                case 7 -> patternHighLatch = vram.read(patternAddress() + 8);
+                case 0 -> incrementCoarseX();
+                default -> { /* the odd dots drive the address, the even ones take the byte */ }
+            }
+        }
+
+        if (dot == 256) {
+            incrementY();
+        } else if (dot == 257) {
+            copyHorizontalPosition();
+        } else if (scanline == PRE_RENDER_LINE && dot >= 280 && dot <= 304) {
+            copyVerticalPosition();
+        } else if (dot == 337 || dot == 339) {
+            // Two more nametable reads that nothing uses. They exist because the fetch machinery
+            // has nothing else to do, and mappers that watch the address bus can see them.
+            vram.read(0x2000 | (v & 0x0FFF));
+        }
+    }
+
+    /**
+     * Reads the attribute byte covering the tile being fetched and picks out its two bits.
+     * <p>
+     * One attribute byte covers a four tile by four tile block and packs four two bit palette
+     * numbers, one per two by two quadrant. Bit 1 of coarse X picks the left or right half and
+     * bit 1 of coarse Y the top or bottom, so the pair wanted is at bit
+     * {@code (coarseY & 2) << 1 | (coarseX & 2)}.
+     */
+    private int fetchAttribute() {
+        var address = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+        var shift = ((v >> 4) & 0x04) | (v & 0x02);
+
+        return (vram.read(address) >> shift) & 0x03;
+    }
+
+    /**
+     * @return the address of the low pattern byte for the tile just named, at the row fine Y
+     * points at. The high byte is eight further on.
+     */
+    private int patternAddress() {
+        return ((ctrl & CTRL_BACKGROUND_TABLE) != 0 ? 0x1000 : 0x0000)
+                + nameTableLatch * 16
+                + ((v >> 12) & 0x07);
+    }
+
+    private void shiftBackground() {
+        patternShiftLow = (patternShiftLow << 1) & 0xFFFF;
+        patternShiftHigh = (patternShiftHigh << 1) & 0xFFFF;
+        attributeShiftLow = (attributeShiftLow << 1) & 0xFFFF;
+        attributeShiftHigh = (attributeShiftHigh << 1) & 0xFFFF;
+    }
+
+    /**
+     * Drops the tile that has just been fetched into the bottom half of the shift registers,
+     * eight dots before the beam needs it.
+     * <p>
+     * The attribute is two bits for the whole tile rather than one per pixel, so its shift
+     * registers are filled with eight copies of each bit. Real hardware keeps a one bit latch and
+     * a narrower shifter instead; the picture is the same.
+     */
+    private void reloadShifters() {
+        patternShiftLow = (patternShiftLow & 0xFF00) | patternLowLatch;
+        patternShiftHigh = (patternShiftHigh & 0xFF00) | patternHighLatch;
+        attributeShiftLow = (attributeShiftLow & 0xFF00) | ((attributeLatch & 1) != 0 ? 0xFF : 0x00);
+        attributeShiftHigh = (attributeShiftHigh & 0xFF00) | ((attributeLatch & 2) != 0 ? 0xFF : 0x00);
+    }
+
+    /**
+     * Puts the horizontal half of the scroll position back at the start of every scanline. Coarse
+     * X and the nametable's horizontal bit, nothing else.
+     */
+    private void copyHorizontalPosition() {
+        v = (v & ~0x041F) | (t & 0x041F);
+    }
+
+    /**
+     * Puts the vertical half of the scroll position back, once per frame, spread over dots 280 to
+     * 304 of the pre-render line. Fine Y, coarse Y and the nametable's vertical bit.
+     */
+    private void copyVerticalPosition() {
+        v = (v & ~0x7BE0) | (t & 0x7BE0);
+    }
+
+    // ================================================================ sprite pipeline
+
+    /**
+     * One dot of the sprite hardware, on a visible or pre-render line with rendering enabled.
+     * <p>
+     * A scanline's sprites are chosen while the line <em>above</em> it is being drawn, which is
+     * why a sprite's Y coordinate is one less than the row it appears on, and why nothing is ever
+     * drawn on scanline 0: the pre-render line does no evaluation at all.
+     * <ul>
+     *   <li>dots 1-64: secondary OAM is wiped to $FF, one byte every two dots</li>
+     *   <li>dots 65-256: the evaluation state machine walks OAM, one byte every two dots</li>
+     *   <li>dots 257-320: the eight output units are loaded, eight dots each</li>
+     * </ul>
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_sprite_evaluation">NESdev: sprite evaluation</a>
+     */
+    private void spriteTick() {
+        if (scanline < POST_RENDER_LINE) {
+            if (dot >= 1 && dot <= 64) {
+                clearSecondaryOAM();
+            } else if (dot >= 65 && dot <= 256) {
+                evaluateSprites();
+            }
+        }
+
+        if (dot < 257 || dot > 320) {
+            return;
+        }
+
+        // OAMADDR is held at zero for the whole fetch phase. A game that writes it during
+        // rendering and expects to find it again afterwards will not.
+        oamAddress = 0;
+
+        if (dot == 257) {
+            // Nothing was evaluated for the line after the pre-render one, so nothing is drawn
+            // on it.
+            spriteCount = scanline == PRE_RENDER_LINE ? 0 : spritesFound;
+            spriteZeroOnThisLine = scanline != PRE_RENDER_LINE && spriteZeroOnNextLine;
+        }
+
+        var offset = (dot - 257) & 7;
+
+        if (offset == 0 || offset == 2) {
+            // Two reads of the nametable address the background fetch left behind. Nothing uses
+            // the bytes -- the sprite's tile number came out of secondary OAM, not out of a
+            // nametable -- but a mapper watching the address bus can see them.
+            vram.read(0x2000 | (v & 0x0FFF));
+        } else if (offset == 4) {
+            loadSpriteUnit((dot - 257) >> 3);
+        }
+    }
+
+    private void clearSecondaryOAM() {
+        // One byte every two dots: the odd dot reads (and always reads $FF), the even one writes.
+        if ((dot & 1) == 0) {
+            secondaryOAM[(dot >> 1) - 1] = 0xFF;
+        }
+    }
+
+    /**
+     * The sprite evaluation state machine, one step per dot.
+     * <p>
+     * Odd dots read a byte of OAM, even dots decide what to do with it. Written out literally
+     * rather than as a loop over sixty four sprites, because the interesting behaviour is all in
+     * what happens when it runs out of time or out of slots -- and in the overflow scan, which is
+     * documented hardware and is documented as being wrong.
+     */
+    private void evaluateSprites() {
+        if (dot == 65) {
+            beginEvaluation();
+        }
+
+        if ((dot & 1) == 1) {
+            evaluationLatch = oam[((evaluationSprite << 2) | evaluationByte) & 0xFF];
+            return;
+        }
+
+        switch (evaluationStep) {
+            case FIND_SPRITE -> findSprite();
+            case COPY_SPRITE -> copySprite();
+            case OVERFLOW_SCAN -> scanForOverflow();
+            case FINISHED -> nextSprite();
+        }
+    }
+
+    private void beginEvaluation() {
+        firstSpriteExamined = oamAddress >> 2;
+        evaluationSprite = firstSpriteExamined;
+        evaluationByte = oamAddress & 3;
+        evaluationSlot = 0;
+        evaluationStep = EvaluationStep.FIND_SPRITE;
+        overflowReadsLeft = 0;
+        spritesFound = 0;
+        spriteZeroOnNextLine = false;
+    }
+
+    /**
+     * Looks at a sprite's Y coordinate. It is copied into the next free slot either way -- the
+     * hardware writes first and only keeps the slot if the sprite turned out to be wanted.
+     */
+    private void findSprite() {
+        if (spritesFound < 8) {
+            secondaryOAM[evaluationSlot] = evaluationLatch;
+        }
+
+        if (!isInRange(evaluationLatch)) {
+            nextSprite();
+            return;
+        }
+
+        if (evaluationSlot == 0) {
+            spriteZeroOnNextLine = evaluationSprite == firstSpriteExamined;
+        }
+
+        evaluationSlot++;
+        evaluationByte = 1;
+        evaluationStep = EvaluationStep.COPY_SPRITE;
+    }
+
+    /**
+     * Copies the three bytes after the Y coordinate: tile, attributes and X.
+     */
+    private void copySprite() {
+        secondaryOAM[evaluationSlot++] = evaluationLatch;
+        evaluationByte++;
+
+        if (evaluationByte < 4) {
+            return;
+        }
+
+        evaluationByte = 0;
+        spritesFound++;
+        evaluationStep = spritesFound == 8 ? EvaluationStep.OVERFLOW_SCAN : EvaluationStep.FIND_SPRITE;
+
+        nextSprite();
+    }
+
+    /**
+     * The overflow scan, which is where the sprite overflow flag gets its reputation.
+     * <p>
+     * Once eight sprites have been found the hardware keeps looking, but the counter it uses to
+     * step through OAM is wrong: on a miss it increments the byte index as well as the sprite
+     * index, and the byte index does not carry. So after the first miss it is comparing a
+     * sprite's tile number against the scanline, then an attribute byte, then an X coordinate,
+     * and the flag ends up set or clear more or less at random. Games rely on the exact pattern,
+     * so the bug is reproduced rather than corrected.
+     */
+    private void scanForOverflow() {
+        if (overflowReadsLeft > 0) {
+            // The three bytes after an in-range hit, read with a properly carrying counter.
+            overflowReadsLeft--;
+            evaluationByte++;
+
+            if (evaluationByte == 4) {
+                evaluationByte = 0;
+                nextSprite();
+            }
+
+            return;
+        }
+
+        if (isInRange(evaluationLatch)) {
+            spriteOverflow = true;
+            overflowReadsLeft = 3;
+            return;
+        }
+
+        // The bug: both counters move, and the byte index wraps on its own.
+        evaluationByte = (evaluationByte + 1) & 3;
+        nextSprite();
+    }
+
+    /**
+     * Moves to the next sprite, finishing the evaluation once the counter has been all the way
+     * round. Whatever is left of the scanline after that is spent reading the same byte over and
+     * over and throwing it away.
+     */
+    private void nextSprite() {
+        evaluationSprite = (evaluationSprite + 1) & 0x3F;
+
+        if (evaluationSprite == 0) {
+            evaluationStep = EvaluationStep.FINISHED;
+            evaluationByte = 0;
+        }
+    }
+
+    /**
+     * @return whether a sprite with this Y coordinate covers the scanline being evaluated.
+     */
+    private boolean isInRange(final int y) {
+        var row = scanline - y;
+        return row >= 0 && row < spriteHeight();
+    }
+
+    private int spriteHeight() {
+        return (ctrl & CTRL_TALL_SPRITES) != 0 ? 16 : 8;
+    }
+
+    /**
+     * Loads one of the eight sprite output units from the slot of secondary OAM that feeds it.
+     * <p>
+     * Unused slots still go through the motions -- secondary OAM was wiped to $FF, so they fetch
+     * row 0 of tile $FF -- but {@link #spriteCount} keeps them off the screen.
+     */
+    private void loadSpriteUnit(final int unit) {
+        var base = unit * 4;
+        var y = secondaryOAM[base];
+        var tile = secondaryOAM[base + 1];
+        var attributes = secondaryOAM[base + 2];
+
+        spriteAttributes[unit] = attributes;
+        spriteX[unit] = secondaryOAM[base + 3];
+
+        var height = spriteHeight();
+        var row = scanline - y;
+
+        if (row < 0 || row >= height) {
+            row = 0;
+        }
+
+        if ((attributes & 0x80) != 0) {
+            row = height - 1 - row;
+        }
+
+        int address;
+
+        if (height == 16) {
+            // A tall sprite ignores $2000's table bit: the tile number's low bit picks the table
+            // and the rest of it picks a pair of tiles, the second being the bottom half.
+            address = ((tile & 1) << 12) | ((tile & 0xFE) << 4);
+            address += row >= 8 ? 16 + (row & 7) : row;
+        } else {
+            address = ((ctrl & CTRL_SPRITE_TABLE) != 0 ? 0x1000 : 0x0000) | (tile << 4) | row;
+        }
+
+        var low = vram.read(address);
+        var high = vram.read(address + 8);
+
+        if ((attributes & 0x40) != 0) {
+            low = reverseBits(low);
+            high = reverseBits(high);
+        }
+
+        spritePatternLow[unit] = low;
+        spritePatternHigh[unit] = high;
+    }
+
+    /**
+     * Turns a pattern byte back to front, which is how a horizontally flipped sprite is drawn:
+     * the hardware loads the shift register the other way round rather than shifting the other
+     * way.
+     */
+    private static int reverseBits(final int value) {
+        return Integer.reverse(value) >>> 24;
+    }
+
+    // ================================================================ pixel output
+
+    /**
+     * Works out the colour of one pixel and writes it into the framebuffer.
+     */
+    private void renderPixel() {
+        var x = dot - 1;
+        int entry;
+
+        if (!isRenderingEnabled()) {
+            // Nothing is being rendered, so the screen shows the backdrop -- read from wherever
+            // the VRAM address happens to point when it is inside palette RAM rather than from
+            // $3F00. That is the "background palette hack" games use to flash the screen a colour
+            // without writing the palette.
+            entry = readPalette((v & 0x3F00) == 0x3F00 ? v : 0x3F00);
+        } else {
+            entry = readPalette(0x3F00 | multiplex(x, backgroundPixel(x)));
+        }
+
+        frameBuffer[scanline * SCREEN_WIDTH + x] = toColour(entry);
+    }
+
+    /**
+     * Decides between the background pixel and whichever sprite is over it, and sets the sprite 0
+     * hit flag if the two of them are what does it.
+     * <p>
+     * Sprites are considered in slot order, which is the order they appear in OAM, and the first
+     * opaque one wins -- a lower numbered sprite covers a higher numbered one even when the
+     * higher one is in front of the background. Then the winner's priority bit decides whether it
+     * is drawn over the background or behind it.
+     *
+     * @param x          the pixel's position along the scanline.
+     * @param background the background's palette offset, or zero if it is transparent here.
+     * @return the low five bits of the palette address to draw, zero meaning the backdrop.
+     */
+    private int multiplex(final int x, final int background) {
+        var unit = -1;
+        var colour = 0;
+
+        if ((mask & MASK_SHOW_SPRITES) != 0 && (x >= 8 || (mask & MASK_SHOW_SPRITES_LEFT) != 0)) {
+            for (var i = 0; i < spriteCount; i++) {
+                var offset = x - spriteX[i];
+
+                if (offset < 0 || offset > 7) {
+                    continue;
+                }
+
+                var bit = 0x80 >> offset;
+                colour = ((spritePatternHigh[i] & bit) != 0 ? 2 : 0)
+                        | ((spritePatternLow[i] & bit) != 0 ? 1 : 0);
+
+                if (colour != 0) {
+                    unit = i;
+                    break;
+                }
+            }
+        }
+
+        if (unit < 0) {
+            return background;
+        }
+
+        // The hit is about two opaque pixels meeting, not about which of them is drawn, so a
+        // sprite hidden behind the background still sets it. The last pixel of the line never
+        // does, for reasons lost with the hardware.
+        if (unit == 0 && spriteZeroOnThisLine && background != 0 && x != SCREEN_WIDTH - 1) {
+            spriteZeroHit = true;
+        }
+
+        var attributes = spriteAttributes[unit];
+
+        if (background != 0 && (attributes & 0x20) != 0) {
+            return background;
+        }
+
+        return 0x10 | ((attributes & 0x03) << 2) | colour;
+    }
+
+    /**
+     * @param x the pixel's position along the scanline.
+     * @return the low four bits of a palette address -- palette number in bits 3-2 and colour
+     * within it in bits 1-0 -- or zero if the background is transparent here.
+     */
+    private int backgroundPixel(final int x) {
+        if ((mask & MASK_SHOW_BACKGROUND) == 0) {
+            return 0;
+        }
+
+        if (x < 8 && (mask & MASK_SHOW_BACKGROUND_LEFT) == 0) {
+            return 0;
+        }
+
+        // Fine X chooses which of the sixteen bits in flight is the one on screen now. It is the
+        // only part of the scroll position that is applied here rather than by the fetch.
+        var bit = 0x8000 >> fineX;
+
+        var colour = ((patternShiftHigh & bit) != 0 ? 2 : 0)
+                | ((patternShiftLow & bit) != 0 ? 1 : 0);
+
+        if (colour == 0) {
+            return 0;
+        }
+
+        var palette = ((attributeShiftHigh & bit) != 0 ? 2 : 0)
+                | ((attributeShiftLow & bit) != 0 ? 1 : 0);
+
+        return (palette << 2) | colour;
+    }
+
+    /**
+     * Turns a palette entry into a packed ARGB pixel, applying the two things $2001 can do to a
+     * colour on its way to the screen: drop the hue, and emphasise one or more of the colour
+     * channels by attenuating the others.
+     */
+    private int toColour(final int entry) {
+        return EMPHASIS_PALETTE[((mask & 0xE0) << 1) | (entry & greyscaleMask())];
+    }
+
+    // ================================================================ CPU facing registers
+
+    /**
+     * Reads one of the eight registers mapped into the CPU address space at $2000-$2007.
+     *
+     * @param register the register number, 0 to 7.
+     * @return the byte the CPU sees, open bus bits and all.
+     */
+    public int read(final int register) {
+        return switch (register & 7) {
+            case 2 -> readStatus();
+            case 4 -> readOAMData();
+            case 7 -> readData();
+            // $2000, $2001, $2003, $2005 and $2006 are write only. The PPU does not drive the
+            // data bus at all, so the CPU reads back the decaying charge left on it, and reading
+            // does not refresh it.
+            default -> openBus();
         };
     }
 
-    public void write(final int address, final int data) {
-        switch (address) {
-            case 0x0 -> ppuCtrl = ByteUtils.ensureByte(data);
-            case 0x1 -> ppuMask = ByteUtils.ensureByte(data);
-            case 0x2 -> ppuStatus = ByteUtils.ensureByte(data);
-            case 0x3 -> oamAddress = ByteUtils.ensureByte(data);
-            case 0x4 -> oamData = ByteUtils.ensureByte(data);
-            case 0x5 -> ppuScroll = ByteUtils.ensureByte(data);
-            case 0x6 -> ppuAddress = ByteUtils.ensureByte(data);
-            case 0x7 -> oamDMA = ByteUtils.ensureByte(data);
+    /**
+     * Writes one of the eight registers mapped into the CPU address space at $2000-$2007.
+     *
+     * @param register the register number, 0 to 7.
+     * @param data     the byte to write.
+     */
+    public void write(final int register, final int data) {
+        var value = data & 0xFF;
+
+        // Every write puts the whole byte on the PPU's data pins, including a write to the
+        // read-only status register.
+        refreshOpenBus(value, 0xFF);
+
+        switch (register & 7) {
+            case 0 -> writeCtrl(value);
+            case 1 -> {
+                pendingMask = value;
+                maskDelay = MASK_WRITE_DELAY_DOTS;
+            }
+            case 3 -> oamAddress = value;
+            case 4 -> writeOAMData(value);
+            case 5 -> writeScroll(value);
+            case 6 -> writeAddress(value);
+            case 7 -> writeData(value);
+            default -> { /* $2002 is read only */ }
         }
+    }
+
+    /**
+     * Reads a register without any of the side effects a real read would have.
+     * <p>
+     * For tests and debuggers: reading $2002 for real clears the VBlank flag and the write latch,
+     * and reading $2007 moves the address on, so nothing that merely wants to look at the PPU can
+     * go through {@link #read(int)}.
+     *
+     * @param register the register number, 0 to 7.
+     * @return the byte a read would have returned.
+     */
+    public int peek(final int register) {
+        return switch (register & 7) {
+            case 2 -> status() | (openBus & 0x1F);
+            case 4 -> oam[oamAddress];
+            case 7 -> (v & 0x3FFF) >= 0x3F00
+                    ? (openBus & 0xC0) | readPalette(v)
+                    : readBuffer;
+            default -> openBus;
+        };
+    }
+
+    private void writeCtrl(final int value) {
+        ctrl = value;
+
+        // The two nametable bits are bits 10 and 11 of the temporary address.
+        t = (t & 0xF3FF) | ((value & 0x03) << 10);
+
+        // Enabling NMI while the VBlank flag is already up asserts the line straight away, and a
+        // game that toggles the bit off and on again during VBlank gets a second interrupt.
+        updateNMILine();
+    }
+
+    /**
+     * Reads $2002.
+     * <p>
+     * Three things happen besides handing over the flags: the VBlank flag is cleared, the
+     * $2005/$2006 write latch is reset, and -- if the read lands on the exact dot the flag was
+     * about to be set on -- the flag is stopped from being set at all.
+     */
+    private int readStatus() {
+        var value = status() | (openBus() & 0x1F);
+
+        if (scanline == VBLANK_START_LINE && dot == STATUS_DOT) {
+            preventVBlankFlag = true;
+        }
+
+        vblankFlag = false;
+        writeLatch = false;
+        updateNMILine();
+
+        refreshOpenBus(value, 0xE0);
+        return value;
+    }
+
+    private int status() {
+        return (vblankFlag ? STATUS_VBLANK : 0)
+                | (spriteZeroHit ? STATUS_SPRITE_ZERO_HIT : 0)
+                | (spriteOverflow ? STATUS_SPRITE_OVERFLOW : 0);
+    }
+
+    /**
+     * Reads $2004, which is a plain window onto OAM at the current address and does not move it.
+     * <p>
+     * The one exception is the first 64 dots of a visible scanline with rendering on: the sprite
+     * evaluation hardware is busy filling secondary OAM with $FF, and that is what a read sees.
+     */
+    private int readOAMData() {
+        var value = isClearingSecondaryOAM() ? 0xFF : oam[oamAddress];
+
+        refreshOpenBus(value, 0xFF);
+        return value;
+    }
+
+    /**
+     * Writes $2004.
+     * <p>
+     * During rendering the sprite evaluation hardware owns OAM, so the byte is dropped -- but the
+     * address still moves, and by four rather than one, because what the write actually clocks is
+     * the sprite counter rather than the byte counter.
+     */
+    private void writeOAMData(final int value) {
+        if (isRenderingEnabled() && isRenderingLine()) {
+            oamAddress = (oamAddress + 4) & 0xFF;
+            return;
+        }
+
+        // Bits 2 to 4 of a sprite's attribute byte do not exist: there are no RAM cells behind
+        // them, so they read back as zero no matter what was written. Masking here rather than on
+        // the read path means OAM DMA, which funnels through this same method, is covered too.
+        oam[oamAddress] = (oamAddress & 3) == 2 ? value & 0xE3 : value;
+        oamAddress = (oamAddress + 1) & 0xFF;
+    }
+
+    /**
+     * Writes $2005, the scroll register. Two writes: X then Y.
+     */
+    private void writeScroll(final int value) {
+        if (!writeLatch) {
+            fineX = value & 0x07;
+            t = (t & 0x7FE0) | (value >> 3);
+            writeLatch = true;
+            return;
+        }
+
+        t = (t & 0x0C1F) | ((value & 0x07) << 12) | ((value & 0xF8) << 2);
+        writeLatch = false;
+    }
+
+    /**
+     * Writes $2006, the VRAM address register. Two writes: high byte then low.
+     * <p>
+     * The high byte only carries six bits, so the first write clears bit 14 of the temporary
+     * address as a side effect. The second write copies the whole thing into {@link #v}.
+     */
+    private void writeAddress(final int value) {
+        if (!writeLatch) {
+            t = (t & 0x00FF) | ((value & 0x3F) << 8);
+            writeLatch = true;
+            return;
+        }
+
+        t = (t & 0x7F00) | value;
+        v = t;
+        writeLatch = false;
+    }
+
+    /**
+     * Reads $2007.
+     * <p>
+     * Everything but palette RAM comes back one read late, through {@link #readBuffer}: the PPU
+     * needs a bus cycle to fetch the byte, so it hands over the previous one and starts the fetch
+     * for the next. Palette RAM is inside the chip and needs no bus cycle, so it comes back
+     * immediately -- but the fetch still happens, from the nametable that lies under the palette
+     * in the address space, so the buffer is left holding that instead.
+     */
+    private int readData() {
+        var address = v & 0x3FFF;
+        int value;
+
+        if (address >= 0x3F00) {
+            value = (openBus() & 0xC0) | (readPalette(address) & greyscaleMask());
+            readBuffer = vram.read(address & 0x2FFF);
+            refreshOpenBus(value, 0x3F);
+        } else {
+            value = readBuffer;
+            readBuffer = vram.read(address);
+            refreshOpenBus(value, 0xFF);
+        }
+
+        incrementAddress();
+        return value;
+    }
+
+    private void writeData(final int value) {
+        var address = v & 0x3FFF;
+
+        if (address >= 0x3F00) {
+            writePalette(address, value);
+        } else {
+            vram.write(address, value);
+        }
+
+        incrementAddress();
+    }
+
+    /**
+     * Moves the VRAM address on after a $2007 access.
+     * <p>
+     * Normally by one or by 32, whichever $2000 asked for. But during rendering {@link #v} is not
+     * an address at all, it is the counter the fetch pipeline is walking, and the two increment
+     * circuits the pipeline uses fire instead: coarse X moves on and Y moves on, together. The
+     * result is neither of the two increments the program asked for, which is why writing $2007
+     * mid-frame is a well known way to scramble the scroll position.
+     */
+    private void incrementAddress() {
+        if (isRenderingEnabled() && isRenderingLine()) {
+            incrementCoarseX();
+            incrementY();
+            return;
+        }
+
+        v = (v + ((ctrl & CTRL_INCREMENT_32) != 0 ? 32 : 1)) & 0x7FFF;
+    }
+
+    // ================================================================ palette RAM
+
+    /**
+     * Folds a palette address onto the thirty two bytes that back it.
+     * <p>
+     * $3F00-$3FFF is the same 32 bytes over and over, and within those, the first entry of each
+     * sprite palette is the same cell as the first entry of the matching background palette:
+     * $3F10 is $3F00, $3F14 is $3F04, and so on. Those four cells are the backdrop colour, which
+     * is why writing $3F10 changes the screen background.
+     */
+    private static int paletteIndex(final int address) {
+        var index = address & 0x1F;
+        return (index & 0x13) == 0x10 ? index & 0x0F : index;
+    }
+
+    private int readPalette(final int address) {
+        return palette[paletteIndex(address)];
+    }
+
+    private void writePalette(final int address, final int value) {
+        // The cells are six bits wide; the top two bits are simply not stored.
+        palette[paletteIndex(address)] = value & 0x3F;
+    }
+
+    /**
+     * @return the mask a palette entry passes through on its way out, which drops the hue when
+     * the greyscale bit is set.
+     */
+    private int greyscaleMask() {
+        return (mask & MASK_GREYSCALE) != 0 ? 0x30 : 0x3F;
+    }
+
+    // ================================================================ open bus
+
+    /**
+     * Reads the open bus latch, letting any bit that has gone too long without a refresh decay
+     * to zero first.
+     */
+    private int openBus() {
+        for (var bit = 0; bit < 8; bit++) {
+            if (frame - openBusRefreshedOn[bit] >= OPEN_BUS_DECAY_FRAMES) {
+                openBus &= ~(1 << bit);
+            }
+        }
+
+        return openBus;
+    }
+
+    /**
+     * Drives some of the data pins, which both sets those bits and starts their decay over.
+     *
+     * @param value the byte being driven.
+     * @param mask  which bits of it the PPU actually drives; the rest keep their old charge.
+     */
+    private void refreshOpenBus(final int value, final int mask) {
+        openBus = (openBus & ~mask) | (value & mask);
+
+        for (var bit = 0; bit < 8; bit++) {
+            if ((mask & (1 << bit)) != 0) {
+                openBusRefreshedOn[bit] = frame;
+            }
+        }
+    }
+
+    // ================================================================ scroll counters
+
+    /**
+     * Moves the coarse X part of {@link #v} on by one tile, flipping to the horizontally adjacent
+     * nametable when it runs off the end of the current one.
+     */
+    private void incrementCoarseX() {
+        if ((v & 0x001F) == 31) {
+            v &= ~0x001F;
+            v ^= 0x0400;
+            return;
+        }
+
+        v++;
+    }
+
+    /**
+     * Moves {@link #v} on by one scanline.
+     * <p>
+     * Fine Y counts to seven and carries into coarse Y, which wraps at 29 rather than at 31,
+     * because a nametable is 30 tiles tall and the last two rows of the 32 are the attribute
+     * table. Setting coarse Y past 29 by hand is legal and does not flip the nametable when it
+     * wraps -- it just reads attribute bytes as if they were tiles.
+     */
+    private void incrementY() {
+        if ((v & 0x7000) != 0x7000) {
+            v += 0x1000;
+            return;
+        }
+
+        v &= ~0x7000;
+        var coarseY = (v & 0x03E0) >> 5;
+
+        if (coarseY == 29) {
+            coarseY = 0;
+            v ^= 0x0800;
+        } else if (coarseY == 31) {
+            coarseY = 0;
+        } else {
+            coarseY++;
+        }
+
+        v = (v & ~0x03E0) | (coarseY << 5);
+    }
+
+    // ================================================================ predicates
+
+    /**
+     * @return true when either the background or the sprites are switched on, which is what the
+     * PPU means by "rendering" -- the fetch pipeline, the scroll counters and the sprite
+     * evaluation hardware all run together or not at all.
+     */
+    public boolean isRenderingEnabled() {
+        return (mask & MASK_RENDERING) != 0;
+    }
+
+    /**
+     * @return true on the scanlines the fetch pipeline runs on: the visible ones and the
+     * pre-render line, but not the post-render line or VBlank.
+     */
+    private boolean isRenderingLine() {
+        return scanline < POST_RENDER_LINE || scanline == PRE_RENDER_LINE;
+    }
+
+    /**
+     * @return true while the sprite evaluation hardware is filling secondary OAM with $FF, which
+     * is the one window where $2004 does not read OAM.
+     */
+    private boolean isClearingSecondaryOAM() {
+        return isRenderingEnabled()
+                && scanline < POST_RENDER_LINE
+                && dot >= 1 && dot <= 64;
+    }
+
+    private void updateNMILine() {
+        bus.setNMILine(vblankFlag && (ctrl & CTRL_NMI_ENABLE) != 0);
+    }
+
+    // ================================================================ inspection
+
+    /**
+     * The finished picture, 256 by 240 pixels of packed ARGB.
+     * <p>
+     * Handed out directly rather than copied: this is the hook a front end draws from, and it is
+     * overwritten in place as the beam moves, so a caller that wants a stable frame has to take
+     * its copy at the end of one.
+     *
+     * @return the framebuffer.
+     */
+    public int[] getFrameBuffer() {
+        return frameBuffer;
+    }
+
+    /**
+     * @return how many frames have been completed since power on.
+     */
+    public long getFrame() {
+        return frame;
+    }
+
+    /**
+     * @return the scanline the beam is on, 0 to 261.
+     */
+    public int getScanline() {
+        return scanline;
+    }
+
+    /**
+     * @return the dot the beam is on, 0 to 340.
+     */
+    public int getDot() {
+        return dot;
+    }
+
+    /**
+     * @return the current VRAM address, loopy's {@code v}.
+     */
+    public int getV() {
+        return v;
+    }
+
+    /**
+     * @return the staging VRAM address, loopy's {@code t}.
+     */
+    public int getT() {
+        return t;
+    }
+
+    /**
+     * @return the fine X scroll, loopy's {@code x}.
+     */
+    public int getFineX() {
+        return fineX;
+    }
+
+    /**
+     * @return the shared $2005/$2006 write latch, loopy's {@code w}.
+     */
+    public boolean isWriteLatchSet() {
+        return writeLatch;
+    }
+
+    /**
+     * The 64 colours a 2C02 can produce, as packed ARGB.
+     *
+     * @return a copy of the master palette, indexed by the six bit values held in palette RAM.
+     */
+    public static int[] getPalette() {
+        return MASTER_PALETTE.clone();
+    }
+
+    /**
+     * The NTSC 2C02 master palette.
+     * <p>
+     * A real PPU does not have a palette table at all: it generates an NTSC signal directly from
+     * the six bit colour index, so what these values really are is one person's measurement of
+     * what that signal looks like on a television. This is the widely used NESdev set.
+     */
+    private static final int[] MASTER_PALETTE = {
+            0xFF666666, 0xFF002A88, 0xFF1412A7, 0xFF3B00A4, 0xFF5C007E, 0xFF6E0040, 0xFF6C0600, 0xFF561D00,
+            0xFF333500, 0xFF0B4800, 0xFF005200, 0xFF004F08, 0xFF00404D, 0xFF000000, 0xFF000000, 0xFF000000,
+            0xFFADADAD, 0xFF155FD9, 0xFF4240FF, 0xFF7527FE, 0xFFA01ACC, 0xFFB71E7B, 0xFFB53120, 0xFF994E00,
+            0xFF6B6D00, 0xFF388700, 0xFF0C9300, 0xFF008F32, 0xFF007C8D, 0xFF000000, 0xFF000000, 0xFF000000,
+            0xFFFFFEFF, 0xFF64B0FF, 0xFF9290FF, 0xFFC676FF, 0xFFF36AFF, 0xFFFE6ECC, 0xFFFE8170, 0xFFEA9E22,
+            0xFFBCBE00, 0xFF88D800, 0xFF5CE430, 0xFF45E082, 0xFF48CDDE, 0xFF4F4F4F, 0xFF000000, 0xFF000000,
+            0xFFFFFEFF, 0xFFC0DFFF, 0xFFD3D2FF, 0xFFE8C8FF, 0xFFFBC2FF, 0xFFFEC4EA, 0xFFFECCC5, 0xFFF7D8A5,
+            0xFFE4E594, 0xFFCFEF96, 0xFFBDF4AB, 0xFFB3F3CC, 0xFFB5EBF2, 0xFFB8B8B8, 0xFF000000, 0xFF000000,
+    };
+
+    /**
+     * How much a colour channel is dimmed when one of the other two is being emphasised. Measured
+     * on real hardware at roughly three quarters.
+     */
+    private static final double EMPHASIS_ATTENUATION = 0.746;
+
+    /**
+     * {@link #MASTER_PALETTE} once for each of the eight combinations of the three emphasis bits,
+     * indexed by {@code emphasis << 6 | entry}.
+     * <p>
+     * The emphasis bits do not brighten the channel they name; they dim the other two, by pushing
+     * the signal outside the range the television expects. So setting all three at once makes the
+     * whole picture darker rather than leaving it alone.
+     */
+    private static final int[] EMPHASIS_PALETTE = buildEmphasisPalette();
+
+    private static int[] buildEmphasisPalette() {
+        var table = new int[8 * 64];
+
+        for (var emphasis = 0; emphasis < 8; emphasis++) {
+            // Bit 0 emphasises red, bit 1 green, bit 2 blue -- and each channel is dimmed when
+            // either of the other two is emphasised.
+            var dimRed = (emphasis & 0b110) != 0;
+            var dimGreen = (emphasis & 0b101) != 0;
+            var dimBlue = (emphasis & 0b011) != 0;
+
+            for (var entry = 0; entry < 64; entry++) {
+                var colour = MASTER_PALETTE[entry];
+
+                table[(emphasis << 6) | entry] = 0xFF000000
+                        | (attenuate((colour >> 16) & 0xFF, dimRed) << 16)
+                        | (attenuate((colour >> 8) & 0xFF, dimGreen) << 8)
+                        | attenuate(colour & 0xFF, dimBlue);
+            }
+        }
+
+        return table;
+    }
+
+    private static int attenuate(final int channel, final boolean dim) {
+        return dim ? (int) (channel * EMPHASIS_ATTENUATION) : channel;
+    }
+
+    /**
+     * What the sprite evaluation state machine is in the middle of doing.
+     */
+    private enum EvaluationStep {
+        /**
+         * Reading a sprite's Y coordinate to see whether it belongs on the next scanline.
+         */
+        FIND_SPRITE,
+
+        /**
+         * Copying the three bytes after the Y coordinate of a sprite that does.
+         */
+        COPY_SPRITE,
+
+        /**
+         * Eight sprites have been found, so nothing more can be copied, but the hardware keeps
+         * reading OAM to decide whether to set the overflow flag -- with the counter bug that
+         * makes the answer famously unreliable.
+         */
+        OVERFLOW_SCAN,
+
+        /**
+         * All sixty four sprites have been looked at. Whatever is left of the scanline is spent
+         * reading OAM and discarding it.
+         */
+        FINISHED,
     }
 }

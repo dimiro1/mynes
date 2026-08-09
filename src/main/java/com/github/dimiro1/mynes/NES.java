@@ -34,13 +34,45 @@ public class NES {
         return bus;
     }
 
+    /**
+     * Advances the whole machine by one CPU cycle.
+     * <p>
+     * On NTSC the PPU clock is exactly three times the CPU clock. The three dots happen before
+     * the CPU cycle rather than after it, so a flag the PPU raises on one of them is already
+     * visible to a register read in that cycle.
+     * <p>
+     * The odd looking part is the /NMI sample sitting one dot in. It belongs to the CPU cycle
+     * that ran at the end of the <em>previous</em> call: the 6502 reads /NMI a little after it
+     * finishes a cycle's bus access, roughly one dot later at this clock ratio, and that one dot
+     * is the whole reason the PPU's NMI suppression window is two dots wide rather than three.
+     * Reading $2002 in the cycle whose work happened at dot <i>d</i> hides an NMI raised at dots
+     * <i>d</i> or <i>d-1</i>, but not one raised at <i>d-2</i>, because that one had already been
+     * sampled.
+     *
+     * @see CPU#sampleNMI()
+     */
     public void tick() {
-        bus.getCPU().tick();
-        bus.getPPU().tick();
-        bus.getPPU().tick();
+        var ppu = bus.getPPU();
+        var cpu = bus.getCPU();
+
+        ppu.tick();
+        cpu.sampleNMI();
+        ppu.tick();
+        ppu.tick();
+
+        cpu.tick();
     }
 
+    /**
+     * Advances the machine until the CPU is between instructions.
+     * <p>
+     * Driven from here rather than from {@link CPU#step()} so that the PPU keeps running: a step
+     * that only clocked the CPU would leave the PPU frozen, and an OAM DMA transfer would hold
+     * the picture still for five hundred cycles.
+     */
     public void step() {
-        bus.getCPU().step();
+        do {
+            tick();
+        } while (!bus.getCPU().isAtInstructionBoundary());
     }
 }
