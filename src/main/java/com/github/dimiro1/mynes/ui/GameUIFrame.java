@@ -37,6 +37,7 @@ public class GameUIFrame extends JFrame {
     private final JMenu machineMenu = new JMenu("Machine");
     private final JMenu debugMenu = new JMenu("Debug");
     private final JCheckBoxMenuItem machineMenuPause = new JCheckBoxMenuItem("Pause");
+    private final JCheckBoxMenuItem machineMenuFastForward = new JCheckBoxMenuItem("Fast Forward");
     private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
     private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
 
@@ -95,6 +96,12 @@ public class GameUIFrame extends JFrame {
         machineMenuPause.setMnemonic(KeyEvent.VK_P);
         machineMenuPause.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, command));
         machineMenu.add(machineMenuPause);
+
+        machineMenuFastForward.setMnemonic(KeyEvent.VK_F);
+        machineMenuFastForward.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, command));
+        machineMenu.add(machineMenuFastForward);
+
+        machineMenu.add(fastForwardSpeedMenu());
 
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
@@ -201,6 +208,8 @@ public class GameUIFrame extends JFrame {
             updateTitle();
         });
 
+        machineMenuFastForward.addActionListener(e -> applySpeed());
+
         debugMenuBackground.addActionListener(e -> {
             if (runner != null) {
                 var ppu = nes.getPPU();
@@ -277,6 +286,54 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Builds the Fast Forward Speed submenu, one item per speed {@link EmulationSpeed} offers.
+     * <p>
+     * How fast is a matter of taste and of what the computer manages, so it is a setting rather
+     * than a number picked here: 8x is comfortable on a fast machine and unlimited is the whole
+     * of whatever is left, while a slower one is better off at 2x, where every frame is still
+     * drawn on time. Picking one applies it to a machine that is already fast forwarding, so the
+     * speeds can be compared against the running game the way the palettes can.
+     */
+    private JMenu fastForwardSpeedMenu() {
+        var menu = new JMenu("Fast Forward Speed");
+        menu.setMnemonic(KeyEvent.VK_S);
+
+        // The group is what makes them one choice rather than four independent ticks.
+        var group = new ButtonGroup();
+
+        for (var speed : EmulationSpeed.fastForwardChoices()) {
+            var item = new JRadioButtonMenuItem(speed.label(), speed == config.fastForwardSpeed());
+
+            item.addActionListener(e -> {
+                config.setFastForwardSpeed(speed);
+                saveConfig();
+                applySpeed();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Tells the running machine how fast to go, from the two things that decide it: whether fast
+     * forward is switched on, and which speed it is set to.
+     */
+    private void applySpeed() {
+        if (runner == null) {
+            return;
+        }
+
+        runner.setSpeed(machineMenuFastForward.isSelected()
+                ? config.fastForwardSpeed()
+                : EmulationSpeed.NORMAL);
+
+        updateTitle();
+    }
+
+    /**
      * Loads a ROM and starts running it, replacing whatever was running before.
      * <p>
      * The cartridge is parsed before the running machine is touched, so a file that turns out not
@@ -323,7 +380,10 @@ public class GameUIFrame extends JFrame {
         keyboardInput.releaseAll();
         keyboardInput.setController(nes.getController1());
 
+        // A machine that has just been switched on is running, and running at normal speed. Both
+        // menu items have to agree with that; the runner is already built that way.
         machineMenuPause.setSelected(false);
+        machineMenuFastForward.setSelected(false);
 
         runner = new EmulatorRunner(nes, screen);
         runner.start();
@@ -360,8 +420,27 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var paused = runner != null && runner.isPaused();
-        setTitle("MyNES - " + cart.filename() + (paused ? " (paused)" : ""));
+        setTitle("MyNES - " + cart.filename() + machineState());
+    }
+
+    /**
+     * What the title says the machine is doing, when it is doing anything other than simply
+     * running. Pause wins over fast forward: a machine that is not running is not running fast.
+     */
+    private String machineState() {
+        if (runner == null) {
+            return "";
+        }
+
+        if (runner.isPaused()) {
+            return " (paused)";
+        }
+
+        if (runner.getSpeed() != EmulationSpeed.NORMAL) {
+            return " (fast forward)";
+        }
+
+        return "";
     }
 
     private void destroyCHRViewerFrame() {

@@ -8,8 +8,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * Runs a {@link NES} on its own thread, one frame at a time, and hands each finished frame to a
- * {@link ScreenComponent}.
+ * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
+ * {@link ScreenComponent} -- all of them at normal speed, sixty a second of them when fast
+ * forwarding.
  * <p>
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
@@ -28,19 +29,14 @@ public class EmulatorRunner {
     private static final Logger logger = LoggerFactory.getLogger("EMU");
 
     /**
-     * One NTSC frame. The 2C02 draws 60.0988 frames a second rather than 60, which is a third of
-     * a percent -- inaudible now, but it is the number the APU will have to agree with later.
-     */
-    private static final long FRAME_NANOS = 16_639_267L;
-
-    /**
-     * How far behind schedule the loop tolerates before it gives up on catching up.
+     * How far behind schedule the loop tolerates before it gives up on catching up, counted in
+     * frames at whatever speed it is running.
      * <p>
      * Without this, a long garbage collection or a suspended laptop leaves the deadline in the
      * past and the loop sprints through every frame it owes at full speed. Past this much debt the
      * frames are simply dropped.
      */
-    private static final long MAX_LAG_NANOS = 5 * FRAME_NANOS;
+    private static final int MAX_LAG_FRAMES = 5;
 
     private final NES nes;
     private final ScreenComponent screen;
@@ -54,6 +50,13 @@ public class EmulatorRunner {
 
     private volatile boolean running;
     private volatile boolean paused;
+
+    /**
+     * How fast to run. Written from the event dispatch thread and read here, so the loop picks a
+     * change up at the next frame boundary rather than mid-frame.
+     */
+    private volatile EmulationSpeed speed = EmulationSpeed.NORMAL;
+
     private Thread thread;
 
     public EmulatorRunner(final NES nes, final ScreenComponent screen) {
@@ -118,13 +121,31 @@ public class EmulatorRunner {
         return paused;
     }
 
+    /**
+     * Runs the machine at {@code speed} from here on. Takes effect within a frame.
+     * <p>
+     * Only the wait between frames changes: the machine itself is clocked exactly as it is at
+     * normal speed, since nothing inside it knows what a second is. What does change is what
+     * reaches the screen -- see {@link #run()} -- because at speed the frames come faster than any
+     * display can show them.
+     */
+    public void setSpeed(final EmulationSpeed speed) {
+        this.speed = speed;
+    }
+
+    public EmulationSpeed getSpeed() {
+        return speed;
+    }
+
     private void run() {
         logger.info("emulation started");
 
         var ppu = nes.getPPU();
 
         try {
+            var speed = this.speed;
             var deadline = System.nanoTime();
+            var nextPresent = deadline + EmulationSpeed.FRAME_NANOS;
             var lastFrame = ppu.getFrame();
 
             while (running) {
@@ -134,9 +155,18 @@ public class EmulatorRunner {
                     // A frame's worth of sleep at a time, so a resume or a posted command is
                     // picked up quickly, and the schedule restarts cleanly on resume instead of
                     // sprinting through the pause as missed frames.
-                    LockSupport.parkNanos(FRAME_NANOS);
+                    LockSupport.parkNanos(EmulationSpeed.FRAME_NANOS);
                     deadline = System.nanoTime();
                     continue;
+                }
+
+                if (this.speed != speed) {
+                    // Both schedules start again from here rather than carrying a deadline written
+                    // in the old speed's units -- which, coming off unlimited, is not a deadline
+                    // that was being kept at all.
+                    speed = this.speed;
+                    deadline = System.nanoTime();
+                    nextPresent = deadline + EmulationSpeed.FRAME_NANOS;
                 }
 
                 // The PPU has no frame-complete callback; its frame counter is the signal. One
@@ -148,16 +178,45 @@ public class EmulatorRunner {
                 } while (ppu.getFrame() == lastFrame);
 
                 lastFrame = ppu.getFrame();
-                screen.present(ppu.getFrameBuffer());
+
+                // Fast forward finishes frames faster than any display can show them, so most of
+                // them are dropped rather than handed over. A frame nobody will see still costs a
+                // quarter of a megabyte copied and 61440 palette lookups on this thread, under a
+                // lock the event dispatch thread wants for painting, and the picture is no better
+                // for it: what the eye gets either way is sixty frames a second, further apart in
+                // the machine's time.
+                //
+                // Absolute again, and for a sharper reason than the frame deadline. Timing each
+                // one from when the last actually went out adds that frame's overshoot to the
+                // interval, and at two times speed -- where the picture wants every second frame
+                // and the overshoot is what decides which -- the drift costs a quarter of them.
+                var now = System.nanoTime();
+                if (speed == EmulationSpeed.NORMAL || now - nextPresent >= 0) {
+                    screen.present(ppu.getFrameBuffer());
+
+                    nextPresent += EmulationSpeed.FRAME_NANOS;
+                    if (nextPresent - now < 0) {
+                        // A frame's worth behind, which is a machine too slow for the speed it was
+                        // asked for. Owing it pictures it will never draw helps nobody.
+                        nextPresent = now + EmulationSpeed.FRAME_NANOS;
+                    }
+                }
+
+                if (speed == EmulationSpeed.UNLIMITED) {
+                    // Nothing to wait for. The host's speed is the only limit there is.
+                    continue;
+                }
 
                 // Absolute deadlines rather than "sleep 16ms": the time spent emulating the frame
                 // comes out of the wait instead of being added to it, so the error cannot pile up.
-                deadline += FRAME_NANOS;
+                deadline += speed.frameNanos();
 
-                var now = System.nanoTime();
+                // Read again: presenting the frame took real time too, and at eight times speed
+                // the whole budget is two milliseconds.
+                now = System.nanoTime();
                 if (deadline - now > 0) {
                     LockSupport.parkNanos(deadline - now);
-                } else if (now - deadline > MAX_LAG_NANOS) {
+                } else if (now - deadline > MAX_LAG_FRAMES * speed.frameNanos()) {
                     deadline = now;
                 }
             }

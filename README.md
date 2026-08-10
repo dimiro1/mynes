@@ -15,7 +15,10 @@ A Work in Progress Nes emulator.
   NES Classic, PVM Style D93, Smooth and Wavebeam. Settings > Palette... lists them next to a
   swatch grid and applies each one as the selection moves, so they can be compared against the
   running game -- or against a paused frame;
-- Machine menu: Reset (the console button, memory survives), Power Cycle, and Pause;
+- Machine menu: Reset (the console button, memory survives), Power Cycle, Pause, and Fast Forward
+  at 2x, 4x, 8x or unlimited -- the machine is clocked exactly as it always is, the wait between
+  frames is what shrinks, and the picture keeps its sixty frames a second by showing only the ones
+  that fall due;
 - Keyboard control of player one, remappable;
 - CHR debug window: every tile of a bank with a zoomed preview, coloured with any of the eight
   palettes the game is running with, live -- CHR RAM rewrites and palette changes show up as
@@ -76,17 +79,24 @@ running with.
 
 Settings > Controller... remaps any of them: click a button, press the key you want on it. The
 change applies at once, no save button, and lands in `~/.mynes/config.properties` along with the
-chosen palette:
+chosen palette and fast forward speed:
 
 ```properties
 video.palette=nesdev
+emulation.fast-forward=4x
 controller1.a=VK_X
 controller1.left=VK_LEFT
 ```
 
 That file can be edited by hand instead. Binding values are the names of the `VK_` constants in
 `java.awt.event.KeyEvent`, an empty value leaves the button unbound, and an entry that is missing
-or misspelled -- a key name or a palette id -- falls back to its default and says so in the log.
+or misspelled -- a key name, a palette id, a speed -- falls back to its default and says so in the
+log.
+
+Machine > Fast Forward switches the speed on and off, and Machine > Fast Forward Speed picks which
+one. Whether it is on is not remembered between runs; which speed it uses is. Asking for more than
+the computer manages is not an error -- it simply runs at whatever it manages, which on the machine
+this was written on is around ten times, so 4x and 8x are kept and `unlimited` is the rest of it.
 
 ## Tests
 
