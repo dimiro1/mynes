@@ -28,7 +28,7 @@ class PPUNMITests extends PPUFixture {
 
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
     }
 
     @Nested
@@ -135,29 +135,49 @@ class PPUNMITests extends PPUFixture {
     @DisplayName("through a real CPU")
     class Integration {
         private static final int NMI_HANDLER = 0xC100;
+        private static final int SPIN_LOOP = 0xC015;
 
         @Test
         void vectorsThroughTheHandlerAFixedNumberOfCyclesAfterVBlank() {
-            // SEI, then enable NMI, then spin. The spin loop is a three cycle JMP, so the
-            // interrupt is taken at a boundary within three cycles of being requested.
+            // SEI, wait for three VBlanks, then enable NMI and spin. Two of the waits are the
+            // ones every game does, because the PPU ignores $2000 until it has warmed up. The
+            // third is for this test: three dots to a CPU cycle means (241,1) can only be
+            // observed from here on every third frame, and waiting one more VBlank puts the frame
+            // being measured on one of them. Whichever wait ends last leaves the VBlank flag
+            // cleared behind it, so enabling NMI produces no interrupt on the spot, and the spin
+            // loop is a three cycle JMP, so the one that follows is taken at a boundary within
+            // three cycles of being requested.
             var nes = new NES(Cart.load(rom(
                     0x78,              // SEI
+                    0x2C, 0x02, 0x20,  // BIT $2002
+                    0x10, 0xFB,        // BPL back to the BIT
+                    0x2C, 0x02, 0x20,  // BIT $2002
+                    0x10, 0xFB,        // BPL back to the BIT
+                    0x2C, 0x02, 0x20,  // BIT $2002
+                    0x10, 0xFB,        // BPL back to the BIT
                     0xA9, 0x80,        // LDA #$80
                     0x8D, 0x00, 0x20,  // STA $2000
-                    0x4C, 0x06, 0xC0   // JMP $C006, a one instruction spin
+                    0x4C, 0x15, 0xC0   // JMP $C015, a one instruction spin
             ), "nmi.nes"));
 
             var cpu = nes.getCPU();
             var ppu = nes.getPPU();
 
-            // Get into the spin loop.
-            nes.step();
-            nes.step();
-            nes.step();
-            nes.step();
+            // Get into the spin loop, which takes the best part of three frames.
+            for (var steps = 0; cpu.getState().pc() != SPIN_LOOP; steps++) {
+                if (steps > 100_000) {
+                    throw new AssertionError("the ROM never reached its spin loop");
+                }
+
+                nes.step();
+            }
 
             // Run up to the dot the flag goes up on, then find out how long the CPU takes.
-            while (!(ppu.getScanline() == 241 && ppu.getDot() == 1)) {
+            for (var dots = 0; !(ppu.getScanline() == 241 && ppu.getDot() == 1); dots += 3) {
+                if (dots > 3 * DOTS_PER_FRAME) {
+                    throw new AssertionError("the beam never landed on (241,1) between two cycles");
+                }
+
                 nes.tick();
             }
 
