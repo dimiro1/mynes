@@ -456,6 +456,65 @@ class PPUSpriteTests extends PPUFixture {
     }
 
     @Nested
+    @DisplayName("the debug layer switches")
+    class LayerSwitches {
+        @Test
+        void hidingSpritesRevealsTheBackgroundBehindThem() {
+            fillBackground();
+            writeSprite(0, 10, SOLID_TILE, 0, 20);
+            ppu.setSpriteLayerVisible(false);
+
+            startRendering();
+            renderThrough(11);
+
+            assertEquals(colour(BACKGROUND_COLOUR), pixelAt(20, 11),
+                    "the background pixel the sprite was covering shows through");
+            assertTrue(hitSet(), "the game still sees the hit; only the picture changed");
+        }
+
+        @Test
+        void hidingTheBackgroundLeavesTheBackdrop() {
+            fillBackground();
+            writeSprite(0, 10, SOLID_TILE, 0, 20);
+            ppu.setBackgroundLayerVisible(false);
+
+            startRendering();
+            renderThrough(11);
+
+            assertEquals(colour(BACKDROP), pixelAt(40, 40), "background pixels fall to the backdrop");
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(20, 11), "sprites are still drawn");
+            assertTrue(hitSet());
+        }
+
+        @Test
+        void hidingBothLayersStillSetsTheSpriteZeroHit() {
+            fillBackground();
+            writeSprite(0, 10, SOLID_TILE, 0, 20);
+            ppu.setBackgroundLayerVisible(false);
+            ppu.setSpriteLayerVisible(false);
+
+            startRendering();
+            renderThrough(11);
+
+            assertEquals(colour(BACKDROP), pixelAt(20, 11), "nothing is drawn at all");
+            assertTrue(hitSet(), "and the game cannot tell");
+        }
+
+        @Test
+        void spritesBehindTheBackgroundStayHiddenWhenItIsHidden() {
+            fillBackground();
+            writeSprite(0, 10, SOLID_TILE, BEHIND_BACKGROUND, 20);
+            ppu.setBackgroundLayerVisible(false);
+
+            startRendering();
+            renderThrough(11);
+
+            assertEquals(colour(BACKDROP), pixelAt(20, 11),
+                    "priority still belongs to the background even when it is not drawn");
+        }
+    }
+
+    @Nested
     @DisplayName("what rendering does to OAMADDR")
     class OamAddress {
         /**

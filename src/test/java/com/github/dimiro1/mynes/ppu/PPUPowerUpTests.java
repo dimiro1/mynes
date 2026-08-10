@@ -205,6 +205,18 @@ class PPUPowerUpTests extends PPUFixture {
         }
 
         @Test
+        void abandonsAMaskWriteStillInFlight() {
+            warmUp();
+
+            // The write is two dots from reaching the rendering hardware when the reset lands.
+            ppu.write(PPUMASK, 0x1E);
+            ppu.reset();
+            run(4);
+
+            assertFalse(ppu.isRenderingEnabled(), "the write died in the pipeline with the rest");
+        }
+
+        @Test
         void emptiesTheReadBuffer() {
             warmUp();
             writeVRAM(0x2000, 0xAA);

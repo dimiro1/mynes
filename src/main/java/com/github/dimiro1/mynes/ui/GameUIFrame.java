@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -25,6 +26,15 @@ public class GameUIFrame extends JFrame {
     private final JFileChooser fileChooser;
     private final ScreenComponent screen = new ScreenComponent();
     private final KeyboardInput keyboardInput;
+
+    // Menus and items that outlive init(): they are enabled, ticked and read back as machines
+    // come and go.
+    private final JMenu machineMenu = new JMenu("Machine");
+    private final JMenu debugMenu = new JMenu("Debug");
+    private final JCheckBoxMenuItem machineMenuPause = new JCheckBoxMenuItem("Pause");
+    private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
+    private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
+
     private CHRViewerFrame chrViewerFrame;
     private KeyBindings keyBindings;
     private Cart cart;
@@ -63,13 +73,37 @@ public class GameUIFrame extends JFrame {
         fileMenuQuit.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, command));
         fileMenu.add(fileMenuQuit);
 
-        JMenu debugMenu = new JMenu("Debug");
+        machineMenu.setMnemonic(KeyEvent.VK_M);
+        machineMenu.setEnabled(false);
+
+        JMenuItem machineMenuReset = new JMenuItem("Reset", KeyEvent.VK_R);
+        machineMenuReset.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, command));
+        machineMenu.add(machineMenuReset);
+
+        JMenuItem machineMenuPowerCycle = new JMenuItem("Power Cycle", KeyEvent.VK_C);
+        machineMenuPowerCycle.setAccelerator(
+                KeyStroke.getKeyStroke(KeyEvent.VK_R, command | InputEvent.SHIFT_DOWN_MASK));
+        machineMenu.add(machineMenuPowerCycle);
+
+        machineMenu.addSeparator();
+
+        machineMenuPause.setMnemonic(KeyEvent.VK_P);
+        machineMenuPause.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, command));
+        machineMenu.add(machineMenuPause);
+
         debugMenu.setMnemonic(KeyEvent.VK_D);
+        debugMenu.setEnabled(false);
 
         JMenuItem debugMenuCHRViewer = new JMenuItem("CHR Viewer", KeyEvent.VK_C);
-
         debugMenu.add(debugMenuCHRViewer);
-        debugMenu.setEnabled(false);
+
+        debugMenu.addSeparator();
+
+        debugMenuBackground.setMnemonic(KeyEvent.VK_B);
+        debugMenu.add(debugMenuBackground);
+
+        debugMenuSprites.setMnemonic(KeyEvent.VK_S);
+        debugMenu.add(debugMenuSprites);
 
         JMenu settingsMenu = new JMenu("Settings");
         settingsMenu.setMnemonic(KeyEvent.VK_S);
@@ -84,6 +118,7 @@ public class GameUIFrame extends JFrame {
         helpMenu.add(helpMenuAbout);
 
         menuBar.add(fileMenu);
+        menuBar.add(machineMenu);
         menuBar.add(debugMenu);
         menuBar.add(settingsMenu);
         menuBar.add(helpMenu);
@@ -101,25 +136,67 @@ public class GameUIFrame extends JFrame {
                 }).setVisible(true));
 
         fileMenuOpen.addActionListener(e -> {
-            if (chrViewerFrame != null) {
-                logger.debug("closing chrViewerFrame");
-                destroyCHRViewerFrame();
-            }
-
             if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 try {
                     loadRom(fileChooser.getSelectedFile());
-                    debugMenu.setEnabled(true);
                 } catch (IOException ex) {
                     logger.error("failed to load rom", ex);
                 }
             }
         });
 
+        // The reset button on the console: memory survives, the CPU restarts through its reset
+        // vector. Posted rather than called because only the emulation thread touches the NES.
+        machineMenuReset.addActionListener(e -> {
+            if (runner != null) {
+                runner.post(nes::reset);
+            }
+        });
 
-        // The viewer reads the mapper's character memory from this thread while the emulation
-        // thread runs. Deliberately unsynchronised: reading an array element cannot tear, so the
-        // worst case is a debug window showing a tile a frame out of date.
+        // Pulling the power instead: a brand new machine, built from the cartridge already in
+        // the slot.
+        machineMenuPowerCycle.addActionListener(e -> {
+            if (cart != null) {
+                startMachine(cart);
+            }
+        });
+
+        machineMenuPause.addActionListener(e -> {
+            if (runner == null) {
+                return;
+            }
+
+            runner.setPaused(machineMenuPause.isSelected());
+
+            // A button held down when the game froze would otherwise still be held on resume,
+            // minutes later, whether or not the key is.
+            if (machineMenuPause.isSelected()) {
+                keyboardInput.releaseAll();
+            }
+
+            updateTitle();
+        });
+
+        debugMenuBackground.addActionListener(e -> {
+            if (runner != null) {
+                var ppu = nes.getPPU();
+                var visible = debugMenuBackground.isSelected();
+                runner.post(() -> ppu.setBackgroundLayerVisible(visible));
+            }
+        });
+
+        debugMenuSprites.addActionListener(e -> {
+            if (runner != null) {
+                var ppu = nes.getPPU();
+                var visible = debugMenuSprites.isSelected();
+                runner.post(() -> ppu.setSpriteLayerVisible(visible));
+            }
+        });
+
+        // The viewer reads the mapper's character memory and the PPU's palette RAM from this
+        // thread while the emulation thread runs. Deliberately unsynchronised: reading an array
+        // element cannot tear, so the worst case is a debug window showing a tile a frame out of
+        // date.
         debugMenuCHRViewer.addActionListener(
                 e -> {
                     if (cart == null) {
@@ -134,12 +211,22 @@ public class GameUIFrame extends JFrame {
                     }
 
                     if (chrViewerFrame == null) {
-                        chrViewerFrame = new CHRViewerFrame(this, cart);
+                        chrViewerFrame = new CHRViewerFrame(this, cart, nes.getPPU());
                     }
 
                     chrViewerFrame.setVisible(true);
                 }
         );
+
+        helpMenuAbout.addActionListener(e -> JOptionPane.showMessageDialog(
+                this,
+                """
+                MyNES
+                A cycle accurate NES emulator written in Java.
+
+                https://github.com/dimiro1/mynes""",
+                "About MyNES",
+                JOptionPane.INFORMATION_MESSAGE));
 
         fileMenuQuit.addActionListener(e ->
                 this.dispatchEvent(new WindowEvent(this, WindowEvent.WINDOW_CLOSING)));
@@ -179,12 +266,32 @@ public class GameUIFrame extends JFrame {
             loaded = Cart.load(rom.readAllBytes(), selectedFile.getName());
         }
 
+        startMachine(loaded);
+
+        logger.info("loaded rom {}", selectedFile.getName());
+    }
+
+    /**
+     * Builds a fresh machine around a cartridge and starts it, replacing whatever was running.
+     * Both loading a ROM and cycling the power come through here; the only difference is whether
+     * the cartridge is new.
+     */
+    private void startMachine(final Cart cart) {
         if (runner != null) {
             runner.stop();
         }
 
-        cart = loaded;
+        // The old viewer is watching the old machine's mapper and palettes; it would keep showing
+        // them forever. Closed rather than repointed, since it is a debug window.
+        destroyCHRViewerFrame();
+
+        this.cart = cart;
         nes = new NES(cart);
+
+        // A fresh PPU has both layers on, but the menu remembers what the last one was told.
+        // The runner has not started yet, so the machine is still this thread's to touch.
+        nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
+        nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
 
         // Each machine brings its own controllers, so the keyboard has to be pointed at the new
         // one. Nothing races: the old runner has already stopped and this is the event dispatch
@@ -192,14 +299,31 @@ public class GameUIFrame extends JFrame {
         keyboardInput.releaseAll();
         keyboardInput.setController(nes.getController1());
 
+        machineMenuPause.setSelected(false);
+
         runner = new EmulatorRunner(nes, screen);
         runner.start();
 
-        logger.info("loaded rom {}", selectedFile.getName());
+        machineMenu.setEnabled(true);
+        debugMenu.setEnabled(true);
+        updateTitle();
+    }
+
+    private void updateTitle() {
+        if (cart == null) {
+            setTitle("MyNES");
+            return;
+        }
+
+        var paused = runner != null && runner.isPaused();
+        setTitle("MyNES - " + cart.filename() + (paused ? " (paused)" : ""));
     }
 
     private void destroyCHRViewerFrame() {
-        chrViewerFrame.setVisible(false);
-        chrViewerFrame = null;
+        if (chrViewerFrame != null) {
+            logger.debug("closing chrViewerFrame");
+            chrViewerFrame.dispose();
+            chrViewerFrame = null;
+        }
     }
 }
