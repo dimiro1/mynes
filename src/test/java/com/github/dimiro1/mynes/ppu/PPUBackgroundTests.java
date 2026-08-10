@@ -46,7 +46,7 @@ class PPUBackgroundTests extends PPUFixture {
 
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
         masterPalette = PPU.getPalette();
 
         // Four solid tiles, one per pixel value, so a tile number maps straight to a colour.

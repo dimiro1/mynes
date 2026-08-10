@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PPURegisterTests extends PPUFixture {
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
     }
 
     @Nested
@@ -53,7 +53,55 @@ class PPURegisterTests extends PPUFixture {
 
             ppu.write(PPUADDR, 0xF0);
             assertEquals(0x3DF0, ppu.getT());
+
+            run(ADDRESS_UPDATE_DOTS);
             assertEquals(0x3DF0, ppu.getV(), "the second write copies t into v");
+        }
+
+        /**
+         * The wait between the two halves of the second $2006 write: {@code t <- d} on the dot of
+         * the write, {@code v <- t} a dot or so afterwards.
+         */
+        @Test
+        void theSecondAddressWriteReachesTheCounterACoupleOfDotsLate() {
+            setVRAMAddress(0x2000);
+
+            ppu.read(PPUSTATUS);
+            ppu.write(PPUADDR, 0x21);
+            ppu.write(PPUADDR, 0x08);
+
+            assertEquals(0x2000, ppu.getV(), "the write itself only loads the staging register");
+
+            ppu.tick();
+            assertEquals(0x2000, ppu.getV(), "still the old address one dot later");
+
+            ppu.tick();
+            assertEquals(0x2108, ppu.getV(), "and the new one on the dot after that");
+        }
+
+        /**
+         * The load still happens with rendering on, and it lands on top of whatever the fetch
+         * pipeline did to the address in the meantime.
+         */
+        @Test
+        void theDelayedLoadOverwritesAScrollIncrementThatFellIntoTheGap() {
+            ppu.write(PPUMASK, 0x08);
+
+            // Dot 336 is the last of an eight dot fetch, so coarse X is incremented on the very
+            // next one -- in between the two halves of the write.
+            runTo(50, 336);
+
+            ppu.read(PPUSTATUS);
+            ppu.write(PPUADDR, 0x21);
+            ppu.write(PPUADDR, 0x08);
+
+            var beforeTheGap = ppu.getV();
+
+            ppu.tick();
+            assertNotEquals(beforeTheGap, ppu.getV(), "the fetch moved coarse X on in the meantime");
+
+            ppu.tick();
+            assertEquals(0x2108, ppu.getV(), "and the delayed load landed on top of it");
         }
 
         @Test
