@@ -6,7 +6,9 @@ A Work in Progress Nes emulator.
 
 - Cycle stepped CPU;
 - Dot accurate NTSC PPU: background and sprite pipelines, loopy scroll registers, sprite 0 hit,
-  the sprite overflow bug, open bus decay and colour emphasis, into a 256x240 ARGB framebuffer;
+  the sprite overflow bug, the delayed $2006 VRAM address, the write-ignore window the chip holds
+  over $2000, $2001, $2005 and $2006 while it warms up, open bus decay, OAM decay and colour
+  emphasis, into a 256x240 ARGB framebuffer;
 - Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
   overscan cropped and the picture scaled to the window;
 - Machine menu: Reset (the console button, memory survives), Power Cycle, and Pause;
@@ -20,8 +22,7 @@ A Work in Progress Nes emulator.
 - Per-opcode verification against the Tom Harte single step tests;
 
 Mappers 0 (NROM) and 3 (CNROM) are supported. There is no second player, no APU, no PAL timing
-and no save states, and three PPU details are still missing: the $2006 delayed VRAM address, the
-write-ignore window while the PPU warms up, and OAM decay.
+and no save states.
 
 ## Controls
 
@@ -61,7 +62,11 @@ The PPU is verified against blargg's test ROMs, vendored under `src/test/resourc
 the readme that came with each suite: `ppu-vbl-nmi` (VBlank and NMI timing to a single PPU clock),
 `ppu-sprite-hit`, `ppu-sprite-overflow`, `oam` (`oam_read` and `oam_stress`), `ppu-open-bus`,
 `ppu-read-buffer` and `ppu-tests-2005` (palette RAM, VRAM access, sprite RAM, VBlank clear time).
-All of them pass, with no accepted deviations.
+All of them pass except `oam_stress`, which is an accepted deviation: it hammers OAM for thirty
+seconds with rendering switched off and does not refresh it anywhere near often enough to beat a
+millisecond of DRAM charge, so it would only pass with the decay stretched to something like a
+twentieth of a second. blargg's own readme says the ROM "passes only for one of the four random
+PPU-CPU synchronizations at power/reset" on a real console.
 
 They report in two different ways, both handled by `BlarggRunner`: the later ROMs use the $6000
 status protocol, and the 2005 era ones write a numeric result code into zero page. A failure code

@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class PPUOpenBusTests extends PPUFixture {
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
     }
 
     @ParameterizedTest(name = "register {0} reads back the latch")

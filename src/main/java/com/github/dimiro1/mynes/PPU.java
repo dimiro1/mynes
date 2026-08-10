@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
 
+import java.util.Arrays;
+
 /**
  * PPU implements the 2C02 picture processing unit found in the NTSC NES.
  * <p>
@@ -70,6 +72,26 @@ public class PPU {
     private static final int MASK_WRITE_DELAY_DOTS = 2;
 
     /**
+     * How many dots a second $2006 write takes to reach the VRAM address counter.
+     */
+    private static final int ADDRESS_WRITE_DELAY_DOTS = 2;
+
+    /**
+     * How many dots an eight byte row of OAM holds its charge for.
+     * <p>
+     * A vertical blank is 6820 dots and the charge lasts "at least as long as an NTSC vertical
+     * blank interval, but not much longer than this", so this is a little over one of them --
+     * about 1.7 milliseconds.
+     */
+    private static final int OAM_DECAY_DOTS = 9000;
+
+    /**
+     * The registers the warm-up window covers, one bit per register number: $2000, $2001, $2005
+     * and $2006.
+     */
+    private static final int WARM_UP_IGNORED_REGISTERS = 0b0110_0011;
+
+    /**
      * The width of the picture in pixels, and equally the number of dots of a scanline the beam
      * draws on.
      */
@@ -117,10 +139,33 @@ public class PPU {
     private long frame = 0;
 
     /**
+     * Dots since power on, and the clock OAM decay is measured against.
+     * <p>
+     * {@link #frame} cannot serve for that: a row of OAM loses its charge in about a twelfth of a
+     * frame. Like the frame counter it survives a reset, because it is a clock rather than state
+     * a reset can see.
+     */
+    private long clock = 0;
+
+    /**
      * Whether the frame being drawn is an odd one, which is what decides if the last dot of the
      * pre-render line is skipped.
      */
     private boolean oddFrame = false;
+
+    /**
+     * True while the PPU's internal reset signal is still held over $2000, $2001, $2005 and
+     * $2006.
+     * <p>
+     * The chip starts rendering the moment it is powered on or reset, but ignores those four
+     * registers -- and does not toggle the write latch the last two share -- until the beam
+     * reaches the pre-render line of the next frame, around 29658 CPU cycles later. Everything
+     * else works from the first cycle. This is why every game and every test ROM begins by
+     * waiting for two VBlanks.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_power_up_state">NESdev: PPU power up state</a>
+     */
+    private boolean warmingUp = true;
 
     // ---------------------------------------------------------------- registers
 
@@ -171,6 +216,17 @@ public class PPU {
     private int t;
 
     /**
+     * Dots left before a second $2006 write reaches {@link #v}.
+     * <p>
+     * The address counter is not loaded on the dot of the write. What the second write does is
+     * {@code t <- d}, then a wait of a dot or so, and only then {@code v <- t} -- so a scroll
+     * split written mid-scanline lands slightly later than the write did. Nothing the CPU can
+     * reach sees the transfer in flight; there are three dots to a CPU cycle, so the load always
+     * beats the next access.
+     */
+    private int addressDelay;
+
+    /**
      * Fine X scroll, loopy's {@code x}. Three bits, and the only part of the scroll position that
      * never goes anywhere near {@code v}.
      */
@@ -192,6 +248,13 @@ public class PPU {
 
     private int oamAddress;
     private final int[] oam = new int[256];
+
+    /**
+     * The dot each eight byte row of OAM was last refreshed on. Per row rather than per byte
+     * because that is how the DRAM behind it is wired: touching any byte of a row refreshes all
+     * eight of them.
+     */
+    private final long[] oamRefreshedOn = new long[32];
 
     /**
      * Palette RAM. Thirty two entries of six bits, inside the PPU rather than on its bus.
@@ -319,27 +382,35 @@ public class PPU {
     }
 
     /**
-     * The console's reset button, as the PPU sees it.
+     * Pulls the PPU's reset line, the way the console's reset button does.
      * <p>
-     * Reset is nothing like power off and on: everything with memory in it -- OAM, palette RAM,
-     * the VRAM address, nametables, the status flags -- keeps what it had, and only the control
-     * side is cleared: PPUCTRL, PPUMASK, the scroll position, the shared write latch, the $2007
-     * read buffer and the odd frame flag. Clearing PPUCTRL also releases the /NMI line if the
-     * enable bit was holding it down. The beam carries on from wherever it was.
+     * The internal reset signal covers the same four registers the warm-up window does, so they
+     * go back to zero and the window is armed again; the beam restarts at the top left. What it
+     * does not reach is left exactly as it was: {@link #v}, OAMADDR, OAM, palette RAM and the
+     * status flags all survive. So do {@link #frame} and {@link #clock}, which are the clocks the
+     * open bus and OAM decay are measured against rather than state a reset can see.
      *
      * @see <a href="https://www.nesdev.org/wiki/PPU_power_up_state">NESdev: PPU power up state</a>
      */
     public void reset() {
+        warmingUp = true;
+
         ctrl = 0;
         mask = 0;
         pendingMask = 0;
         maskDelay = 0;
         t = 0;
+        addressDelay = 0;
         fineX = 0;
         writeLatch = false;
         readBuffer = 0;
+
+        scanline = 0;
+        dot = 0;
         oddFrame = false;
 
+        // The VBlank flag is untouched, but the NMI enable bit has just gone, so the line has to
+        // be settled again.
         updateNMILine();
     }
 
@@ -351,8 +422,24 @@ public class PPU {
      * at that point in the scanline.
      */
     public void tick() {
+        clock++;
+
+        if (warmingUp && scanline == PRE_RENDER_LINE) {
+            // The internal reset signal is released when the beam first reaches the pre-render
+            // line, which from power on is 89001 dots, or 29667 CPU cycles -- the wiki's "around
+            // 29658", said in the units this class thinks in.
+            warmingUp = false;
+        }
+
         if (maskDelay > 0 && --maskDelay == 0) {
             mask = pendingMask;
+        }
+
+        if (addressDelay > 0 && --addressDelay == 0) {
+            // Ahead of the fetch pipeline rather than behind it, so that the dot the load lands
+            // on already reads from the new address -- and so that a coarse X increment that fell
+            // into the gap is overwritten, which is what the hardware does.
+            v = t;
         }
 
         if (isRenderingLine()) {
@@ -620,7 +707,7 @@ public class PPU {
         }
 
         if ((dot & 1) == 1) {
-            evaluationLatch = oam[((evaluationSprite << 2) | evaluationByte) & 0xFF];
+            evaluationLatch = readOAM(((evaluationSprite << 2) | evaluationByte) & 0xFF);
             return;
         }
 
@@ -633,6 +720,13 @@ public class PPU {
     }
 
     private void beginEvaluation() {
+        // "The OAM memory is refreshed once per scanline while rendering is enabled" -- and this
+        // runs at dot 65 of a visible line with rendering on, which is exactly that condition. So
+        // OAM only ever decays for a game that leaves rendering off for more than a millisecond.
+        for (var row = 0; row < oamRefreshedOn.length; row++) {
+            refreshOAMRow(row);
+        }
+
         firstSpriteExamined = oamAddress >> 2;
         evaluationSprite = firstSpriteExamined;
         evaluationByte = oamAddress & 3;
@@ -957,13 +1051,21 @@ public class PPU {
      * @param data     the byte to write.
      */
     public void write(final int register, final int data) {
+        var index = register & 7;
         var value = data & 0xFF;
 
         // Every write puts the whole byte on the PPU's data pins, including a write to the
-        // read-only status register.
+        // read-only status register and including one the warm-up window is about to drop: the
+        // byte is on the pins whether or not the PPU acts on it.
         refreshOpenBus(value, 0xFF);
 
-        switch (register & 7) {
+        if (warmingUp && (WARM_UP_IGNORED_REGISTERS & (1 << index)) != 0) {
+            // Dropped here rather than inside the handlers, which is also what keeps the write
+            // latch $2005 and $2006 share from toggling.
+            return;
+        }
+
+        switch (index) {
             case 0 -> writeCtrl(value);
             case 1 -> {
                 pendingMask = value;
@@ -1045,7 +1147,7 @@ public class PPU {
      * evaluation hardware is busy filling secondary OAM with $FF, and that is what a read sees.
      */
     private int readOAMData() {
-        var value = isClearingSecondaryOAM() ? 0xFF : oam[oamAddress];
+        var value = isClearingSecondaryOAM() ? 0xFF : readOAM(oamAddress);
 
         refreshOpenBus(value, 0xFF);
         return value;
@@ -1067,7 +1169,7 @@ public class PPU {
         // Bits 2 to 4 of a sprite's attribute byte do not exist: there are no RAM cells behind
         // them, so they read back as zero no matter what was written. Masking here rather than on
         // the read path means OAM DMA, which funnels through this same method, is covered too.
-        oam[oamAddress] = (oamAddress & 3) == 2 ? value & 0xE3 : value;
+        writeOAM(oamAddress, (oamAddress & 3) == 2 ? value & 0xE3 : value);
         oamAddress = (oamAddress + 1) & 0xFF;
     }
 
@@ -1090,7 +1192,8 @@ public class PPU {
      * Writes $2006, the VRAM address register. Two writes: high byte then low.
      * <p>
      * The high byte only carries six bits, so the first write clears bit 14 of the temporary
-     * address as a side effect. The second write copies the whole thing into {@link #v}.
+     * address as a side effect. The second write copies the whole thing into {@link #v}, a dot or
+     * two later: see {@link #addressDelay}.
      */
     private void writeAddress(final int value) {
         if (!writeLatch) {
@@ -1100,7 +1203,7 @@ public class PPU {
         }
 
         t = (t & 0x7F00) | value;
-        v = t;
+        addressDelay = ADDRESS_WRITE_DELAY_DOTS;
         writeLatch = false;
     }
 
@@ -1160,6 +1263,44 @@ public class PPU {
         }
 
         v = (v + ((ctrl & CTRL_INCREMENT_32) != 0 ? 32 : 1)) & 0x7FFF;
+    }
+
+    // ================================================================ object attribute memory
+
+    /**
+     * Reads a byte of OAM, refreshing the row it lives in.
+     */
+    private int readOAM(final int address) {
+        refreshOAMRow(address >> 3);
+        return oam[address];
+    }
+
+    /**
+     * Writes a byte of OAM, refreshing the row it lives in.
+     */
+    private void writeOAM(final int address, final int value) {
+        refreshOAMRow(address >> 3);
+        oam[address] = value;
+    }
+
+    /**
+     * Lets an eight byte row of OAM decay if it has gone too long untouched, and then starts its
+     * clock again.
+     * <p>
+     * OAM is DRAM with no refresh circuit of its own, so the only thing that keeps it alive is
+     * being read or written. The sprite evaluation does that once per scanline, but only while
+     * rendering is enabled; a row left alone for longer than {@link #OAM_DECAY_DOTS} loses its
+     * charge and reads back as zero. Zeroing the array here rather than masking on the way out is
+     * what keeps sprite evaluation, $2004 and OAM DMA all seeing the same OAM.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_OAM">NESdev: PPU OAM</a>
+     */
+    private void refreshOAMRow(final int row) {
+        if (clock - oamRefreshedOn[row] >= OAM_DECAY_DOTS) {
+            Arrays.fill(oam, row * 8, row * 8 + 8, 0);
+        }
+
+        oamRefreshedOn[row] = clock;
     }
 
     // ================================================================ palette RAM

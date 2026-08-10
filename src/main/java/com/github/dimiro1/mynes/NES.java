@@ -43,7 +43,6 @@ public class NES {
      * off" save rituals to warm boot detection.
      */
     public void reset() {
-        bus.getPPU().reset();
         bus.triggerRST();
     }
 

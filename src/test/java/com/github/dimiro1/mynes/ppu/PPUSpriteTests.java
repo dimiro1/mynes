@@ -58,7 +58,7 @@ class PPUSpriteTests extends PPUFixture {
 
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
         masterPalette = PPU.getPalette();
 
         solidTile(SOLID_TILE, 1);
