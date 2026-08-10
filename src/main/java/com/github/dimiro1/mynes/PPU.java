@@ -302,11 +302,45 @@ public class PPU {
 
     private final int[] frameBuffer = new int[SCREEN_WIDTH * SCREEN_HEIGHT];
 
+    /**
+     * Debug switches over the two layers, for a front end to offer. They gate what reaches the
+     * framebuffer and nothing else: sprite evaluation, the sprite 0 hit flag and everything else
+     * a game can observe carries on exactly as before, so hiding a layer cannot change how the
+     * game runs -- only what it looks like.
+     */
+    private boolean backgroundLayerVisible = true;
+    private boolean spriteLayerVisible = true;
+
     public PPU(final PPUBus bus, final Mapper mapper) {
         this.bus = bus;
         this.vram = new VRAM(mapper);
 
         bus.setNMILine(false);
+    }
+
+    /**
+     * The console's reset button, as the PPU sees it.
+     * <p>
+     * Reset is nothing like power off and on: everything with memory in it -- OAM, palette RAM,
+     * the VRAM address, nametables, the status flags -- keeps what it had, and only the control
+     * side is cleared: PPUCTRL, PPUMASK, the scroll position, the shared write latch, the $2007
+     * read buffer and the odd frame flag. Clearing PPUCTRL also releases the /NMI line if the
+     * enable bit was holding it down. The beam carries on from wherever it was.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_power_up_state">NESdev: PPU power up state</a>
+     */
+    public void reset() {
+        ctrl = 0;
+        mask = 0;
+        pendingMask = 0;
+        maskDelay = 0;
+        t = 0;
+        fineX = 0;
+        writeLatch = false;
+        readBuffer = 0;
+        oddFrame = false;
+
+        updateNMILine();
     }
 
     /**
@@ -827,8 +861,13 @@ public class PPU {
             }
         }
 
+        // From here down the debug layer switches take part, but only in what is returned: the
+        // sprite search above has already run, and the hit flag below still uses the real
+        // background pixel, so a hidden layer stays invisible to the game itself.
+        var drawnBackground = backgroundLayerVisible ? background : 0;
+
         if (unit < 0) {
-            return background;
+            return drawnBackground;
         }
 
         // The hit is about two opaque pixels meeting, not about which of them is drawn, so a
@@ -841,7 +880,11 @@ public class PPU {
         var attributes = spriteAttributes[unit];
 
         if (background != 0 && (attributes & 0x20) != 0) {
-            return background;
+            return drawnBackground;
+        }
+
+        if (!spriteLayerVisible) {
+            return drawnBackground;
         }
 
         return 0x10 | ((attributes & 0x03) << 2) | colour;
@@ -1323,6 +1366,42 @@ public class PPU {
      */
     public boolean isWriteLatchSet() {
         return writeLatch;
+    }
+
+    /**
+     * Shows or hides the background layer in the picture. A debug switch for a front end; the
+     * game cannot tell it has been thrown, because it changes nothing but the pixels drawn.
+     */
+    public void setBackgroundLayerVisible(final boolean visible) {
+        backgroundLayerVisible = visible;
+    }
+
+    public boolean isBackgroundLayerVisible() {
+        return backgroundLayerVisible;
+    }
+
+    /**
+     * Shows or hides the sprite layer in the picture. Hiding it reveals the background pixels the
+     * sprites were covering; sprite evaluation and the sprite 0 hit flag are untouched.
+     */
+    public void setSpriteLayerVisible(final boolean visible) {
+        spriteLayerVisible = visible;
+    }
+
+    public boolean isSpriteLayerVisible() {
+        return spriteLayerVisible;
+    }
+
+    /**
+     * Reads a palette RAM cell without side effects, for debug UIs. Mirroring is folded the same
+     * way a real access folds it, so both a full $3F00 style address and a bare 0 to 31 index
+     * name the same cells.
+     *
+     * @param address a palette address; only the low five bits matter.
+     * @return the six bit palette entry, an index into {@link #getPalette()}.
+     */
+    public int peekPalette(final int address) {
+        return readPalette(address);
     }
 
     /**

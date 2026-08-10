@@ -6,14 +6,33 @@ import com.github.dimiro1.mynes.ByteUtils;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
 
+/**
+ * One 8x8 tile from character memory, drawn scaled to whatever size the component was given.
+ * <p>
+ * The tile is decoded into a small image when its bytes or its colours change, rather than on
+ * every paint, so a repaint costs one image blit and the CHR viewer's refresh timer can walk all
+ * 256 of these without doing any real work for tiles that have not moved.
+ */
 public class TileComponent extends JComponent {
+    /**
+     * The colours a tile is drawn with when no game palette has been chosen: black plus three
+     * colours picked to be tellable apart, one per bit plane combination.
+     */
+    public static final int[] DEFAULT_PALETTE = {
+            0xFF000000, 0xFFFCE4A0, 0xFF00E8D8, 0xFF2038EC,
+    };
+
+    private static final Color HIGHLIGHT = new Color(1.0f, 1.0f, 0.0f, 0.5f);
+
     private int tileNumber;
     private boolean isHighlighted = false;
     private int baseAddress;
     private final int width;
     private final int height;
 
+    private final int[] palette = DEFAULT_PALETTE.clone();
     private final int[] tileData = new int[16];
     private final BufferedImage bufferedImage;
     private final Mapper mapper;
@@ -34,7 +53,8 @@ public class TileComponent extends JComponent {
                 8, 8, BufferedImage.TYPE_INT_RGB);
 
         setPreferredSize(new Dimension(width, height));
-        refresh();
+        fetchTileData();
+        renderImage();
     }
 
     /**
@@ -49,13 +69,32 @@ public class TileComponent extends JComponent {
     }
 
     /**
-     * Fetch tile data from memory.
+     * Fetches the tile's bytes from character memory again, redrawing only if they changed --
+     * which for a CHR ROM tile is never, and for CHR RAM is whenever the game rewrote it.
+     *
+     * @return whether anything had changed.
      */
-    public void refresh() {
-        var address = (tileNumber * 16) + baseAddress;
-        for (int i = 0; i < 16; i++) {
-            tileData[i] = mapper.charRead(address + i);
+    public boolean refresh() {
+        if (!fetchTileData()) {
+            return false;
         }
+
+        renderImage();
+        repaint();
+        return true;
+    }
+
+    /**
+     * Hands the tile a new set of four colours, index 0 the backdrop. The array is copied.
+     */
+    public void setPalette(final int[] colours) {
+        if (Arrays.equals(palette, colours)) {
+            return;
+        }
+
+        System.arraycopy(colours, 0, palette, 0, palette.length);
+        renderImage();
+        repaint();
     }
 
     /**
@@ -105,34 +144,56 @@ public class TileComponent extends JComponent {
         }
     }
 
+    private boolean fetchTileData() {
+        var address = (tileNumber * 16) + baseAddress;
+        var changed = false;
+
+        for (int i = 0; i < 16; i++) {
+            var read = mapper.charRead(address + i);
+            if (tileData[i] != read) {
+                tileData[i] = read;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private void renderImage() {
+        for (int y = 0; y < 8; y++) {
+            // The first plane holds the low bit of each pixel, the one eight bytes later the
+            // high bit -- same order the PPU fetches them in.
+            var low = tileData[y];
+            var high = tileData[y + 8];
+
+            for (int x = 0; x < 8; x++) {
+                var paletteColor = ByteUtils.joinBits(
+                        ByteUtils.getBit(7 - x, high), ByteUtils.getBit(7 - x, low));
+
+                bufferedImage.setRGB(x, y, palette[paletteColor]);
+            }
+        }
+    }
+
     @Override
     public void paintComponent(final Graphics g) {
         super.paintComponent(g);
 
-        for (int y = 0; y < 8; y++) {
-            var upper = tileData[y];
-            var lower = tileData[y + 8];
+        var g2 = (Graphics2D) g.create();
 
-            for (int x = 0; x < 8; x++) {
-                var paletteColor = ByteUtils.joinBits(
-                        ByteUtils.getBit(7 - x, upper), ByteUtils.getBit(7 - x, lower));
+        try {
+            // Nearest neighbour: pixel art scaled smoothly turns to mush.
+            g2.setRenderingHint(
+                    RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            g2.drawImage(bufferedImage, 0, 0, this.width, this.height, null);
 
-                var color = switch (paletteColor) {
-                    case 0b01 -> new Color(252, 228, 160);
-                    case 0b10 -> new Color(0, 232, 216);
-                    case 0b11 -> new Color(32, 56, 236);
-                    default -> Color.BLACK;
-                };
-
-                bufferedImage.setRGB(x, y, color.getRGB());
+            if (isHighlighted) {
+                g2.setColor(HIGHLIGHT);
+                g2.fillRect(0, 0, this.width, this.height);
             }
-        }
-
-        g.drawImage(bufferedImage, 0, 0, this.width, this.height, null);
-
-        if (isHighlighted) {
-            g.setColor(new Color(1.0f, 1.0f, 0.0f, 0.5f));
-            g.fillRect(0, 0, this.width, this.height);
+        } finally {
+            g2.dispose();
         }
     }
 }

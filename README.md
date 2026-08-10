@@ -9,8 +9,12 @@ A Work in Progress Nes emulator.
   the sprite overflow bug, open bus decay and colour emphasis, into a 256x240 ARGB framebuffer;
 - Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
   overscan cropped and the picture scaled to the window;
+- Machine menu: Reset (the console button, memory survives), Power Cycle, and Pause;
 - Keyboard control of player one, remappable;
-- CHR debug window;
+- CHR debug window: every tile of a bank with a zoomed preview, coloured with any of the eight
+  palettes the game is running with, live -- CHR RAM rewrites and palette changes show up as
+  they happen;
+- Debug toggles to hide the background or sprite layer without the game noticing;
 - Most of blargg tests are passing;
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;

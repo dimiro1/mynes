@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.NES;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -13,11 +14,13 @@ import java.util.concurrent.locks.LockSupport;
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
  * thing it touches on the UI side is {@link ScreenComponent#present(int[])}, which is written to
- * be called from here. {@link #start()} and {@link #stop()} are for the EDT.
+ * be called from here. {@link #start()} and {@link #stop()} are for the EDT, and anything else
+ * the UI wants done to the machine -- a reset, a debug switch -- goes through {@link #post} and
+ * runs here, between frames.
  * <p>
- * The one deliberate exception is the CHR viewer, which reads the mapper's character memory from
- * the EDT while this thread runs. It is a debug window watching read-only ROM in the mappers that
- * exist today; a stale tile in it would not be worth a lock on every pattern fetch.
+ * The one deliberate exception is the CHR viewer, which reads the mapper's character memory and
+ * the PPU's palette RAM from the EDT while this thread runs. It is a debug window watching memory
+ * whose reads cannot tear; a stale tile in it would not be worth a lock on every pattern fetch.
  *
  * @see com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame
  */
@@ -42,7 +45,15 @@ public class EmulatorRunner {
     private final NES nes;
     private final ScreenComponent screen;
 
+    /**
+     * Work the UI has asked to have done to the machine. Drained on the emulation thread at frame
+     * boundaries, which is what makes a menu action safe without putting a lock on the machine:
+     * the queue's own synchronisation carries the handoff.
+     */
+    private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
+
     private volatile boolean running;
+    private volatile boolean paused;
     private Thread thread;
 
     public EmulatorRunner(final NES nes, final ScreenComponent screen) {
@@ -86,6 +97,27 @@ public class EmulatorRunner {
         thread = null;
     }
 
+    /**
+     * Hands an action to the emulation thread, which runs it between frames -- so within about
+     * 17ms, paused or not. This is how the UI touches the machine: nothing here blocks, and
+     * nothing on the EDT ever handles the NES itself.
+     */
+    public void post(final Runnable command) {
+        commands.add(command);
+    }
+
+    /**
+     * Freezes the machine, or lets it run again. Takes effect within a frame. While paused the
+     * last finished frame stays on screen and posted commands still run.
+     */
+    public void setPaused(final boolean paused) {
+        this.paused = paused;
+    }
+
+    public boolean isPaused() {
+        return paused;
+    }
+
     private void run() {
         logger.info("emulation started");
 
@@ -96,6 +128,17 @@ public class EmulatorRunner {
             var lastFrame = ppu.getFrame();
 
             while (running) {
+                runPendingCommands();
+
+                if (paused) {
+                    // A frame's worth of sleep at a time, so a resume or a posted command is
+                    // picked up quickly, and the schedule restarts cleanly on resume instead of
+                    // sprinting through the pause as missed frames.
+                    LockSupport.parkNanos(FRAME_NANOS);
+                    deadline = System.nanoTime();
+                    continue;
+                }
+
                 // The PPU has no frame-complete callback; its frame counter is the signal. One
                 // tick is three dots, so this can overshoot the boundary by up to two of them --
                 // at most the first pixel of the next frame arrives early, on scanline 0, which
@@ -123,5 +166,12 @@ public class EmulatorRunner {
         }
 
         logger.info("emulation stopped");
+    }
+
+    private void runPendingCommands() {
+        Runnable command;
+        while ((command = commands.poll()) != null) {
+            command.run();
+        }
     }
 }
