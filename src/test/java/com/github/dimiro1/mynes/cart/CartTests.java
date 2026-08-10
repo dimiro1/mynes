@@ -3,15 +3,25 @@ package com.github.dimiro1.mynes.cart;
 import com.github.dimiro1.mynes.InvalidNesFileException;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.UnsupportedMapperException;
+import com.github.dimiro1.mynes.mappers.Mapper0;
+import com.github.dimiro1.mynes.mappers.Mapper1;
+import com.github.dimiro1.mynes.mappers.Mapper2;
+import com.github.dimiro1.mynes.mappers.Mapper3;
+import com.github.dimiro1.mynes.mappers.Mapper4;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 public class CartTests {
     @Test
@@ -49,14 +59,34 @@ public class CartTests {
      */
     @Test
     void loadUnsupportedMapper() {
-        var rom = synthesizeRom(0x10, 0x00);  // mapper 1
+        var rom = synthesizeRom(0x50, 0x00);  // mapper 5, MMC5
 
         var thrown = assertThrowsExactly(
                 UnsupportedMapperException.class,
-                () -> Cart.load(rom, "mapper1.nes")
+                () -> Cart.load(rom, "mapper5.nes")
         );
 
-        assertTrue(thrown.getMessage().contains("1"), "should name the mapper: " + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("5"), "should name the mapper: " + thrown.getMessage());
+    }
+
+    @ParameterizedTest(name = "mapper ${0} loads as ${1}")
+    @MethodSource("supportedMappers")
+    void loadBuildsTheMapperTheHeaderNames(final int number, final Class<?> expected) {
+        var rom = synthesizeRom(number << 4, 0x00);
+
+        var cart = Cart.load(rom, "mapper" + number + ".nes");
+
+        assertInstanceOf(expected, cart.mapper());
+    }
+
+    private static Stream<Arguments> supportedMappers() {
+        return Stream.of(
+                arguments(0, Mapper0.class),
+                arguments(1, Mapper1.class),
+                arguments(2, Mapper2.class),
+                arguments(3, Mapper3.class),
+                arguments(4, Mapper4.class)
+        );
     }
 
     @Test

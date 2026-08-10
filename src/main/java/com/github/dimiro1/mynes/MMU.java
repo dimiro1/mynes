@@ -13,7 +13,7 @@ import com.github.dimiro1.mynes.mappers.Mapper;
  * $4000-$4017: APU and I/O registers
  * $4018-$401F: APU and I/O functionality (usually disabled)
  * $4020-$5FFF: Expansion ROM (rarely used)
- * $6000-$7FFF: SRAM (battery-backed save RAM)
+ * $6000-$7FFF: Cartridge RAM (mapper controlled)
  * $8000-$FFFF: PRG ROM (mapper controlled)
  */
 public class MMU {
@@ -30,9 +30,6 @@ public class MMU {
 
     // Expansion ROM area ($4020-$5FFF) - rarely used
     private final int[] expansionROM = new int[0x1FE0];
-
-    // Save RAM ($6000-$7FFF) - battery-backed SRAM
-    private final int[] saveRAM = new int[0x2000];
 
     // OAM DMA state
     private boolean dmaInProgress = false;
@@ -88,13 +85,13 @@ public class MMU {
             return expansionROM[addr - 0x4020];
         }
 
-        // Save RAM ($6000-$7FFF)
+        // Cartridge RAM ($6000-$7FFF) - mapper controlled
         if (addr < 0x8000) {
-            return saveRAM[addr - 0x6000];
+            return mapper.prgRAMRead(addr);
         }
 
         // PRG ROM ($8000-$FFFF) - mapper controlled
-        return mapper.prgRead(addr - 0x8000);
+        return mapper.prgRead(addr);
     }
 
     /**
@@ -151,14 +148,14 @@ public class MMU {
             return;
         }
 
-        // Save RAM ($6000-$7FFF)
+        // Cartridge RAM ($6000-$7FFF) - mapper controlled
         if (addr < 0x8000) {
-            saveRAM[addr - 0x6000] = value;
+            mapper.prgRAMWrite(addr, value);
             return;
         }
 
         // PRG ROM ($8000-$FFFF) - mapper controlled
-        mapper.prgWrite(addr - 0x8000, value);
+        mapper.prgWrite(addr, value);
     }
 
     /**
@@ -257,12 +254,5 @@ public class MMU {
      */
     public int[] getInternalRAM() {
         return internalRAM;
-    }
-
-    /**
-     * Gets the save RAM array (for save state/persistence).
-     */
-    public int[] getSaveRAM() {
-        return saveRAM;
     }
 }

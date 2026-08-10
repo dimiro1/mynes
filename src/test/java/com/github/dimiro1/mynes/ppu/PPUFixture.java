@@ -34,9 +34,17 @@ abstract class PPUFixture {
     protected PPU ppu;
 
     protected void createPPU() {
-        mapper = new StubMapper();
-        bus = new RecordingPPUBus();
-        ppu = new PPU(bus, mapper);
+        createPPU(new StubMapper());
+    }
+
+    /**
+     * Builds the PPU on a particular cartridge, for a test that needs one that answers back --
+     * a mapper watching the address bus, say.
+     */
+    protected void createPPU(final StubMapper mapper) {
+        this.mapper = mapper;
+        this.bus = new RecordingPPUBus();
+        this.ppu = new PPU(bus, mapper);
     }
 
     /**

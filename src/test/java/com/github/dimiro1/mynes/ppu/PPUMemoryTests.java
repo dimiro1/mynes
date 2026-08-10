@@ -101,6 +101,37 @@ class PPUMemoryTests extends PPUFixture {
             assertEquals(0x44, readVRAM(0x2C00));
         }
 
+        @ParameterizedTest(name = "single screen low: ${0} is the same kilobyte as $2000")
+        @ValueSource(ints = {0x2400, 0x2800, 0x2C00})
+        void singleScreenLowFoldsAllFourOntoTheFirstKilobyte(final int table) {
+            mapper.setMirroring(Mirroring.ONE_SCREEN_LOW);
+
+            writeVRAM(0x2000 + 0x123, 0x42);
+            assertEquals(0x42, readVRAM(table + 0x123));
+        }
+
+        @ParameterizedTest(name = "single screen high: ${0} is the same kilobyte as $2000")
+        @ValueSource(ints = {0x2400, 0x2800, 0x2C00})
+        void singleScreenHighFoldsAllFourOntoTheSecondKilobyte(final int table) {
+            mapper.setMirroring(Mirroring.ONE_SCREEN_HIGH);
+
+            writeVRAM(0x2000 + 0x123, 0x42);
+            assertEquals(0x42, readVRAM(table + 0x123));
+        }
+
+        @Test
+        void theTwoSingleScreenModesAreDifferentKilobytes() {
+            mapper.setMirroring(Mirroring.ONE_SCREEN_LOW);
+            writeVRAM(0x2000, 0x11);
+
+            mapper.setMirroring(Mirroring.ONE_SCREEN_HIGH);
+            writeVRAM(0x2000, 0x22);
+            assertEquals(0x22, readVRAM(0x2000), "the second kilobyte answers now");
+
+            mapper.setMirroring(Mirroring.ONE_SCREEN_LOW);
+            assertEquals(0x11, readVRAM(0x2000), "and the first one kept what it had");
+        }
+
         @Test
         void the3000RangeIsAPlainMirrorOf2000() {
             writeVRAM(0x2123, 0x42);

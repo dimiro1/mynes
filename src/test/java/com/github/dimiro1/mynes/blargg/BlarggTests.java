@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.blargg;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -75,6 +76,24 @@ public class BlarggTests {
     void instructionsV5(final String filename) throws IOException {
         BlarggRunner.runStatusProtocol(
                 filename, TIMEOUT, ACCEPTED_DEVIATIONS.getOrDefault(filename, Set.of())
+        );
+    }
+
+    /**
+     * The whole of the above in one ROM, which is here for the cartridge rather than for the CPU.
+     * <p>
+     * It is an MMC1 build -- sixteen banks of PRG, switched as it walks through the sub-tests --
+     * so it exercises {@link com.github.dimiro1.mynes.mappers.Mapper1} against a program that
+     * this project already knows the right answers for. A failure here is the mapper's, not the
+     * CPU's. Unofficial instructions are left out of this build, so the ATX deviation above does
+     * not arise.
+     *
+     * @throws IOException if the ROM file cannot be read
+     */
+    @Test
+    void officialInstructionsOnMMC1() throws IOException {
+        BlarggRunner.runStatusProtocol(
+                "/instr-test-v5/official_only.nes", Duration.ofSeconds(120), Set.of()
         );
     }
 }

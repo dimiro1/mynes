@@ -127,6 +127,13 @@ public class PPU {
     private final PPUBus bus;
     private final VRAM vram;
 
+    /**
+     * Kept only so that the dots can be passed on. A mapper that watches the address bus has to
+     * know how long the bus has been sitting at an address as well as what that address is, and
+     * {@link VRAM} only ever hears about the accesses.
+     */
+    private final Mapper mapper;
+
     // ---------------------------------------------------------------- beam position
 
     private int scanline = 0;
@@ -376,6 +383,7 @@ public class PPU {
 
     public PPU(final PPUBus bus, final Mapper mapper) {
         this.bus = bus;
+        this.mapper = mapper;
         this.vram = new VRAM(mapper);
 
         bus.setNMILine(false);
@@ -422,6 +430,10 @@ public class PPU {
      * at that point in the scanline.
      */
     public void tick() {
+        // Before the dot's own work, so that a mapper counting how long the address bus has been
+        // idle counts this dot as idle if nothing on it touches the bus.
+        mapper.ppuTick();
+
         clock++;
 
         if (warmingUp && scanline == PRE_RENDER_LINE) {
@@ -440,6 +452,12 @@ public class PPU {
             // on already reads from the new address -- and so that a coarse X increment that fell
             // into the gap is overwritten, which is what the hardware does.
             v = t;
+
+            // The counter drives the address bus, so loading it puts the address out there with
+            // no access going with it. That is how a game with the picture switched off clocks an
+            // MMC3's scanline counter, and it happens here rather than at the write because until
+            // this dot the bus is still holding the old address.
+            mapper.ppuAddress(v & 0x3FFF);
         }
 
         if (isRenderingLine()) {
@@ -1193,7 +1211,9 @@ public class PPU {
      * <p>
      * The high byte only carries six bits, so the first write clears bit 14 of the temporary
      * address as a side effect. The second write copies the whole thing into {@link #v}, a dot or
-     * two later: see {@link #addressDelay}.
+     * two later: see {@link #addressDelay}. The copy is also what reaches the cartridge, which is
+     * how a game with rendering switched off clocks an MMC3's scanline counter -- two $2006
+     * writes are enough to make A12 rise, a couple of dots after the second one.
      */
     private void writeAddress(final int value) {
         if (!writeLatch) {
@@ -1222,7 +1242,11 @@ public class PPU {
 
         if (address >= 0x3F00) {
             value = (openBus() & 0xC0) | (readPalette(address) & greyscaleMask());
-            readBuffer = vram.read(address & 0x2FFF);
+            // The palette address itself goes on the bus -- the nametable below it is what
+            // answers, because only thirteen of the fourteen lines reach the nametable RAM, but
+            // A12 is high and a mapper watching the bus sees that. Reading $3F05 and reading
+            // $2F05 fetch the same byte and differ only in what the cartridge saw go past.
+            readBuffer = vram.read(address);
             refreshOpenBus(value, 0x3F);
         } else {
             value = readBuffer;
@@ -1238,6 +1262,9 @@ public class PPU {
         var address = v & 0x3FFF;
 
         if (address >= 0x3F00) {
+            // Unlike a palette read, which still fetches the nametable byte underneath, this
+            // never reaches the bus in this model, so a mapper watching the address lines does
+            // not see it. Only something clocking A12 through palette writes would notice.
             writePalette(address, value);
         } else {
             vram.write(address, value);
@@ -1254,15 +1281,21 @@ public class PPU {
      * circuits the pipeline uses fire instead: coarse X moves on and Y moves on, together. The
      * result is neither of the two increments the program asked for, which is why writing $2007
      * mid-frame is a well known way to scramble the scroll position.
+     * <p>
+     * Whichever way it moved, the new address is left sitting on the PPU bus, because outside
+     * rendering there is nothing else driving it. A game with the picture switched off can
+     * therefore make A12 rise by reading $2007 with the address one short of $1000, and blargg's
+     * {@code 3-A12_clocking} checks that it can.
      */
     private void incrementAddress() {
         if (isRenderingEnabled() && isRenderingLine()) {
             incrementCoarseX();
             incrementY();
-            return;
+        } else {
+            v = (v + ((ctrl & CTRL_INCREMENT_32) != 0 ? 32 : 1)) & 0x7FFF;
         }
 
-        v = (v + ((ctrl & CTRL_INCREMENT_32) != 0 ? 32 : 1)) & 0x7FFF;
+        mapper.ppuAddress(v & 0x3FFF);
     }
 
     // ================================================================ object attribute memory

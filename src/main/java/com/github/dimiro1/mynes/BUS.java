@@ -43,6 +43,15 @@ public class BUS implements CPUBus, PPUBus {
         this.ppu = new PPU(this, mapper);
         this.mmu = new MMU(ppu, mapper, controller1, controller2);
         this.cpu = new CPU(this);
+
+        // Last, because there is nothing to interrupt until the CPU exists.
+        mapper.setIRQHandler(asserted -> {
+            if (asserted) {
+                triggerIRQ();
+            } else {
+                releaseIRQ();
+            }
+        });
     }
 
     /**
@@ -99,16 +108,24 @@ public class BUS implements CPUBus, PPUBus {
      * Can be called by mappers or other hardware. The line stays low until
      * {@link #releaseIRQ()} is called, so the CPU keeps seeing the request even while the
      * interrupt disable flag is masking it.
+     * <p>
+     * Null guarded like {@link #setNMILine(boolean)}: a mapper handed the line by
+     * {@link #initialize()} keeps it for as long as the cartridge is in the machine, and a unit
+     * test can hold one without ever building a CPU.
      */
     public void triggerIRQ() {
-        cpu.setIRQLine(true);
+        if (cpu != null) {
+            cpu.setIRQLine(true);
+        }
     }
 
     /**
      * Releases the shared Interrupt Request (IRQ) line.
      */
     public void releaseIRQ() {
-        cpu.setIRQLine(false);
+        if (cpu != null) {
+            cpu.setIRQLine(false);
+        }
     }
 
     /**

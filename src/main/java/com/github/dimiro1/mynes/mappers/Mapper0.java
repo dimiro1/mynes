@@ -14,7 +14,15 @@ public class Mapper0 implements Mapper {
      */
     private static final int CHR_RAM_SIZE = 0x2000;
 
+    /**
+     * The window at $6000-$7FFF, filled in whether or not the board really had a RAM chip on it.
+     * Plain NROM mostly did not, but blargg's test ROMs report their results through $6000 and
+     * several of them are NROM, so the console would have nothing to read back otherwise.
+     */
+    private static final int PRG_RAM_SIZE = 0x2000;
+
     private final byte[] prgROM;
+    private final byte[] prgRAM = new byte[PRG_RAM_SIZE];
 
     /**
      * The pattern table storage, either the cart's CHR ROM or the CHR RAM allocated in its place.
@@ -35,15 +43,27 @@ public class Mapper0 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
-        if (prgROM.length == 0x4000 && address >= 0x4000) {
-            return Byte.toUnsignedInt(prgROM[address % 0x4000]);
+        var offset = address & 0x7FFF;
+
+        if (prgROM.length == 0x4000 && offset >= 0x4000) {
+            return Byte.toUnsignedInt(prgROM[offset % 0x4000]);
         }
 
-        return Byte.toUnsignedInt(prgROM[address]);
+        return Byte.toUnsignedInt(prgROM[offset]);
     }
 
     @Override
     public void prgWrite(final int address, final int data) { /* Not used on mapper 0 */ }
+
+    @Override
+    public int prgRAMRead(final int address) {
+        return Byte.toUnsignedInt(prgRAM[address & 0x1FFF]);
+    }
+
+    @Override
+    public void prgRAMWrite(final int address, final int data) {
+        prgRAM[address & 0x1FFF] = (byte) data;
+    }
 
     @Override
     public int charRead(final int address) {
