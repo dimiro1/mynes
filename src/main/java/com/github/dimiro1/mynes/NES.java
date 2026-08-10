@@ -35,6 +35,18 @@ public class NES {
     }
 
     /**
+     * The console's reset button.
+     * <p>
+     * The CPU is sent through its reset vector and the PPU's control registers are cleared, while
+     * every kind of memory -- work RAM, VRAM, OAM, the palettes -- keeps what it held. That
+     * survival is the point of the button: games lean on it, from "hold Reset while switching
+     * off" save rituals to warm boot detection.
+     */
+    public void reset() {
+        bus.triggerRST();
+    }
+
+    /**
      * Advances the whole machine by one CPU cycle.
      * <p>
      * On NTSC the PPU clock is exactly three times the CPU clock. The three dots happen before

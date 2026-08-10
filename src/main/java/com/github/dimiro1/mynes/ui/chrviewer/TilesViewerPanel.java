@@ -103,6 +103,29 @@ public class TilesViewerPanel extends JPanel {
     }
 
     /**
+     * Re-fetches every tile from character memory. Each tile repaints itself only if its bytes
+     * changed, so calling this on a timer costs next to nothing while the data holds still.
+     */
+    public void refreshTiles() {
+        for (var component : getComponents()) {
+            if (component instanceof TileComponent tile) {
+                tile.refresh();
+            }
+        }
+    }
+
+    /**
+     * Hands every tile a new set of four colours, index 0 the backdrop.
+     */
+    public void setPalette(final int[] colours) {
+        for (var component : getComponents()) {
+            if (component instanceof TileComponent tile) {
+                tile.setPalette(colours);
+            }
+        }
+    }
+
+    /**
      * Sets the base address in the CHR ROM of the tiles.
      */
     public void setBaseAddress(int baseAddress) {

@@ -24,6 +24,11 @@ abstract class PPUFixture {
 
     static final int DOTS_PER_FRAME = 341 * 262;
 
+    /**
+     * How many dots the second $2006 write takes to reach the VRAM address counter.
+     */
+    static final int ADDRESS_UPDATE_DOTS = 2;
+
     protected StubMapper mapper;
     protected RecordingPPUBus bus;
     protected PPU ppu;
@@ -43,13 +48,35 @@ abstract class PPUFixture {
     }
 
     /**
+     * A PPU past the window it ignores $2000, $2001, $2005 and $2006 in, which is where a game
+     * does all of its work and so where most of these tests want to start.
+     */
+    protected void createWarmPPU() {
+        createPPU();
+        warmUp();
+    }
+
+    /**
+     * Runs past the window the PPU ignores $2000, $2001, $2005 and $2006 in, and back round to
+     * (0,0).
+     */
+    protected void warmUp() {
+        runTo(261, 0);
+        runTo(0, 0);
+    }
+
+    /**
      * Points the VRAM address register at {@code address}, resetting the shared write latch first
      * so the pair of $2006 writes cannot be knocked out of step by whatever ran before.
+     * <p>
+     * The two writes land back to back, which no real CPU can manage, so the dots the address
+     * takes to reach the counter have to be given to it here.
      */
     protected void setVRAMAddress(final int address) {
         ppu.read(PPUSTATUS);
         ppu.write(PPUADDR, (address >> 8) & 0x3F);
         ppu.write(PPUADDR, address & 0xFF);
+        run(ADDRESS_UPDATE_DOTS);
     }
 
     protected void writeVRAM(final int address, final int data) {

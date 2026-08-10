@@ -115,9 +115,7 @@ class PPUTimingTests extends PPUFixture {
 
         @Test
         void dropsOneDotOnEveryOtherFrameWithRenderingOn() {
-            ppu.write(PPUMASK, 0x08);
-            run(4);
-            runTo(0, 0);  // the start of frame 1, the first odd one
+            startRenderingOnTheFirstOddFrame();
 
             assertEquals(
                     List.of(DOTS_PER_FRAME - 1, DOTS_PER_FRAME, DOTS_PER_FRAME - 1, DOTS_PER_FRAME),
@@ -127,9 +125,7 @@ class PPUTimingTests extends PPUFixture {
 
         @Test
         void keepsTheFullLengthWhenRenderingIsSwitchedOffBeforeTheSkippedDot() {
-            ppu.write(PPUMASK, 0x08);
-            run(4);
-            runTo(0, 0);  // the start of an odd frame, which would drop a dot
+            startRenderingOnTheFirstOddFrame();
 
             var dots = 0;
 
@@ -146,6 +142,19 @@ class PPUTimingTests extends PPUFixture {
             } while (!(ppu.getScanline() == 0 && ppu.getDot() == 0));
 
             assertEquals(DOTS_PER_FRAME, dots, "nothing is rendering, so there is no dot to skip");
+        }
+
+        /**
+         * Turns rendering on and leaves the beam at the start of frame 1, the first odd one.
+         * <p>
+         * $2001 is ignored until the PPU has worked the first dot of the pre-render line, so the
+         * write has to wait until then -- which is also the last moment it can be made without
+         * the frame it lands in being the one measured.
+         */
+        private void startRenderingOnTheFirstOddFrame() {
+            runTo(261, 1);
+            ppu.write(PPUMASK, 0x08);
+            runTo(0, 0);
         }
     }
 }

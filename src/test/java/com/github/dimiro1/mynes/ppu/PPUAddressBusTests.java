@@ -25,6 +25,11 @@ class PPUAddressBusTests extends PPUFixture {
     void setUp() {
         recorder = new RecordingMapper();
         createPPU(recorder);
+
+        // Past the window the PPU ignores $2000, $2001 and $2006 in, and with the dots that took
+        // off the books, since some of these count them.
+        warmUp();
+        recorder.clear();
     }
 
     @Nested
@@ -38,6 +43,13 @@ class PPUAddressBusTests extends PPUFixture {
             assertEquals(List.of(), recorder.addresses(), "half an address drives nothing");
 
             ppu.write(PPUADDR, 0x08);
+
+            assertEquals(
+                    List.of(), recorder.addresses(),
+                    "nor does the write itself: the counter is loaded a dot or two later"
+            );
+
+            run(ADDRESS_UPDATE_DOTS);
 
             assertEquals(List.of(0x2108), recorder.addresses());
         }
@@ -207,8 +219,12 @@ class PPUAddressBusTests extends PPUFixture {
             return dots;
         }
 
+        /**
+         * Forgets everything, so a test can start counting from whatever point it likes.
+         */
         void clear() {
             addresses.clear();
+            dots = 0;
         }
     }
 }

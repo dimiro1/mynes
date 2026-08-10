@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 class PPUMemoryTests extends PPUFixture {
     @BeforeEach
     void setUp() {
-        createPPU();
+        createWarmPPU();
     }
 
     @Nested

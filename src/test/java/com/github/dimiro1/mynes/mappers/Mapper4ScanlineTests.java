@@ -15,6 +15,8 @@ class Mapper4ScanlineTests {
     private static final int PPUCTRL = 0;
     private static final int PPUMASK = 1;
 
+    private static final int PRE_RENDER_LINE = 261;
+
     /**
      * 240 visible lines and the pre-render line, which fetches just like they do.
      */
@@ -72,6 +74,18 @@ class Mapper4ScanlineTests {
         mapper.prgWrite(0xE001, 0);
 
         var ppu = new PPU(level -> { }, mapper);
+
+        // $2000 and $2001 are ignored until the beam has reached the pre-render line, so the PPU
+        // has to be taken past that window -- and through the line itself, which is where the
+        // chip lets go of its internal reset -- before a game, or this, can turn rendering on.
+        while (ppu.getScanline() != PRE_RENDER_LINE) {
+            ppu.tick();
+        }
+
+        while (ppu.getScanline() == PRE_RENDER_LINE) {
+            ppu.tick();
+        }
+
         ppu.write(PPUCTRL, ctrl);
         ppu.write(PPUMASK, 0x18);  // show the background and the sprites
 

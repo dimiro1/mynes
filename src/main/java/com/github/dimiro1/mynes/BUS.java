@@ -131,9 +131,14 @@ public class BUS implements CPUBus, PPUBus {
     /**
      * Triggers a Reset (RST) interrupt on the CPU.
      * Used during system initialization or reset button press.
+     * <p>
+     * The reset line goes to the PPU as well, which re-arms the window it ignores $2000, $2001,
+     * $2005 and $2006 in. The two come out of reset together, which is the assumption behind the
+     * "around 29658 CPU cycles" that window is normally quoted as.
      */
     public void triggerRST() {
         cpu.requestRST();
+        ppu.reset();
     }
 
     /**
