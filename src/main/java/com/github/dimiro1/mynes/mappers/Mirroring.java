@@ -29,7 +29,21 @@ public enum Mirroring {
      * The cartridge carries two more kilobytes of its own, so all four nametables are distinct
      * and nothing is mirrored.
      */
-    FOUR_SCREEN;
+    FOUR_SCREEN,
+
+    /**
+     * A10 is held low: all four nametables are the same first kilobyte of CIRAM, and the second
+     * kilobyte cannot be reached at all. A mapper with a mirroring register drives the line
+     * itself rather than following an address line, which is how it can do this.
+     */
+    ONE_SCREEN_LOW,
+
+    /**
+     * A10 is held high: all four nametables are the same second kilobyte of CIRAM. Games switch
+     * between this and {@link #ONE_SCREEN_LOW} to flip between two screens' worth of nametable
+     * without redrawing either.
+     */
+    ONE_SCREEN_HIGH;
 
     /**
      * Maps the mirroring field of an iNES header onto this enum.

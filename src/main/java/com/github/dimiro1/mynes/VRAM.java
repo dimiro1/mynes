@@ -45,6 +45,10 @@ public class VRAM {
     public int read(final int address) {
         var addr = address & 0x3FFF;
 
+        // Every access puts the address on the bus, wherever it is going: a mapper watching the
+        // lines sees a nametable read just as clearly as a pattern table one.
+        mapper.ppuAddress(addr);
+
         if (addr < 0x2000) {
             return mapper.charRead(addr);
         }
@@ -60,6 +64,8 @@ public class VRAM {
      */
     public void write(final int address, final int data) {
         var addr = address & 0x3FFF;
+
+        mapper.ppuAddress(addr);
 
         if (addr < 0x2000) {
             mapper.charWrite(addr, data);
@@ -89,6 +95,9 @@ public class VRAM {
             case VERTICAL -> addr & 0x7FF;
             // The cart supplies its own RAM, so nothing is shared.
             case FOUR_SCREEN -> addr;
+            // A10 held low or high: every nametable is the same kilobyte.
+            case ONE_SCREEN_LOW -> addr & 0x3FF;
+            case ONE_SCREEN_HIGH -> 0x400 | (addr & 0x3FF);
         };
     }
 }

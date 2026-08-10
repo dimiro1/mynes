@@ -14,8 +14,15 @@ package com.github.dimiro1.mynes.mappers;
 public class Mapper3 implements Mapper {
     private static final int CHR_BANK_SIZE = 0x2000;
 
+    /**
+     * As on {@link Mapper0}: the window at $6000-$7FFF is filled in unconditionally so that the
+     * test ROMs which report through $6000 have somewhere to report to.
+     */
+    private static final int PRG_RAM_SIZE = 0x2000;
+
     private final byte[] prgROM;
     private final byte[] chrROM;
+    private final byte[] prgRAM = new byte[PRG_RAM_SIZE];
     private final Mirroring mirroring;
 
     /**
@@ -35,16 +42,28 @@ public class Mapper3 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
-        if (prgROM.length == 0x4000 && address >= 0x4000) {
-            return Byte.toUnsignedInt(prgROM[address % 0x4000]);
+        var offset = address & 0x7FFF;
+
+        if (prgROM.length == 0x4000 && offset >= 0x4000) {
+            return Byte.toUnsignedInt(prgROM[offset % 0x4000]);
         }
 
-        return Byte.toUnsignedInt(prgROM[address]);
+        return Byte.toUnsignedInt(prgROM[offset]);
     }
 
     @Override
     public void prgWrite(final int address, final int data) {
         chrBank = data & bankMask;
+    }
+
+    @Override
+    public int prgRAMRead(final int address) {
+        return Byte.toUnsignedInt(prgRAM[address & 0x1FFF]);
+    }
+
+    @Override
+    public void prgRAMWrite(final int address, final int data) {
+        prgRAM[address & 0x1FFF] = (byte) data;
     }
 
     @Override
