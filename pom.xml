@@ -16,6 +16,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
+        <main.class>com.github.dimiro1.mynes.ui.Main</main.class>
     </properties>
 
     <dependencies>
@@ -106,9 +107,29 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.github.dimiro1.mynes.ui.Main</mainClass>
+                            <mainClass>${main.class}</mainClass>
                         </manifest>
                     </archive>
+                </configuration>
+            </plugin>
+
+            <!-- Exec Maven Plugin, so `mvn compile exec:exec` launches the emulator UI -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.1</version>
+                <configuration>
+                    <!-- exec:exec forks the java launcher. The exec:java goal cannot be used:
+                         it reflects for main(String[]), which Main does not declare. -->
+                    <executable>java</executable>
+                    <arguments>
+                        <!-- FlatLaf loads a native library, which the JDK warns about
+                             (and will block in a future release) unless access is granted. -->
+                        <argument>--enable-native-access=ALL-UNNAMED</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${main.class}</argument>
+                    </arguments>
                 </configuration>
             </plugin>
 
@@ -123,7 +144,7 @@
                     </descriptorRefs>
                     <archive>
                         <manifest>
-                            <mainClass>com.github.dimiro1.mynes.ui.Main</mainClass>
+                            <mainClass>${main.class}</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
