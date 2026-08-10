@@ -918,7 +918,8 @@ public class PPU {
     // ================================================================ pixel output
 
     /**
-     * Works out the colour of one pixel and writes it into the framebuffer.
+     * Works out which colour one pixel is and writes it into the framebuffer -- the index, not the
+     * colour itself. See {@link #getFrameBuffer()}.
      */
     private void renderPixel() {
         var x = dot - 1;
@@ -934,7 +935,7 @@ public class PPU {
             entry = readPalette(0x3F00 | multiplex(x, backgroundPixel(x)));
         }
 
-        frameBuffer[scanline * SCREEN_WIDTH + x] = toColour(entry);
+        frameBuffer[scanline * SCREEN_WIDTH + x] = toPixel(entry);
     }
 
     /**
@@ -1034,12 +1035,18 @@ public class PPU {
     }
 
     /**
-     * Turns a palette entry into a packed ARGB pixel, applying the two things $2001 can do to a
-     * colour on its way to the screen: drop the hue, and emphasise one or more of the colour
-     * channels by attenuating the others.
+     * Turns a palette entry into the value the framebuffer carries, applying the two things $2001
+     * can do to a colour on its way out of the chip: drop the hue, and set the emphasis bits.
+     * <p>
+     * Both belong here rather than in the front end, because the hardware really does force the
+     * index down and really does put those three bits on the wire. What the resulting signal looks
+     * like on a television is somebody else's problem -- see
+     * {@code com.github.dimiro1.mynes.ui.palette.NESPalette}.
+     *
+     * @return {@code emphasis << 6 | entry}, 0 to 511.
      */
-    private int toColour(final int entry) {
-        return EMPHASIS_PALETTE[((mask & 0xE0) << 1) | (entry & greyscaleMask())];
+    private int toPixel(final int entry) {
+        return ((mask & 0xE0) << 1) | (entry & greyscaleMask());
     }
 
     // ================================================================ CPU facing registers
@@ -1481,7 +1488,13 @@ public class PPU {
     // ================================================================ inspection
 
     /**
-     * The finished picture, 256 by 240 pixels of packed ARGB.
+     * The finished picture, 256 by 240 pixels.
+     * <p>
+     * Each entry is {@code emphasis << 6 | palette entry}, 0 to 511 -- an index into somebody's
+     * palette, not a colour. The chip has no palette table: it generates an NTSC signal from the
+     * six bit index, and turning that into RGB means picking a measurement of what the signal
+     * looked like on a television, which is a property of the television and so the front end's
+     * business.
      * <p>
      * Handed out directly rather than copied: this is the hook a front end draws from, and it is
      * overwritten in place as the beam moves, so a caller that wants a stable frame has to take
@@ -1572,80 +1585,10 @@ public class PPU {
      * name the same cells.
      *
      * @param address a palette address; only the low five bits matter.
-     * @return the six bit palette entry, an index into {@link #getPalette()}.
+     * @return the six bit palette entry.
      */
     public int peekPalette(final int address) {
         return readPalette(address);
-    }
-
-    /**
-     * The 64 colours a 2C02 can produce, as packed ARGB.
-     *
-     * @return a copy of the master palette, indexed by the six bit values held in palette RAM.
-     */
-    public static int[] getPalette() {
-        return MASTER_PALETTE.clone();
-    }
-
-    /**
-     * The NTSC 2C02 master palette.
-     * <p>
-     * A real PPU does not have a palette table at all: it generates an NTSC signal directly from
-     * the six bit colour index, so what these values really are is one person's measurement of
-     * what that signal looks like on a television. This is the widely used NESdev set.
-     */
-    private static final int[] MASTER_PALETTE = {
-            0xFF666666, 0xFF002A88, 0xFF1412A7, 0xFF3B00A4, 0xFF5C007E, 0xFF6E0040, 0xFF6C0600, 0xFF561D00,
-            0xFF333500, 0xFF0B4800, 0xFF005200, 0xFF004F08, 0xFF00404D, 0xFF000000, 0xFF000000, 0xFF000000,
-            0xFFADADAD, 0xFF155FD9, 0xFF4240FF, 0xFF7527FE, 0xFFA01ACC, 0xFFB71E7B, 0xFFB53120, 0xFF994E00,
-            0xFF6B6D00, 0xFF388700, 0xFF0C9300, 0xFF008F32, 0xFF007C8D, 0xFF000000, 0xFF000000, 0xFF000000,
-            0xFFFFFEFF, 0xFF64B0FF, 0xFF9290FF, 0xFFC676FF, 0xFFF36AFF, 0xFFFE6ECC, 0xFFFE8170, 0xFFEA9E22,
-            0xFFBCBE00, 0xFF88D800, 0xFF5CE430, 0xFF45E082, 0xFF48CDDE, 0xFF4F4F4F, 0xFF000000, 0xFF000000,
-            0xFFFFFEFF, 0xFFC0DFFF, 0xFFD3D2FF, 0xFFE8C8FF, 0xFFFBC2FF, 0xFFFEC4EA, 0xFFFECCC5, 0xFFF7D8A5,
-            0xFFE4E594, 0xFFCFEF96, 0xFFBDF4AB, 0xFFB3F3CC, 0xFFB5EBF2, 0xFFB8B8B8, 0xFF000000, 0xFF000000,
-    };
-
-    /**
-     * How much a colour channel is dimmed when one of the other two is being emphasised. Measured
-     * on real hardware at roughly three quarters.
-     */
-    private static final double EMPHASIS_ATTENUATION = 0.746;
-
-    /**
-     * {@link #MASTER_PALETTE} once for each of the eight combinations of the three emphasis bits,
-     * indexed by {@code emphasis << 6 | entry}.
-     * <p>
-     * The emphasis bits do not brighten the channel they name; they dim the other two, by pushing
-     * the signal outside the range the television expects. So setting all three at once makes the
-     * whole picture darker rather than leaving it alone.
-     */
-    private static final int[] EMPHASIS_PALETTE = buildEmphasisPalette();
-
-    private static int[] buildEmphasisPalette() {
-        var table = new int[8 * 64];
-
-        for (var emphasis = 0; emphasis < 8; emphasis++) {
-            // Bit 0 emphasises red, bit 1 green, bit 2 blue -- and each channel is dimmed when
-            // either of the other two is emphasised.
-            var dimRed = (emphasis & 0b110) != 0;
-            var dimGreen = (emphasis & 0b101) != 0;
-            var dimBlue = (emphasis & 0b011) != 0;
-
-            for (var entry = 0; entry < 64; entry++) {
-                var colour = MASTER_PALETTE[entry];
-
-                table[(emphasis << 6) | entry] = 0xFF000000
-                        | (attenuate((colour >> 16) & 0xFF, dimRed) << 16)
-                        | (attenuate((colour >> 8) & 0xFF, dimGreen) << 8)
-                        | attenuate(colour & 0xFF, dimBlue);
-            }
-        }
-
-        return table;
-    }
-
-    private static int attenuate(final int channel, final boolean dim) {
-        return dim ? (int) (channel * EMPHASIS_ATTENUATION) : channel;
     }
 
     /**

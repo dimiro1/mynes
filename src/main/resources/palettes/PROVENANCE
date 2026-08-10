@@ -1,0 +1,31 @@
+NTSC palettes from firebrandx.com
+
+Source:      https://www.firebrandx.com/nespalette.html
+Fetched:     2026-08-10
+Files:       10 palettes, 64 RGB triplets each, no emphasis variants
+Regenerate:  scripts/download-palettes.sh
+
+License:     None stated. firebrandx.com publishes these with no licence, no copyright
+             notice and no request for credit, in either page or the descriptions
+             bundled with them. Mesen, Nestopia UE and puNES ship them on the same
+             footing. Credits are recorded below because they are owed, not required.
+
+Credits:     The (FBX) palettes are FirebrandX's work.
+             Wavebeam is Nakedarthur's.
+             PC-10 is read off the PlayChoice-10 arcade PPU.
+             Sony CXA approximates certain consumer Sony sets; its author is unknown.
+
+The NESdev palette MyNES defaults to is not here: it is a constant in Palettes.java, so
+that the list is never empty and the default never depends on a resource being present.
+
+Downloaded from:
+  composite-direct.pal  https://www.firebrandx.com/graphics/nespalettes/nespalette-composite-direct.zip (Composite Direct (FBX).pal)
+  digital-prime.pal     https://www.firebrandx.com/graphics/nespalettes/digitalprime.zip (Digital Prime (FBX).pal)
+  magnum.pal            https://www.firebrandx.com/graphics/nespalettes/magnum.zip (Magnum (FBX).pal)
+  nes-classic.pal       https://www.firebrandx.com/graphics/nespalettes/nespalette-nes-classic-fbx.zip (NES Classic (FBX).pal)
+  pvm-style-d93.pal     https://www.firebrandx.com/graphics/nespalettes/nespalette-pvm-style-d93.zip (PVM Style D93 (FBX).pal)
+  smooth.pal            https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (Smooth (FBX).pal)
+  smooth-v2.pal         https://www.firebrandx.com/graphics/nespalettes/smoothv2.zip (Smooth V2 (FBX).pal)
+  pc-10.pal             https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (PC-10.pal)
+  sony-cxa.pal          https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (Sony CXA.pal)
+  wavebeam.pal          https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (Wavebeam.pal)

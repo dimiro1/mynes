@@ -4,8 +4,8 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
-import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
+import com.github.dimiro1.mynes.ui.palette.PaletteDialog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +27,11 @@ public class GameUIFrame extends JFrame {
     private final ScreenComponent screen = new ScreenComponent();
     private final KeyboardInput keyboardInput;
 
+    /**
+     * Everything remembered between runs, and the only thing that writes the config file.
+     */
+    private final Config config;
+
     // Menus and items that outlive init(): they are enabled, ticked and read back as machines
     // come and go.
     private final JMenu machineMenu = new JMenu("Machine");
@@ -36,7 +41,6 @@ public class GameUIFrame extends JFrame {
     private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
 
     private CHRViewerFrame chrViewerFrame;
-    private KeyBindings keyBindings;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -49,8 +53,9 @@ public class GameUIFrame extends JFrame {
         fileChooser.addChoosableFileFilter(filter);
         fileChooser.setFileFilter(filter);
 
-        keyBindings = KeyBindings.load(KeyBindings.DEFAULT_PATH);
-        keyboardInput = new KeyboardInput(this, keyBindings);
+        config = Config.load(Config.DEFAULT_PATH);
+        keyboardInput = new KeyboardInput(this, config.keyBindings());
+        screen.setPalette(config.palette());
 
         init();
     }
@@ -111,6 +116,9 @@ public class GameUIFrame extends JFrame {
         JMenuItem settingsMenuController = new JMenuItem("Controller...", KeyEvent.VK_C);
         settingsMenu.add(settingsMenuController);
 
+        JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
+        settingsMenu.add(settingsMenuPalette);
+
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
 
@@ -130,9 +138,25 @@ public class GameUIFrame extends JFrame {
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
 
         settingsMenuController.addActionListener(e ->
-                new ControllerSettingsDialog(this, keyBindings, updated -> {
-                    keyBindings = updated;
+                new ControllerSettingsDialog(this, config.keyBindings(), updated -> {
+                    config.setKeyBindings(updated);
                     keyboardInput.setBindings(updated);
+                    saveConfig();
+                }).setVisible(true));
+
+        // The palette belongs to the television rather than to the machine, so this is front end
+        // state all the way down: no ROM has to be loaded, nothing has to be posted to the
+        // emulation thread, and a power cycle cannot lose it.
+        settingsMenuPalette.addActionListener(e ->
+                new PaletteDialog(this, config.palette(), chosen -> {
+                    config.setPalette(chosen);
+                    screen.setPalette(chosen);
+
+                    if (chrViewerFrame != null) {
+                        chrViewerFrame.setPalette(chosen);
+                    }
+
+                    saveConfig();
                 }).setVisible(true));
 
         fileMenuOpen.addActionListener(e -> {
@@ -211,7 +235,7 @@ public class GameUIFrame extends JFrame {
                     }
 
                     if (chrViewerFrame == null) {
-                        chrViewerFrame = new CHRViewerFrame(this, cart, nes.getPPU());
+                        chrViewerFrame = new CHRViewerFrame(this, cart, nes.getPPU(), config.palette());
                     }
 
                     chrViewerFrame.setVisible(true);
@@ -307,6 +331,27 @@ public class GameUIFrame extends JFrame {
         machineMenu.setEnabled(true);
         debugMenu.setEnabled(true);
         updateTitle();
+    }
+
+    /**
+     * Writes the settings out after a dialog has changed one of them.
+     * <p>
+     * One writer, because saving truncates the file and writes the whole thing back: a dialog
+     * saving its own section would drop everybody else's. The failure is worth a dialog rather
+     * than a log line, since the alternative is the setting quietly not being there next time.
+     */
+    private void saveConfig() {
+        try {
+            config.save(Config.DEFAULT_PATH);
+        } catch (IOException e) {
+            logger.error("failed to save the settings", e);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not save the settings to " + Config.DEFAULT_PATH,
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
     }
 
     private void updateTitle() {

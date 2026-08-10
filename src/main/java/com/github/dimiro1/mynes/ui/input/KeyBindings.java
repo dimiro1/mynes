@@ -6,11 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.awt.event.KeyEvent;
-import java.io.IOException;
 import java.lang.reflect.Modifier;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Locale;
@@ -18,25 +14,21 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * Which key presses which button, and the file that remembers it between runs.
+ * Which key presses which button.
  * <p>
  * Immutable: {@link #with(Button, int)} returns a new set rather than editing this one, so the
  * dispatcher reading the bindings on the event dispatch thread never sees a half applied remap.
  * <p>
- * The file is {@code ~/.mynes/config.properties} and is meant to be edited by hand as much as
- * through the settings dialog, which is why the values are {@code VK_} constant names rather than
- * numbers or whatever {@link KeyEvent#getKeyText(int)} happens to call a key in the current
- * locale. Nothing in the file is trusted: an entry that is missing or misspelled falls back to the
- * default for that button, one at a time, so a botched edit costs a binding rather than a startup.
+ * A value type, and one section of a larger file: {@code com.github.dimiro1.mynes.ui.Config} owns
+ * {@code ~/.mynes/config.properties} and hands the properties down here. That file is meant to be
+ * edited by hand as much as through the settings dialog, which is why the values are {@code VK_}
+ * constant names rather than numbers or whatever {@link KeyEvent#getKeyText(int)} happens to call
+ * a key in the current locale. Nothing in it is trusted: an entry that is missing or misspelled
+ * falls back to the default for that button, one at a time, so a botched edit costs a binding
+ * rather than a startup.
  */
 public final class KeyBindings {
     private static final Logger logger = LoggerFactory.getLogger("INPUT");
-
-    /**
-     * Where the bindings live.
-     */
-    public static final Path DEFAULT_PATH =
-            Path.of(System.getProperty("user.home"), ".mynes", "config.properties");
 
     /**
      * The key code of a button nothing is bound to. {@link KeyEvent#VK_UNDEFINED} is zero and no
@@ -45,14 +37,9 @@ public final class KeyBindings {
     public static final int UNBOUND = KeyEvent.VK_UNDEFINED;
 
     private static final String HEADER = """
-            # MyNES controller bindings.
-            #
-            # Values are the names of the VK_ constants in java.awt.event.KeyEvent, for instance
-            # VK_X, VK_LEFT or VK_ENTER. An empty value leaves the button unbound, and an entry
-            # that is missing or misspelled falls back to the default and says so in the log.
-            #
-            # Settings > Controller... rewrites this file, dropping anything added by hand.
-
+            # Which key presses which button. Values are the names of the VK_ constants in
+            # java.awt.event.KeyEvent, for instance VK_X, VK_LEFT or VK_ENTER; an empty value
+            # leaves the button unbound.
             """;
 
     /**
@@ -161,32 +148,15 @@ public final class KeyBindings {
     }
 
     /**
-     * Reads the bindings from {@code path}, filling in the default for anything the file does not
-     * answer for. Never throws: no config file is worth refusing to start over.
-     *
-     * @param path the file to read, usually {@link #DEFAULT_PATH}.
+     * Picks the bindings out of an already loaded config file, filling in the default for anything
+     * it does not answer for. Properties that answer for nothing at all give the defaults.
      */
-    public static KeyBindings load(final Path path) {
-        if (!Files.isRegularFile(path)) {
-            logger.info("no bindings file at {}, using the defaults", path);
-            return defaults();
-        }
-
-        var properties = new Properties();
-        try (var in = Files.newInputStream(path)) {
-            properties.load(in);
-        } catch (IOException | IllegalArgumentException e) {
-            // IllegalArgumentException is a malformed unicode escape somewhere in the file.
-            logger.warn("could not read {}, using the defaults", path, e);
-            return defaults();
-        }
-
+    public static KeyBindings from(final Properties properties) {
         var keys = new EnumMap<Button, Integer>(Button.class);
+
         for (var button : Button.values()) {
             keys.put(button, parse(properties.getProperty(button.propertyKey()), button));
         }
-
-        logger.info("loaded controller bindings from {}", path);
 
         return new KeyBindings(keys);
     }
@@ -214,32 +184,21 @@ public final class KeyBindings {
     }
 
     /**
-     * Writes the bindings to {@code path}, creating the directory if it is not there yet.
+     * Writes this section into the file its owner is building, comment and all.
      * <p>
      * Written by hand rather than through {@link Properties#store} so that the buttons come out in
-     * a fixed, readable order instead of whatever order the hash table holds them in.
-     *
-     * @param path the file to write, usually {@link #DEFAULT_PATH}.
+     * a fixed, readable order -- the order the shift register clocks them out in -- instead of
+     * whatever order the hash table holds them in.
      */
-    public void save(final Path path) throws IOException {
-        var text = new StringBuilder(HEADER);
+    public void appendTo(final StringBuilder text) {
+        text.append(HEADER);
+
         for (var button : Button.values()) {
             text.append(button.propertyKey())
                     .append('=')
                     .append(nameFor(keyFor(button)))
                     .append('\n');
         }
-
-        var parent = path.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-
-        // ISO-8859-1 is what Properties.load reads a stream as. Everything written here is ASCII
-        // either way; this only keeps the two ends of the round trip agreeing on paper.
-        Files.writeString(path, text, StandardCharsets.ISO_8859_1);
-
-        logger.info("saved controller bindings to {}", path);
     }
 
     private static String nameFor(final int code) {

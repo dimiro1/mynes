@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.ppu;
 
-import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.mappers.Mirroring;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -42,12 +41,15 @@ class PPUBackgroundTests extends PPUFixture {
     private static final int SHOW_BACKGROUND = 0x08;
     private static final int SHOW_BACKGROUND_LEFT = 0x02;
 
-    private int[] masterPalette;
+    /**
+     * $2001 bit 5 as it reaches the framebuffer: the three emphasis bits sit above the six colour
+     * bits, so emphasising red alone is 1.
+     */
+    private static final int RED_EMPHASIS = 1;
 
     @BeforeEach
     void setUp() {
         createWarmPPU();
-        masterPalette = PPU.getPalette();
 
         // Four solid tiles, one per pixel value, so a tile number maps straight to a colour.
         solidTile(0, 0);
@@ -308,19 +310,16 @@ class PPUBackgroundTests extends PPUFixture {
         }
 
         @Test
-        void emphasisDimsTheChannelsItDoesNotName() {
+        void emphasisRidesAlongInTheTopBitsOfEveryPixel() {
             fillVRAM(NAMETABLE_0, TILE_BYTES, 1);
             fillVRAM(NAMETABLE_0 + TILE_BYTES, ATTRIBUTE_BYTES, 0);
 
             startRendering(SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | 0x20);  // emphasise red
             renderFrames(2);
 
-            var plain = colour(COLOUR_1);
-            var shown = pixelAt(0, 0);
-
-            assertEquals((plain >> 16) & 0xFF, (shown >> 16) & 0xFF, "red is left alone");
-            assertEquals((int) (((plain >> 8) & 0xFF) * 0.746), (shown >> 8) & 0xFF, "green is dimmed");
-            assertEquals((int) ((plain & 0xFF) * 0.746), shown & 0xFF, "and so is blue");
+            // The chip does not dim anything; it puts three bits on the wire and the television
+            // makes of them what it will. What red emphasis looks like is NESPaletteTests' problem.
+            assertEveryPixelIs((RED_EMPHASIS << 6) | colour(COLOUR_1));
         }
     }
 
@@ -357,8 +356,12 @@ class PPUBackgroundTests extends PPUFixture {
         ppu.write(PPUMASK, maskBits);
     }
 
+    /**
+     * What the framebuffer holds for a palette entry drawn with no emphasis. The PPU writes colour
+     * indices rather than colours, so this is only the six bits the hardware keeps.
+     */
     private int colour(final int entry) {
-        return masterPalette[entry & 0x3F];
+        return entry & 0x3F;
     }
 
     private void assertEveryPixelIs(final int expected) {
