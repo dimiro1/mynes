@@ -78,6 +78,34 @@ class NESIntegrationTests {
     }
 
     /**
+     * The APU is clocked at the CPU's rate, not the PPU's, and -- like the PPU and unlike the CPU
+     * -- it keeps running while an OAM DMA transfer holds the CPU off the bus. Sound that stopped
+     * for five hundred cycles every time a game moved its sprites would be audible.
+     */
+    @Test
+    void theApuTicksOncePerCpuCycleIncludingThroughAnOamDmaStall() {
+        // LDA #$02 / STA $4014 / NOP
+        var nes = nesRunning(0xA9, 0x02, 0x8D, 0x14, 0x40, NOP);
+        var cpu = nes.getCPU();
+        var apu = nes.getAPU();
+
+        nes.step();  // LDA
+        nes.step();  // STA $4014, which arms the transfer
+
+        var beforeCycles = cpu.getState().cycles();
+        var beforeApuCycles = apu.getCycles();
+
+        nes.step();  // the stall, then the NOP
+
+        var cycles = cpu.getState().cycles() - beforeCycles;
+        assertTrue(cycles > 500, "the transfer should have held the CPU for over five hundred cycles");
+        assertEquals(
+                cycles, apu.getCycles() - beforeApuCycles,
+                "the APU does not stall with the CPU"
+        );
+    }
+
+    /**
      * @return how many dots the PPU has run since power on, which is the only way to compare its
      * progress across a frame boundary.
      */

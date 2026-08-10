@@ -18,6 +18,10 @@ public class NES {
         return bus.getPPU();
     }
 
+    public APU getAPU() {
+        return bus.getAPU();
+    }
+
     public MMU getMemory() {
         return bus.getMMU();
     }
@@ -60,18 +64,25 @@ public class NES {
      * Reading $2002 in the cycle whose work happened at dot <i>d</i> hides an NMI raised at dots
      * <i>d</i> or <i>d-1</i>, but not one raised at <i>d-2</i>, because that one had already been
      * sampled.
+     * <p>
+     * The APU runs at the CPU's own clock and goes immediately before it, for the same reason the
+     * dots do: a $4015 read has to see the interrupt flag the frame counter raised in the cycle
+     * doing the reading. It is clocked here rather than from the CPU because it keeps running
+     * through an OAM DMA transfer, which the CPU spends held off the bus.
      *
      * @see CPU#sampleNMI()
      */
     public void tick() {
         var ppu = bus.getPPU();
         var cpu = bus.getCPU();
+        var apu = bus.getAPU();
 
         ppu.tick();
         cpu.sampleNMI();
         ppu.tick();
         ppu.tick();
 
+        apu.tick();
         cpu.tick();
     }
 

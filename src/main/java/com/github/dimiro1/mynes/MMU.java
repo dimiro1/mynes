@@ -17,16 +17,23 @@ import com.github.dimiro1.mynes.mappers.Mapper;
  * $8000-$FFFF: PRG ROM (mapper controlled)
  */
 public class MMU {
+    /**
+     * How long the DMC's sample fetch holds the CPU off the bus.
+     * <p>
+     * Four cycles is the usual figure. The hardware has three other answers depending on what the
+     * CPU was in the middle of -- three when the fetch was armed by a $4015 write, two when it
+     * lands on a write cycle, and so on -- and none of them are audible.
+     */
+    private static final int DMC_FETCH_CYCLES = 4;
+
     private final PPU ppu;
+    private final APU apu;
     private final Mapper mapper;
     private final Controller controller1;
     private final Controller controller2;
 
     // Internal RAM: 2KB, mirrored 4 times in $0000-$1FFF
     private final int[] internalRAM = new int[0x0800];
-
-    // APU registers ($4000-$4017)
-    private final int[] apuRegisters = new int[0x0018];
 
     // Expansion ROM area ($4020-$5FFF) - rarely used
     private final int[] expansionROM = new int[0x1FE0];
@@ -47,8 +54,23 @@ public class MMU {
     // DMA alternates between reading a byte and writing it to OAM, starting with a read.
     private boolean dmaReadPhase = true;
 
-    public MMU(final PPU ppu, final Mapper mapper, final Controller controller1, final Controller controller2) {
+    /**
+     * How many cycles are left of the DMC's own DMA, or zero when there is none in flight.
+     * <p>
+     * The DMC reads its samples over the same bus, and the CPU is held off it the same way, so the
+     * two transfers share the stall seam. This one is four cycles long and does its read on the
+     * last of them.
+     */
+    private int dmcFetchCycles;
+
+    public MMU(
+            final PPU ppu,
+            final APU apu,
+            final Mapper mapper,
+            final Controller controller1,
+            final Controller controller2) {
         this.ppu = ppu;
+        this.apu = apu;
         this.mapper = mapper;
         this.controller1 = controller1;
         this.controller2 = controller2;
@@ -160,12 +182,18 @@ public class MMU {
 
     /**
      * Reads from I/O registers ($4000-$4017).
+     * <p>
+     * $4015 is the only one of the APU's registers that answers a read at all. The rest of the
+     * window is write only and reads back as open bus on real hardware, which is approximated
+     * here as zero -- nothing this emulator runs depends on the difference, and the ROM that does
+     * is a documented non-goal.
      */
     private int readIORegister(int address) {
         return switch (address) {
+            case 0x4015 -> apu.readStatus();                             // APU status
             case 0x4016 -> controller1 != null ? controller1.read() : 0; // Controller 1
             case 0x4017 -> controller2 != null ? controller2.read() : 0; // Controller 2
-            default -> apuRegisters[address - 0x4000]; // APU registers
+            default -> 0;                                                // Open bus
         };
     }
 
@@ -193,22 +221,34 @@ public class MMU {
                     controller2.setStrobe(data & 1);
                 }
             }
-            default -> apuRegisters[address - 0x4000] = data & 0xFF; // APU registers
+            // Everything else in the window is the APU's, $4017 included: only its read side
+            // belongs to controller 2, and the two share nothing but the address.
+            default -> apu.write(address, data);
         }
     }
 
     /**
-     * Performs one cycle of OAM DMA if a transfer is active.
+     * Performs one cycle of DMA if either transfer is active.
      * <p>
      * A write to $4014 copies a whole 256 byte page into OAM, one byte at a time, with the CPU
      * held off the bus throughout. The cost is one halt cycle, then an alignment cycle if the
      * halt landed on an odd cycle, then 256 read/write pairs: 513 cycles when aligned and 514
      * when not.
+     * <p>
+     * The DMC's single byte fetch shares the seam and takes priority over it. An OAM transfer
+     * caught in the middle simply freezes for the four cycles, which is an approximation: on the
+     * hardware the two interleave, and the collision costs about two cycles rather than four. No
+     * ROM this project runs measures the difference, and the ones that do -- the
+     * {@code sprdma_and_dmc_dma} family -- are not among the goals.
      *
-     * @param cpuCycle the current CPU cycle counter; alignment depends on its parity
+     * @param cpuCycle the current CPU cycle counter; OAM alignment depends on its parity
      * @return true if the CPU must stall this cycle
      */
     public boolean tickDMA(final long cpuCycle) {
+        if (dmcFetchCycles > 0 || apu.isDMCFetchPending()) {
+            return tickDMCFetch();
+        }
+
         if (!dmaInProgress) {
             return false;
         }
@@ -237,6 +277,29 @@ public class MMU {
         if (dmaAddress >= 0x100) {
             dmaInProgress = false;
             dmaAddress = 0;
+        }
+
+        return true;
+    }
+
+    /**
+     * One cycle of the DMC's sample fetch, starting it if it is not already going.
+     * <p>
+     * The read is done here rather than in the APU so that the APU needs no idea of what memory
+     * is: it goes through the ordinary read path, mapper and all, so a sample in a switched bank
+     * comes from whichever bank is in at that moment.
+     *
+     * @return true, always: every one of the four cycles is one the CPU is held off the bus.
+     */
+    private boolean tickDMCFetch() {
+        if (dmcFetchCycles == 0) {
+            dmcFetchCycles = DMC_FETCH_CYCLES;
+        }
+
+        dmcFetchCycles--;
+
+        if (dmcFetchCycles == 0) {
+            apu.finishDMCFetch(read(apu.dmcFetchAddress()));
         }
 
         return true;

@@ -15,10 +15,14 @@ A Work in Progress Nes emulator.
   NES Classic, PVM Style D93, Smooth and Wavebeam. Settings > Palette... lists them next to a
   swatch grid and applies each one as the selection moves, so they can be compared against the
   running game -- or against a paused frame;
-- Machine menu: Reset (the console button, memory survives), Power Cycle, Pause, and Fast Forward
-  at 2x, 4x, 8x or unlimited -- the machine is clocked exactly as it always is, the wait between
-  frames is what shrinks, and the picture keeps its sixty frames a second by showing only the ones
-  that fall due;
+- Machine menu: Reset (the console button, memory survives), Power Cycle, Pause, Mute, and Fast
+  Forward at 2x, 4x, 8x or unlimited -- the machine is clocked exactly as it always is, the wait
+  between frames is what shrinks, and the picture keeps its sixty frames a second by showing only
+  the ones that fall due;
+- 2A03 APU: two pulses with their sweep units, the triangle, the noise channel and the DMC with
+  its DMA, the frame counter and both of its interrupts, mixed through the hardware's two
+  nonlinear ladders and filtered the way the console's output stage is, out through
+  `javax.sound.sampled` at 44.1kHz;
 - Keyboard control of player one, remappable;
 - CHR debug window: every tile of a bank with a zoomed preview, coloured with any of the eight
   palettes the game is running with, live -- CHR RAM rewrites and palette changes show up as
@@ -29,7 +33,7 @@ A Work in Progress Nes emulator.
 - Per-opcode verification against the Tom Harte single step tests;
 
 Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM) and 4 (MMC3, with the scanline IRQ) are
-supported. There is no second player, no APU, no PAL timing and no save states.
+supported. There is no second player, no PAL timing and no save states.
 
 ## Screenshots
 
@@ -84,6 +88,7 @@ chosen palette and fast forward speed:
 ```properties
 video.palette=nesdev
 emulation.fast-forward=4x
+audio.muted=false
 controller1.a=VK_X
 controller1.left=VK_LEFT
 ```
@@ -97,6 +102,12 @@ Machine > Fast Forward switches the speed on and off, and Machine > Fast Forward
 one. Whether it is on is not remembered between runs; which speed it uses is. Asking for more than
 the computer manages is not an error -- it simply runs at whatever it manages, which on the machine
 this was written on is around ten times, so 4x and 8x are kept and `unlimited` is the rest of it.
+
+Machine > Mute silences the sound, and unlike fast forward it is remembered. The machine itself is
+not told: a muted APU still runs and still raises its interrupts, so a game sounds and behaves the
+same either way. Fast forwarding cannot hand a sound card audio faster than real time, so what does
+not fit is dropped and the sound comes out chopped rather than sped up. A computer with no sound
+device runs silently and says so in the log.
 
 ## Tests
 
@@ -123,6 +134,14 @@ PPU-CPU synchronizations at power/reset" on a real console.
 They report in two different ways, both handled by `BlarggRunner`: the later ROMs use the $6000
 status protocol, and the 2005 era ones write a numeric result code into zero page. A failure code
 means nothing on its own -- look it up in the `readme.txt` vendored next to the ROM.
+
+### APU test ROMs
+
+`apu-test` is blargg's `apu_test` suite, `apu-reset` his `apu_reset` suite, and all fourteen ROMs
+pass. Between them they cover the length counters and their table, the frame counter's interrupt
+and the exact cycle it lands on, the clock jitter that comes of the APU running at half the CPU's
+rate, the DMC's sample handling and its sixteen rates, and what the chip looks like at power on and
+after the Reset button.
 
 ### Mapper test ROMs
 

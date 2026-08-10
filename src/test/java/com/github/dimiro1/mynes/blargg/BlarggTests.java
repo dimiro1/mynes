@@ -70,8 +70,8 @@ public class BlarggTests {
             "/instr-misc/03-dummy_reads.nes",
             "/cpu-reset/registers.nes",
             "/cpu-reset/ram_after_reset.nes",
-//            "/instr-misc/04-dummy_reads_apu.nes", // APU Required
-//            "/instr-timing/instr-timing.nes", // APU Required
+            "/instr-misc/04-dummy_reads_apu.nes",
+            "/instr-timing/instr-timing.nes",
     })
     void instructionsV5(final String filename) throws IOException {
         BlarggRunner.runStatusProtocol(

@@ -272,6 +272,19 @@ public class CPU {
     }
 
     /**
+     * The level of the /IRQ line, as the last device to drive it left it.
+     * <p>
+     * The CPU sees one wire and cannot tell who is holding it; this is that wire, not a pending
+     * interrupt. Exists so that {@link BUS}'s OR of the three interrupt sources can be tested for
+     * what it puts on the line rather than for what the CPU eventually does about it.
+     *
+     * @return true while the line is asserted.
+     */
+    public boolean isIRQLineAsserted() {
+        return irqLine;
+    }
+
+    /**
      * Add an object to be notified on internal events.
      *
      * @param listener Object to listen to internal events.
