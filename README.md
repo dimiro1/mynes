@@ -28,6 +28,42 @@ A Work in Progress Nes emulator.
 Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM) and 4 (MMC3, with the scanline IRQ) are
 supported. There is no second player, no APU, no PAL timing and no save states.
 
+## Screenshots
+
+### Super Mario Bros. -- mapper 0, NROM
+
+![Super Mario Bros.](shots/game-smb.png)
+
+### Tetris -- mapper 1, MMC1
+
+![Tetris](shots/game-tetris.png)
+
+### Super Mario Bros. 2 -- mapper 4, MMC3
+
+![Super Mario Bros. 2](shots/game-smb2.png)
+
+### Super Mario Bros. 3 -- mapper 4, MMC3
+
+![Super Mario Bros. 3](shots/game-smb3.png)
+
+### Palette
+
+Every selection takes effect the moment it is made, so the picture behind the dialog is the
+comparison -- and it recolours a paused frame just as well as a running one.
+
+![The palette dialog over a running game](shots/palette-dialog.png)
+
+### CHR Viewer
+
+A bank of Super Mario Bros. 3's character ROM, drawn with one of the eight palettes the game is
+running with.
+
+![The CHR viewer](shots/chr-viewer.png)
+
+### Controller
+
+![The controller dialog](shots/controller-dialog.png)
+
 ## Controls
 
 | NES button | Key |
