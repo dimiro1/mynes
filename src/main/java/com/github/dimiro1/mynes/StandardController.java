@@ -3,9 +3,20 @@ package com.github.dimiro1.mynes;
 /**
  * Standard NES controller implementation.
  * Buttons are read in sequence: A, B, Select, Start, Up, Down, Left, Right
+ * <p>
+ * Two threads meet here. Keys go up and down on the event dispatch thread, which is the only
+ * caller of {@link #setButtons(int)}; the CPU writes and reads $4016 on the emulation thread,
+ * which is the only caller of {@link #setStrobe(int)} and {@link #read()}. So {@code buttons} is
+ * the one field that crosses, and making it volatile is the whole of the synchronisation: the
+ * shift register and the strobe stay confined to the emulation thread.
+ * <p>
+ * That confinement is why the reload happens on both strobe edges rather than on every change to
+ * the button mask. It is also what the hardware does -- the shift register follows the buttons
+ * while the strobe is high, so what a game ends up clocking out is the state at the moment the
+ * strobe fell.
  */
 public class StandardController implements Controller {
-    private int buttons;
+    private volatile int buttons;
     private int shiftRegister;
     private int strobe;
 
@@ -18,10 +29,9 @@ public class StandardController implements Controller {
     @Override
     public void setStrobe(int strobe) {
         this.strobe = strobe & 1;
-        if (this.strobe == 1) {
-            // When strobe is high, continuously reload the button states
-            reloadShiftRegister();
-        }
+        // Both edges: high starts the register following the buttons, and the falling edge is
+        // what latches them for the eight reads that follow.
+        reloadShiftRegister();
     }
 
     @Override
@@ -43,9 +53,6 @@ public class StandardController implements Controller {
     @Override
     public void setButtons(int buttons) {
         this.buttons = buttons & 0xFF;
-        if (strobe == 1) {
-            reloadShiftRegister();
-        }
     }
 
     private void reloadShiftRegister() {

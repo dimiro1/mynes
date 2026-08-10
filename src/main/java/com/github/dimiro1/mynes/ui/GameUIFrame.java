@@ -3,6 +3,9 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
+import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
+import com.github.dimiro1.mynes.ui.input.KeyBindings;
+import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +24,9 @@ public class GameUIFrame extends JFrame {
 
     private final JFileChooser fileChooser;
     private final ScreenComponent screen = new ScreenComponent();
+    private final KeyboardInput keyboardInput;
     private CHRViewerFrame chrViewerFrame;
+    private KeyBindings keyBindings;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -33,6 +38,9 @@ public class GameUIFrame extends JFrame {
         fileChooser = new JFileChooser();
         fileChooser.addChoosableFileFilter(filter);
         fileChooser.setFileFilter(filter);
+
+        keyBindings = KeyBindings.load(KeyBindings.DEFAULT_PATH);
+        keyboardInput = new KeyboardInput(this, keyBindings);
 
         init();
     }
@@ -63,6 +71,12 @@ public class GameUIFrame extends JFrame {
         debugMenu.add(debugMenuCHRViewer);
         debugMenu.setEnabled(false);
 
+        JMenu settingsMenu = new JMenu("Settings");
+        settingsMenu.setMnemonic(KeyEvent.VK_S);
+
+        JMenuItem settingsMenuController = new JMenuItem("Controller...", KeyEvent.VK_C);
+        settingsMenu.add(settingsMenuController);
+
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
 
@@ -71,9 +85,20 @@ public class GameUIFrame extends JFrame {
 
         menuBar.add(fileMenu);
         menuBar.add(debugMenu);
+        menuBar.add(settingsMenu);
         menuBar.add(helpMenu);
 
         setJMenuBar(menuBar);
+
+        // Every key event in the application comes past here before anything else sees it, which
+        // is how the game gets the arrow keys without taking them off the menu bar.
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
+
+        settingsMenuController.addActionListener(e ->
+                new ControllerSettingsDialog(this, keyBindings, updated -> {
+                    keyBindings = updated;
+                    keyboardInput.setBindings(updated);
+                }).setVisible(true));
 
         fileMenuOpen.addActionListener(e -> {
             if (chrViewerFrame != null) {
@@ -127,6 +152,13 @@ public class GameUIFrame extends JFrame {
                     runner.stop();
                 }
             }
+
+            // Cmd-tabbing away in the middle of a jump would otherwise leave the button held down
+            // for as long as the window is gone: the release lands in whatever took the focus.
+            @Override
+            public void windowDeactivated(final WindowEvent e) {
+                keyboardInput.releaseAll();
+            }
         });
 
         pack();
@@ -153,6 +185,13 @@ public class GameUIFrame extends JFrame {
 
         cart = loaded;
         nes = new NES(cart);
+
+        // Each machine brings its own controllers, so the keyboard has to be pointed at the new
+        // one. Nothing races: the old runner has already stopped and this is the event dispatch
+        // thread, which is the only thread the dispatcher runs on.
+        keyboardInput.releaseAll();
+        keyboardInput.setController(nes.getController1());
+
         runner = new EmulatorRunner(nes, screen);
         runner.start();
 
