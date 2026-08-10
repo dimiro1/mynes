@@ -49,14 +49,14 @@ public class CartTests {
      */
     @Test
     void loadUnsupportedMapper() {
-        var rom = synthesizeRom(0x10, 0x00);  // mapper 1
+        var rom = synthesizeRom(0x50, 0x00);  // mapper 5, MMC5
 
         var thrown = assertThrowsExactly(
                 UnsupportedMapperException.class,
-                () -> Cart.load(rom, "mapper1.nes")
+                () -> Cart.load(rom, "mapper5.nes")
         );
 
-        assertTrue(thrown.getMessage().contains("1"), "should name the mapper: " + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("5"), "should name the mapper: " + thrown.getMessage());
     }
 
     @Test
