@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.ppu;
 
-import com.github.dimiro1.mynes.PPU;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -54,12 +53,9 @@ class PPUSpriteTests extends PPUFixture {
     private static final int LEFT_HALF_TILE = 4;
     private static final int TOP_HALF_TILE = 5;
 
-    private int[] masterPalette;
-
     @BeforeEach
     void setUp() {
         createWarmPPU();
-        masterPalette = PPU.getPalette();
 
         solidTile(SOLID_TILE, 1);
 
@@ -598,7 +594,11 @@ class PPUSpriteTests extends PPUFixture {
         return (ppu.peek(PPUSTATUS) & SPRITE_ZERO_HIT) != 0;
     }
 
+    /**
+     * What the framebuffer holds for a palette entry drawn with no emphasis. The PPU writes colour
+     * indices rather than colours, so this is only the six bits the hardware keeps.
+     */
     private int colour(final int entry) {
-        return masterPalette[entry & 0x3F];
+        return entry & 0x3F;
     }
 }

@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.chrviewer;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,7 +37,6 @@ public class CHRViewerFrame extends JFrame {
     private final Component parent;
     private final Cart cart;
     private final PPU ppu;
-    private final int[] masterPalette = PPU.getPalette();
 
     private final JLabel selectedLabel = new JLabel();
     private final TilesViewerPanel tilesViewer;
@@ -53,11 +53,23 @@ public class CHRViewerFrame extends JFrame {
     private int paletteBase = -1;
     private int[] paletteColours = TileComponent.DEFAULT_PALETTE.clone();
 
-    public CHRViewerFrame(final Component parent, final Cart cart, final PPU ppu) {
+    /**
+     * The master palette the six bit entries in palette RAM are read through, so the tiles come
+     * out in the same colours the picture does. Follows the choice in Settings &gt; Palette...
+     * through {@link #setPalette}.
+     */
+    private NESPalette palette;
+
+    public CHRViewerFrame(
+            final Component parent,
+            final Cart cart,
+            final PPU ppu,
+            final NESPalette palette) {
         super();
         this.parent = parent;
         this.cart = cart;
         this.ppu = ppu;
+        this.palette = palette;
 
         this.tilesViewer = new TilesViewerPanel(cart);
         this.selectedTile = new TileComponent(
@@ -126,6 +138,16 @@ public class CHRViewerFrame extends JFrame {
         selectedTile.refresh();
     }
 
+    /**
+     * Draws the tiles in {@code palette} from now on. Called on the event dispatch thread when the
+     * choice in Settings &gt; Palette... changes, so the viewer tracks the picture rather than
+     * keeping whatever was chosen when it opened.
+     */
+    public void setPalette(final NESPalette palette) {
+        this.palette = palette;
+        updatePaletteColours();
+    }
+
     private void updatePaletteColours() {
         var colours = resolvePaletteColours();
 
@@ -146,10 +168,10 @@ public class CHRViewerFrame extends JFrame {
         }
 
         var colours = new int[4];
-        colours[0] = masterPalette[ppu.peekPalette(0)];
+        colours[0] = palette.colour(ppu.peekPalette(0));
 
         for (var i = 1; i < 4; i++) {
-            colours[i] = masterPalette[ppu.peekPalette(paletteBase + i)];
+            colours[i] = palette.colour(ppu.peekPalette(paletteBase + i));
         }
 
         return colours;

@@ -8,9 +8,13 @@ A Work in Progress Nes emulator.
 - Dot accurate NTSC PPU: background and sprite pipelines, loopy scroll registers, sprite 0 hit,
   the sprite overflow bug, the delayed $2006 VRAM address, the write-ignore window the chip holds
   over $2000, $2001, $2005 and $2006 while it warms up, open bus decay, OAM decay and colour
-  emphasis, into a 256x240 ARGB framebuffer;
+  emphasis, into a 256x240 framebuffer of colour indices;
 - Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
   overscan cropped and the picture scaled to the window;
+- Eleven NTSC palettes: the NESdev set plus the ten measured ones from firebrandx.com, among them
+  NES Classic, PVM Style D93, Smooth and Wavebeam. Settings > Palette... lists them next to a
+  swatch grid and applies each one as the selection moves, so they can be compared against the
+  running game -- or against a paused frame;
 - Machine menu: Reset (the console button, memory survives), Power Cycle, and Pause;
 - Keyboard control of player one, remappable;
 - CHR debug window: every tile of a bank with a zoomed preview, coloured with any of the eight
@@ -35,16 +39,18 @@ and no save states.
 | Select | Shift |
 
 Settings > Controller... remaps any of them: click a button, press the key you want on it. The
-change applies at once, no save button, and lands in `~/.mynes/config.properties`:
+change applies at once, no save button, and lands in `~/.mynes/config.properties` along with the
+chosen palette:
 
 ```properties
+video.palette=nesdev
 controller1.a=VK_X
 controller1.left=VK_LEFT
 ```
 
-That file can be edited by hand instead. Values are the names of the `VK_` constants in
+That file can be edited by hand instead. Binding values are the names of the `VK_` constants in
 `java.awt.event.KeyEvent`, an empty value leaves the button unbound, and an entry that is missing
-or misspelled falls back to its default and says so in the log.
+or misspelled -- a key name or a palette id -- falls back to its default and says so in the log.
 
 ## Tests
 

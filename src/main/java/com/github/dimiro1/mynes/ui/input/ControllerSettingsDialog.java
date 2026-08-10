@@ -3,15 +3,12 @@ package com.github.dimiro1.mynes.ui.input;
 import com.github.dimiro1.mynes.ui.input.KeyBindings.Button;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.IOException;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -20,15 +17,13 @@ import java.util.function.Consumer;
  * Settings &gt; Controller...: a row per button, click one and press the key you want on it.
  * <p>
  * There is no Save or Cancel. Every capture takes effect the moment it happens -- the frame gets
- * told through {@code onChange} and the file is rewritten -- which is what makes trying a key out
- * against the running game a matter of pressing it rather than closing a dialog first.
+ * told through {@code onChange}, and saves -- which is what makes trying a key out against the
+ * running game a matter of pressing it rather than closing a dialog first.
  * <p>
  * A key already in use is taken from whoever had it, leaving that row showing nothing. Refusing
  * the capture instead would make swapping two buttons impossible.
  */
 public class ControllerSettingsDialog extends JDialog {
-    private static final Logger logger = LoggerFactory.getLogger("INPUT");
-
     private static final String UNBOUND_TEXT = "—";
     private static final String CAPTURING_TEXT = "Press a key...";
 
@@ -137,26 +132,15 @@ public class ControllerSettingsDialog extends JDialog {
         refresh();
     }
 
+    /**
+     * Takes a capture. Writing the file is the frame's job: it owns the config, of which the
+     * bindings are one section, and a second writer here would drop the rest of it.
+     */
     private void apply(final KeyBindings updated) {
         bindings = updated;
 
         refresh();
         onChange.accept(updated);
-        save();
-    }
-
-    private void save() {
-        try {
-            bindings.save(KeyBindings.DEFAULT_PATH);
-        } catch (IOException e) {
-            logger.error("failed to save controller bindings", e);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not save the controller settings to " + KeyBindings.DEFAULT_PATH,
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
     }
 
     private void refresh() {

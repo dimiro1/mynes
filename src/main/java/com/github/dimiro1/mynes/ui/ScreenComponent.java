@@ -1,6 +1,8 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.ui.palette.NESPalette;
+import com.github.dimiro1.mynes.ui.palette.Palettes;
 
 import javax.swing.*;
 import java.awt.*;
@@ -8,12 +10,19 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 
 /**
- * The television. Draws the PPU's framebuffer, scaled and letterboxed to fill the window.
+ * The television. Draws the PPU's framebuffer, scaled and letterboxed to fill the window, in
+ * whichever palette the user has picked.
+ * <p>
+ * The chip emits colour indices rather than colours -- see {@link PPU#getFrameBuffer()} -- so the
+ * mapping to RGB happens here, which is what makes the palette a property of this end of the wire:
+ * changing it is one field on the event dispatch thread, and it holds across a power cycle without
+ * anything having to remember to re-apply it.
  * <p>
  * Two threads meet here. The emulation thread hands over a finished frame through
- * {@link #present(int[])}, the event dispatch thread paints it, and a lock covers the pixel array
- * so that a paint never catches a half copied picture. The copy is a single
- * {@link System#arraycopy} of 240KB sixty times a second, so neither side waits for long.
+ * {@link #present(int[])}, the event dispatch thread paints it, and a lock covers both buffers so
+ * that a paint never catches a half copied picture. The lock is held for an arraycopy of 240KB and
+ * 61440 array lookups, sixty times a second -- tens of microseconds, so neither side waits for
+ * long.
  * <p>
  * The picture is cropped: a real television hides roughly the outer eight scanlines behind the
  * bezel, and games rely on it, drawing partial tiles and scroll seams up there. Showing the whole
@@ -40,10 +49,26 @@ public class ScreenComponent extends JComponent {
 
     /**
      * The image's own storage, written into directly. Reaching for the backing array like this
-     * costs the image its hardware acceleration, which is the trade: one arraycopy per frame
-     * beats 61440 calls to {@link BufferedImage#setRGB}.
+     * costs the image its hardware acceleration, which is the trade: one pass per frame beats
+     * 61440 calls to {@link BufferedImage#setRGB}.
      */
     private final int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+
+    /**
+     * The last frame as the PPU handed it over, in colour indices. Kept so that changing the
+     * palette can recolour the picture already on screen instead of waiting for another frame --
+     * which, with the emulator paused, is not coming.
+     */
+    private final int[] frame = new int[PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT];
+
+    /**
+     * Whether {@link #frame} holds a picture yet. Without this the window before any ROM is loaded
+     * would colourise an all-zero frame to entry 0, which is dark grey rather than the black a
+     * television off shows.
+     */
+    private boolean hasFrame;
+
+    private int[] palette = Palettes.defaultPalette().colours();
 
     public ScreenComponent() {
         setPreferredSize(new Dimension(
@@ -61,10 +86,43 @@ public class ScreenComponent extends JComponent {
      */
     public void present(final int[] frameBuffer) {
         synchronized (frameLock) {
-            System.arraycopy(frameBuffer, 0, pixels, 0, pixels.length);
+            System.arraycopy(frameBuffer, 0, frame, 0, frame.length);
+            hasFrame = true;
+            colourise();
         }
 
         repaint();
+    }
+
+    /**
+     * Draws everything from now on in {@code palette}, including the frame already on screen.
+     * <p>
+     * Called on the event dispatch thread, which is what makes flicking through the palettes a
+     * live comparison: the picture behind the dialog changes on every selection, and it changes
+     * even with the emulator paused, because the recolouring works from the frame that is already
+     * here rather than from the next one.
+     */
+    public void setPalette(final NESPalette palette) {
+        synchronized (frameLock) {
+            this.palette = palette.colours();
+            colourise();
+        }
+
+        repaint();
+    }
+
+    /**
+     * Maps the frame's colour indices through the palette into the image. The caller holds
+     * {@link #frameLock}.
+     */
+    private void colourise() {
+        if (!hasFrame) {
+            return;
+        }
+
+        for (var i = 0; i < pixels.length; i++) {
+            pixels[i] = palette[frame[i]];
+        }
     }
 
     @Override
