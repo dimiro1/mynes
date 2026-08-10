@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.mappers.Mapper0;
 import com.github.dimiro1.mynes.mappers.Mapper1;
 import com.github.dimiro1.mynes.mappers.Mapper2;
 import com.github.dimiro1.mynes.mappers.Mapper3;
+import com.github.dimiro1.mynes.mappers.Mapper4;
 import com.github.dimiro1.mynes.mappers.Mirroring;
 
 import java.nio.BufferUnderflowException;
@@ -142,6 +143,7 @@ public record Cart(
             case 1 -> new Mapper1(prgROM, chrROM, Mirroring.fromINES(mirror));
             case 2 -> new Mapper2(prgROM, chrROM, Mirroring.fromINES(mirror));
             case 3 -> new Mapper3(prgROM, chrROM, Mirroring.fromINES(mirror));
+            case 4 -> new Mapper4(prgROM, chrROM, Mirroring.fromINES(mirror));
             default -> throw new UnsupportedMapperException(mapperNumber, filename);
         };
 

@@ -15,7 +15,8 @@ A Work in Progress Nes emulator.
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;
 
-Mappers 0 (NROM) and 3 (CNROM) are supported. There is no second player, no APU, no PAL timing
+Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM) and 4 (MMC3, with the scanline IRQ) are
+supported. There is no second player, no APU, no PAL timing
 and no save states, and three PPU details are still missing: the $2006 delayed VRAM address, the
 write-ignore window while the PPU warms up, and OAM decay.
 
@@ -62,6 +63,14 @@ All of them pass, with no accepted deviations.
 They report in two different ways, both handled by `BlarggRunner`: the later ROMs use the $6000
 status protocol, and the 2005 era ones write a numeric result code into zero page. A failure code
 means nothing on its own -- look it up in the `readme.txt` vendored next to the ROM.
+
+### Mapper test ROMs
+
+`mmc3-test-2` covers the MMC3 scanline counter. Four of its six ROMs pass; the two that do not
+are commented out in `MMC3BlarggTests` with the reason. `4-scanline_timing` wants the interrupt
+to land on an exact PPU dot, which needs the PPU to hold each fetch address on the bus between
+accesses rather than only during them. `6-MMC3_alt` is the revision A counter, which contradicts
+`5-MMC3` by design -- no real chip passes both.
 
 For the full 10,000 cases per opcode, fetch the upstream set once:
 
