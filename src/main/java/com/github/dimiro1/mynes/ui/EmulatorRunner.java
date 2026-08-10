@@ -10,7 +10,7 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
  * {@link ScreenComponent} -- all of them at normal speed, sixty a second of them when fast
- * forwarding.
+ * forwarding -- and the sound that went with them to an {@link AudioOutput}.
  * <p>
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
@@ -38,8 +38,24 @@ public class EmulatorRunner {
      */
     private static final int MAX_LAG_FRAMES = 5;
 
+    /**
+     * How many samples the buffer between the APU and the sound card holds.
+     * <p>
+     * A frame is about 735 of them, and the drain happens once a frame, so this is several
+     * frames' worth of slack for a frame that ran long. Anything past it stays in the APU's own
+     * ring until the next time round.
+     */
+    private static final int AUDIO_BUFFER_SAMPLES = 4096;
+
     private final NES nes;
     private final ScreenComponent screen;
+    private final AudioOutput audio = new AudioOutput();
+
+    /**
+     * Where the APU's finished samples land on their way to the sound card. Belongs to the
+     * emulation thread, like everything else it is handed to.
+     */
+    private final short[] samples = new short[AUDIO_BUFFER_SAMPLES];
 
     /**
      * Work the UI has asked to have done to the machine. Drained on the emulation thread at frame
@@ -79,9 +95,13 @@ public class EmulatorRunner {
     /**
      * Stops the emulation thread and waits for it to finish. Call from the event dispatch thread.
      * <p>
-     * Blocks for at most the rest of the current frame, so around 17ms in the worst case, which is
+     * Blocks for at most the rest of the current frame, so around 17ms in the usual case, which is
      * short enough to do from the EDT. The interrupt is what makes that true: it cuts the wait the
      * thread is likely to be sitting in.
+     * <p>
+     * The one wait it cannot cut is a full-buffer write to the sound card, which is not
+     * interruptible and can be another 67 milliseconds on top. Still under a tenth of a second,
+     * and only on the frame a machine happens to be torn down on.
      */
     public void stop() {
         if (thread == null) {
@@ -137,21 +157,44 @@ public class EmulatorRunner {
         return speed;
     }
 
+    /**
+     * Silences the sound, or lets it be heard again. Takes effect within a frame.
+     * <p>
+     * The machine is not told: a muted APU still runs, still raises its interrupts and still
+     * paces the loop, because a game that sounded different depending on the volume would be a
+     * different game.
+     */
+    public void setMuted(final boolean muted) {
+        post(() -> audio.setMuted(muted));
+    }
+
     private void run() {
         logger.info("emulation started");
 
         var ppu = nes.getPPU();
+        var apu = nes.getAPU();
 
         try {
+            audio.open();
+
             var speed = this.speed;
             var deadline = System.nanoTime();
             var nextPresent = deadline + EmulationSpeed.FRAME_NANOS;
             var lastFrame = ppu.getFrame();
+            var wasPaused = false;
 
             while (running) {
                 runPendingCommands();
 
                 if (paused) {
+                    if (!wasPaused) {
+                        // What the card is still holding is up to a tenth of a second of a game
+                        // that has stopped. Dropped rather than played out, so that the sound
+                        // stops when the picture does.
+                        audio.flush();
+                        wasPaused = true;
+                    }
+
                     // A frame's worth of sleep at a time, so a resume or a posted command is
                     // picked up quickly, and the schedule restarts cleanly on resume instead of
                     // sprinting through the pause as missed frames.
@@ -159,6 +202,8 @@ public class EmulatorRunner {
                     deadline = System.nanoTime();
                     continue;
                 }
+
+                wasPaused = false;
 
                 if (this.speed != speed) {
                     // Both schedules start again from here rather than carrying a deadline written
@@ -178,6 +223,14 @@ public class EmulatorRunner {
                 } while (ppu.getFrame() == lastFrame);
 
                 lastFrame = ppu.getFrame();
+
+                // A frame's worth of sound, handed over before the picture is: at normal speed
+                // this blocks until the card has room, which is the other half of the pacing
+                // below, and there is no sense making the audio wait on a frame that is only
+                // going to be dropped anyway. Fast forwarding cannot block -- there is no way to
+                // hand a sound card audio faster than real time -- so what does not fit is lost,
+                // and fast forward sounds chopped rather than sped up.
+                audio.write(samples, apu.drainSamples(samples), speed == EmulationSpeed.NORMAL);
 
                 // Fast forward finishes frames faster than any display can show them, so most of
                 // them are dropped rather than handed over. A frame nobody will see still costs a
@@ -222,6 +275,8 @@ public class EmulatorRunner {
             }
         } catch (Throwable t) {
             logger.error("emulation failed at frame {}", ppu.getFrame(), t);
+        } finally {
+            audio.close();
         }
 
         logger.info("emulation stopped");

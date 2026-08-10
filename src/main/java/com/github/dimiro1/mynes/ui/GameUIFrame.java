@@ -38,6 +38,7 @@ public class GameUIFrame extends JFrame {
     private final JMenu debugMenu = new JMenu("Debug");
     private final JCheckBoxMenuItem machineMenuPause = new JCheckBoxMenuItem("Pause");
     private final JCheckBoxMenuItem machineMenuFastForward = new JCheckBoxMenuItem("Fast Forward");
+    private final JCheckBoxMenuItem machineMenuMute = new JCheckBoxMenuItem("Mute");
     private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
     private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
 
@@ -102,6 +103,15 @@ public class GameUIFrame extends JFrame {
         machineMenu.add(machineMenuFastForward);
 
         machineMenu.add(fastForwardSpeedMenu());
+
+        machineMenu.addSeparator();
+
+        // No accelerator. Command-M is the window manager's, and picking another letter for it
+        // would mean picking one that is somewhere sensible on every keyboard layout, which is
+        // not a promise this menu can make.
+        machineMenuMute.setMnemonic(KeyEvent.VK_M);
+        machineMenuMute.setSelected(config.muted());
+        machineMenu.add(machineMenuMute);
 
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
@@ -209,6 +219,18 @@ public class GameUIFrame extends JFrame {
         });
 
         machineMenuFastForward.addActionListener(e -> applySpeed());
+
+        // Remembered between runs, unlike whether fast forward is on: a machine that came back
+        // silent is explained by the tick sitting next to this item, and a machine that came back
+        // fast forwarding just looks broken.
+        machineMenuMute.addActionListener(e -> {
+            config.setMuted(machineMenuMute.isSelected());
+            saveConfig();
+
+            if (runner != null) {
+                runner.setMuted(machineMenuMute.isSelected());
+            }
+        });
 
         debugMenuBackground.addActionListener(e -> {
             if (runner != null) {
@@ -386,6 +408,10 @@ public class GameUIFrame extends JFrame {
         machineMenuFastForward.setSelected(false);
 
         runner = new EmulatorRunner(nes, screen);
+
+        // Posted before the thread exists, so it is the first thing that runs on it: a machine
+        // started with the sound off must not get a frame of it in first.
+        runner.setMuted(machineMenuMute.isSelected());
         runner.start();
 
         machineMenu.setEnabled(true);

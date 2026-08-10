@@ -17,10 +17,17 @@ import com.github.dimiro1.mynes.mappers.Mapper;
 public class BUS implements CPUBus, PPUBus {
     private CPU cpu;
     private PPU ppu;
+    private APU apu;
     private MMU mmu;
     private final Mapper mapper;
     private final Controller controller1;
     private final Controller controller2;
+
+    // The three devices that can pull /IRQ low, each holding its own end of the wire. The CPU sees
+    // one line, so what it is told is the OR of these; see updateIRQLine().
+    private boolean mapperIRQ;
+    private boolean apuFrameIRQ;
+    private boolean dmcIRQ;
 
     /**
      * Creates a new Bus with the specified components.
@@ -41,17 +48,12 @@ public class BUS implements CPUBus, PPUBus {
      */
     public void initialize() {
         this.ppu = new PPU(this, mapper);
-        this.mmu = new MMU(ppu, mapper, controller1, controller2);
+        this.apu = new APU(this::setAPUFrameIRQ, this::setDMCIRQ);
+        this.mmu = new MMU(ppu, apu, mapper, controller1, controller2);
         this.cpu = new CPU(this);
 
         // Last, because there is nothing to interrupt until the CPU exists.
-        mapper.setIRQHandler(asserted -> {
-            if (asserted) {
-                triggerIRQ();
-            } else {
-                releaseIRQ();
-            }
-        });
+        mapper.setIRQHandler(this::setMapperIRQ);
     }
 
     /**
@@ -104,27 +106,51 @@ public class BUS implements CPUBus, PPUBus {
     }
 
     /**
-     * Asserts the shared Interrupt Request (IRQ) line.
-     * Can be called by mappers or other hardware. The line stays low until
-     * {@link #releaseIRQ()} is called, so the CPU keeps seeing the request even while the
-     * interrupt disable flag is masking it.
+     * Drives the cartridge's end of the shared Interrupt Request (IRQ) line.
+     *
+     * @param asserted true while the mapper is pulling the line low.
+     */
+    public void setMapperIRQ(final boolean asserted) {
+        mapperIRQ = asserted;
+        updateIRQLine();
+    }
+
+    /**
+     * Drives the APU frame counter's end of the shared Interrupt Request (IRQ) line.
+     *
+     * @param asserted true while the frame interrupt flag is set and not inhibited.
+     */
+    public void setAPUFrameIRQ(final boolean asserted) {
+        apuFrameIRQ = asserted;
+        updateIRQLine();
+    }
+
+    /**
+     * Drives the DMC's end of the shared Interrupt Request (IRQ) line.
+     *
+     * @param asserted true while the DMC has finished a sample with its interrupt enabled.
+     */
+    public void setDMCIRQ(final boolean asserted) {
+        dmcIRQ = asserted;
+        updateIRQLine();
+    }
+
+    /**
+     * Tells the CPU what the shared /IRQ line reads, which is the OR of everything holding it.
+     * <p>
+     * /IRQ is one open collector wire with three devices on it here -- the cartridge, the APU's
+     * frame counter and its DMC -- and any one of them pulling it low is enough. The CPU sees a
+     * single level and cannot tell them apart, so the bus keeps a bit per source and recomputes
+     * the level whenever one of them changes. Without that, a mapper releasing its interrupt would
+     * also silence an APU one that is still waiting to be acknowledged.
      * <p>
      * Null guarded like {@link #setNMILine(boolean)}: a mapper handed the line by
      * {@link #initialize()} keeps it for as long as the cartridge is in the machine, and a unit
      * test can hold one without ever building a CPU.
      */
-    public void triggerIRQ() {
+    private void updateIRQLine() {
         if (cpu != null) {
-            cpu.setIRQLine(true);
-        }
-    }
-
-    /**
-     * Releases the shared Interrupt Request (IRQ) line.
-     */
-    public void releaseIRQ() {
-        if (cpu != null) {
-            cpu.setIRQLine(false);
+            cpu.setIRQLine(mapperIRQ || apuFrameIRQ || dmcIRQ);
         }
     }
 
@@ -139,6 +165,7 @@ public class BUS implements CPUBus, PPUBus {
     public void triggerRST() {
         cpu.requestRST();
         ppu.reset();
+        apu.reset();
     }
 
     /**
@@ -177,6 +204,15 @@ public class BUS implements CPUBus, PPUBus {
      */
     public PPU getPPU() {
         return ppu;
+    }
+
+    /**
+     * Gets the APU component.
+     *
+     * @return the APU
+     */
+    public APU getAPU() {
+        return apu;
     }
 
     /**

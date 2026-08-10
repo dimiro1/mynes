@@ -37,6 +37,7 @@ public final class Config {
 
     private static final String PALETTE_KEY = "video.palette";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
+    private static final String MUTED_KEY = "audio.muted";
 
     private static final String HEADER = """
             # MyNES settings.
@@ -58,17 +59,25 @@ public final class Config {
             # runs at whatever it does manage.
             """;
 
+    private static final String AUDIO_HEADER = """
+            # Whether Machine > Mute is on. true or false; anything else is taken as false, which
+            # is sound switched on.
+            """;
+
     private KeyBindings keyBindings;
     private NESPalette palette;
     private EmulationSpeed fastForwardSpeed;
+    private boolean muted;
 
     private Config(
             final KeyBindings keyBindings,
             final NESPalette palette,
-            final EmulationSpeed fastForwardSpeed) {
+            final EmulationSpeed fastForwardSpeed,
+            final boolean muted) {
         this.keyBindings = keyBindings;
         this.palette = palette;
         this.fastForwardSpeed = fastForwardSpeed;
+        this.muted = muted;
     }
 
     /**
@@ -97,7 +106,17 @@ public final class Config {
         return new Config(
                 KeyBindings.from(properties),
                 paletteFrom(properties),
-                fastForwardSpeedFrom(properties));
+                fastForwardSpeedFrom(properties),
+                mutedFrom(properties));
+    }
+
+    /**
+     * Whether the sound is off. Unlike the other entries there is nothing to fall back to and
+     * nothing to warn about: anything that is not {@code true} is somebody who wants to hear the
+     * game, which is also what a missing entry means.
+     */
+    private static boolean mutedFrom(final Properties properties) {
+        return Boolean.parseBoolean(properties.getProperty(MUTED_KEY, "").trim());
     }
 
     private static NESPalette paletteFrom(final Properties properties) {
@@ -144,6 +163,12 @@ public final class Config {
                 .append(fastForwardSpeed.id())
                 .append("\n\n");
 
+        text.append(AUDIO_HEADER)
+                .append(MUTED_KEY)
+                .append('=')
+                .append(muted)
+                .append("\n\n");
+
         keyBindings.appendTo(text);
 
         var parent = path.getParent();
@@ -185,5 +210,18 @@ public final class Config {
 
     public void setFastForwardSpeed(final EmulationSpeed fastForwardSpeed) {
         this.fastForwardSpeed = fastForwardSpeed;
+    }
+
+    /**
+     * Whether the sound is off. Remembered, unlike whether fast forward is on: somebody who plays
+     * with the sound down wants it down tomorrow as well, and a game that comes back silent is
+     * explained by the tick next to Machine &gt; Mute.
+     */
+    public boolean muted() {
+        return muted;
+    }
+
+    public void setMuted(final boolean muted) {
+        this.muted = muted;
     }
 }

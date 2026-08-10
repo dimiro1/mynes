@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -147,6 +148,32 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the mute setting")
+    class LoadingMute {
+        @Test
+        void aMissingEntryLeavesTheSoundOn() throws IOException {
+            assertFalse(Config.load(write("video.palette=nesdev\n")).muted());
+        }
+
+        @Test
+        void trueMeansMuted() throws IOException {
+            assertTrue(Config.load(write("audio.muted=true\n")).muted());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertTrue(Config.load(write("audio.muted= true \n")).muted());
+        }
+
+        @Test
+        void anythingElseLeavesTheSoundOn() throws IOException {
+            // No warning and no fallback to argue about: somebody who did not write "true" wants
+            // to hear the game, which is what a missing entry means too.
+            assertFalse(Config.load(write("audio.muted=yes\n")).muted());
+        }
+    }
+
+    @Nested
     @DisplayName("saving")
     class Saving {
         @Test
@@ -184,6 +211,15 @@ class ConfigTests {
         }
 
         @Test
+        void theMuteSettingSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setMuted(true);
+            config.save(config());
+
+            assertTrue(Config.load(config()).muted());
+        }
+
+        @Test
         void createsTheDirectory() throws IOException {
             var path = directory.resolve("nested").resolve("config.properties");
 
@@ -213,11 +249,15 @@ class ConfigTests {
             var config = Config.load(config());
             config.setKeyBindings(KeyBindings.defaults().with(Button.A, KeyEvent.VK_L));
             config.setPalette(OTHER);
+            config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
+            config.setMuted(true);
             config.save(config());
 
             var text = Files.readString(config());
 
             assertTrue(text.contains("video.palette=" + OTHER.id()), text);
+            assertTrue(text.contains("emulation.fast-forward=2x"), text);
+            assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
         }
 

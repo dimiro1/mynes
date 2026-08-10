@@ -12,9 +12,12 @@ import java.util.stream.Stream;
  * This belongs to the loop rather than to the machine. Nothing inside the NES knows what a second
  * is -- it counts its own cycles and nothing else -- so running at four times speed is not a
  * different console, it is the same console with the wait between frames cut to a quarter. Which is
- * why fast forward costs nothing in accuracy, and why the APU, when there is one, is the first
- * thing here that will have to be told about it: sound is the one part that cannot simply be handed
- * over faster.
+ * why fast forward costs nothing in accuracy.
+ * <p>
+ * The APU is the one part that notices, and not because it is clocked any differently: a sound card
+ * plays 44100 samples a second whatever the machine making them is doing, so the samples of four
+ * frames cannot be handed over in the time of one. {@link AudioOutput} drops what will not fit,
+ * which is why fast forward sounds chopped rather than sped up.
  * <p>
  * {@link #UNLIMITED} is the odd one out, and deliberately so: it does not wait at all, so how fast
  * it goes is a fact about the computer rather than about the setting. On the machine this was
@@ -36,7 +39,10 @@ public enum EmulationSpeed {
 
     /**
      * One NTSC frame. The 2C02 draws 60.0988 frames a second rather than 60, which is a third of
-     * a percent -- inaudible now, but it is the number the APU will have to agree with later.
+     * a percent -- and it is the number the APU agrees with, since 60.0988 frames of 734 samples
+     * each is exactly the 44100 a second the sound card wants. Rounding it to 60 here would leave
+     * the two clocks disagreeing by a third of a percent, which is a card running dry every five
+     * minutes.
      */
     public static final long FRAME_NANOS = 16_639_267L;
 

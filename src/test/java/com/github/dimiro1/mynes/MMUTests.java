@@ -33,7 +33,7 @@ public class MMUTests {
     void setUp() {
         var mapper = new Mapper0(new byte[0x4000], new byte[0x2000], Mirroring.HORIZONTAL);
         ppu = new PPU(level -> { }, mapper);
-        mmu = new MMU(ppu, mapper, null, null);
+        mmu = new MMU(ppu, new APU(level -> { }, level -> { }), mapper, null, null);
     }
 
     @Nested
