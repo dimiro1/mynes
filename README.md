@@ -11,13 +11,36 @@ A Work in Progress Nes emulator.
   emphasis, into a 256x240 ARGB framebuffer;
 - Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
   overscan cropped and the picture scaled to the window;
+- Keyboard control of player one, remappable;
 - CHR debug window;
 - Most of blargg tests are passing;
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;
 
-Mappers 0 (NROM) and 3 (CNROM) are supported. Nothing is wired to the controllers yet, so games
-run but cannot be played. There is no APU, no PAL timing and no save states.
+Mappers 0 (NROM) and 3 (CNROM) are supported. There is no second player, no APU, no PAL timing
+and no save states.
+
+## Controls
+
+| NES button | Key |
+|---|---|
+| D-pad | Arrow keys |
+| A | X |
+| B | Z |
+| Start | Enter |
+| Select | Shift |
+
+Settings > Controller... remaps any of them: click a button, press the key you want on it. The
+change applies at once, no save button, and lands in `~/.mynes/config.properties`:
+
+```properties
+controller1.a=VK_X
+controller1.left=VK_LEFT
+```
+
+That file can be edited by hand instead. Values are the names of the `VK_` constants in
+`java.awt.event.KeyEvent`, an empty value leaves the button unbound, and an entry that is missing
+or misspelled falls back to its default and says so in the log.
 
 ## Tests
 

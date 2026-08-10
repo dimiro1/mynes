@@ -1,0 +1,12 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+# Each workspace opens its own emulator window and nothing is shared between them.
+run_mode = "concurrent"
+
+[scripts.run.emulator]
+command = "mvn -q compile exec:exec"
+# Swing needs a display, which cloud workspaces do not have.
+available_in = [ "local" ]
+default = true
+icon = "gamepad-2"
