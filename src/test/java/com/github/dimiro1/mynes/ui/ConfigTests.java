@@ -119,6 +119,34 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the fast forward speed")
+    class LoadingFastForward {
+        @Test
+        void aMissingEntryGivesTheDefault() throws IOException {
+            assertSame(EmulationSpeed.defaultFastForward(),
+                    Config.load(write("video.palette=nesdev\n")).fastForwardSpeed());
+        }
+
+        @Test
+        void anIdNamesItsSpeed() throws IOException {
+            assertSame(EmulationSpeed.EIGHT_TIMES,
+                    Config.load(write("emulation.fast-forward=8x\n")).fastForwardSpeed());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertSame(EmulationSpeed.UNLIMITED,
+                    Config.load(write("emulation.fast-forward= unlimited \n")).fastForwardSpeed());
+        }
+
+        @Test
+        void anUnknownIdFallsBackToTheDefault() throws IOException {
+            assertSame(EmulationSpeed.defaultFastForward(),
+                    Config.load(write("emulation.fast-forward=ludicrous\n")).fastForwardSpeed());
+        }
+    }
+
+    @Nested
     @DisplayName("saving")
     class Saving {
         @Test
@@ -144,6 +172,15 @@ class ConfigTests {
             config.save(config());
 
             assertSame(OTHER, Config.load(config()).palette());
+        }
+
+        @Test
+        void theFastForwardSpeedSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setFastForwardSpeed(EmulationSpeed.UNLIMITED);
+            config.save(config());
+
+            assertSame(EmulationSpeed.UNLIMITED, Config.load(config()).fastForwardSpeed());
         }
 
         @Test

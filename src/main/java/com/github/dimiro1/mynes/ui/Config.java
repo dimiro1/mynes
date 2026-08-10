@@ -36,13 +36,14 @@ public final class Config {
             Path.of(System.getProperty("user.home"), ".mynes", "config.properties");
 
     private static final String PALETTE_KEY = "video.palette";
+    private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
 
     private static final String HEADER = """
             # MyNES settings.
             #
-            # The Settings menu rewrites this file, dropping anything added by hand. An entry
-            # that is missing or that this version does not understand falls back to its
-            # default and says so in the log.
+            # The menus rewrite this file, dropping anything added by hand. An entry that is
+            # missing or that this version does not understand falls back to its default and
+            # says so in the log.
 
             """;
 
@@ -51,12 +52,23 @@ public final class Config {
             # value is the id shown there in lower case with dashes, such as nes-classic.
             """;
 
+    private static final String EMULATION_HEADER = """
+            # How fast Machine > Fast Forward runs the machine: 2x, 4x, 8x, or unlimited, which
+            # is as fast as this computer manages. Anything the computer cannot keep up with
+            # runs at whatever it does manage.
+            """;
+
     private KeyBindings keyBindings;
     private NESPalette palette;
+    private EmulationSpeed fastForwardSpeed;
 
-    private Config(final KeyBindings keyBindings, final NESPalette palette) {
+    private Config(
+            final KeyBindings keyBindings,
+            final NESPalette palette,
+            final EmulationSpeed fastForwardSpeed) {
         this.keyBindings = keyBindings;
         this.palette = palette;
+        this.fastForwardSpeed = fastForwardSpeed;
     }
 
     /**
@@ -82,7 +94,10 @@ public final class Config {
 
         // An empty Properties answers for nothing, so a missing or unreadable file lands on the
         // same defaults every entry would have fallen back to one at a time.
-        return new Config(KeyBindings.from(properties), paletteFrom(properties));
+        return new Config(
+                KeyBindings.from(properties),
+                paletteFrom(properties),
+                fastForwardSpeedFrom(properties));
     }
 
     private static NESPalette paletteFrom(final Properties properties) {
@@ -93,6 +108,16 @@ public final class Config {
         }
 
         return Palettes.byId(id.trim());
+    }
+
+    private static EmulationSpeed fastForwardSpeedFrom(final Properties properties) {
+        var id = properties.getProperty(FAST_FORWARD_KEY);
+
+        if (id == null) {
+            return EmulationSpeed.defaultFastForward();
+        }
+
+        return EmulationSpeed.fastForwardById(id.trim());
     }
 
     /**
@@ -111,6 +136,12 @@ public final class Config {
                 .append(PALETTE_KEY)
                 .append('=')
                 .append(palette.id())
+                .append("\n\n");
+
+        text.append(EMULATION_HEADER)
+                .append(FAST_FORWARD_KEY)
+                .append('=')
+                .append(fastForwardSpeed.id())
                 .append("\n\n");
 
         keyBindings.appendTo(text);
@@ -141,5 +172,18 @@ public final class Config {
 
     public void setPalette(final NESPalette palette) {
         this.palette = palette;
+    }
+
+    /**
+     * How fast Fast Forward runs the machine. Whether it is switched on is not remembered: a
+     * machine that started fast forwarding on its own, because of something done in a session
+     * weeks ago, would just look broken.
+     */
+    public EmulationSpeed fastForwardSpeed() {
+        return fastForwardSpeed;
+    }
+
+    public void setFastForwardSpeed(final EmulationSpeed fastForwardSpeed) {
+        this.fastForwardSpeed = fastForwardSpeed;
     }
 }
