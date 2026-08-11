@@ -1,84 +1,31 @@
 # MyNES
 
-A Work in Progress Nes emulator.
-
-## What is done?
-
-- Cycle stepped CPU;
-- Dot accurate NTSC PPU: background and sprite pipelines, loopy scroll registers, sprite 0 hit,
-  the sprite overflow bug, the delayed $2006 VRAM address, the write-ignore window the chip holds
-  over $2000, $2001, $2005 and $2006 while it warms up, open bus decay, OAM decay and colour
-  emphasis, into a 256x240 framebuffer of colour indices;
-- Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
-  overscan cropped and the picture scaled to the window -- which Settings > Screen Size sets to
-  1x, 2x, 3x or 4x of the 256x224 picture, whole multiples so that every pixel comes out the same
-  size as every other one;
-- Eleven NTSC palettes: the NESdev set plus the ten measured ones from firebrandx.com, among them
-  NES Classic, PVM Style D93, Smooth and Wavebeam. Settings > Palette... lists them next to a
-  swatch grid and applies each one as the selection moves, so they can be compared against the
-  running game -- or against a paused frame;
-- Machine menu: Reset (the console button, memory survives), Power Cycle, Pause, Mute, and Fast
-  Forward at 2x, 4x, 8x or unlimited -- the machine is clocked exactly as it always is, the wait
-  between frames is what shrinks, and the picture keeps its sixty frames a second by showing only
-  the ones that fall due;
-- 2A03 APU: two pulses with their sweep units, the triangle, the noise channel and the DMC with
-  its DMA, the frame counter and both of its interrupts, mixed through the hardware's two
-  nonlinear ladders and filtered the way the console's output stage is, out through
-  `javax.sound.sampled` at 44.1kHz;
-- Keyboard control of player one, remappable;
-- CHR debug window: every tile of a bank with a zoomed preview, coloured with any of the eight
-  palettes the game is running with, live -- CHR RAM rewrites and palette changes show up as
-  they happen;
-- Debug toggles to hide the background or sprite layer without the game noticing;
-- Headless mode: runs a cartridge with no window and no sound card, plays a written down sequence
-  of button presses, and writes out PNGs, a JSON report, memory dumps and a WAV -- or takes
-  commands one at a time. The machine is deterministic, so the same command produces the same
-  bytes every run;
-- Save states: the whole console to a file and back, nine slots per cartridge, on the command line
-  as well as in the window;
-- Battery-backed saves, in the `.sav` format every other emulator reads and writes;
-- Most of blargg tests are passing;
-- nestests is passing;
-- Per-opcode verification against the Tom Harte single step tests;
-
-Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM) and 4 (MMC3, with the scanline IRQ) are
-supported. There is no second player and no PAL timing.
-
-## Screenshots
-
-### Super Mario Bros. -- mapper 0, NROM
-
-![Super Mario Bros.](shots/game-smb.png)
-
-### Tetris -- mapper 1, MMC1
-
-![Tetris](shots/game-tetris.png)
-
-### Super Mario Bros. 2 -- mapper 4, MMC3
-
-![Super Mario Bros. 2](shots/game-smb2.png)
-
-### Super Mario Bros. 3 -- mapper 4, MMC3
+A NES emulator written in Java. Still a work in progress, but it plays games.
 
 ![Super Mario Bros. 3](shots/game-smb3.png)
 
-### Palette
+## Running it
 
-Every selection takes effect the moment it is made, so the picture behind the dialog is the
-comparison -- and it recolours a paused frame just as well as a running one.
+You need Java 25 and Maven. Nothing else.
 
-![The palette dialog over a running game](shots/palette-dialog.png)
+```sh
+git clone https://github.com/dimiro1/mynes.git
+cd mynes
+mvn -q compile exec:exec
+```
 
-### CHR Viewer
+That opens the window. Or build a jar once and run that:
 
-A bank of Super Mario Bros. 3's character ROM, drawn with one of the eight palettes the game is
-running with.
+```sh
+mvn -B package -DskipTests
+java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
+```
 
-![The CHR viewer](shots/chr-viewer.png)
+The JDK warns that the look and feel loads a native library. Add `--enable-native-access=ALL-UNNAMED`
+before `-jar` to silence it.
 
-### Controller
-
-![The controller dialog](shots/controller-dialog.png)
+Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own. Games run at
+60.0988 frames a second, with the overscan cropped and the picture scaled to the window.
 
 ## Controls
 
@@ -92,9 +39,9 @@ running with.
 | Quick Save | F5 |
 | Quick Load | F7 |
 
-Settings > Controller... remaps any of them: click a button, press the key you want on it. The
-change applies at once, no save button, and lands in `~/.mynes/config.properties` along with the
-chosen palette, screen size and fast forward speed:
+**Settings > Controller...** remaps any of them. Click a button, press the key you want on it, and
+that is it: there is no save button. Your choices land in `~/.mynes/config.properties`, along with
+the palette, screen size and fast forward speed:
 
 ```properties
 video.palette=nesdev
@@ -105,59 +52,119 @@ controller1.a=VK_X
 controller1.left=VK_LEFT
 ```
 
-That file can be edited by hand instead. Binding values are the names of the `VK_` constants in
-`java.awt.event.KeyEvent`, an empty value leaves the button unbound, and an entry that is missing
-or misspelled -- a key name, a palette id, a speed, a size -- falls back to its default and says so
-in the log.
+You can edit that file by hand instead. Key names are the `VK_` constants from
+`java.awt.event.KeyEvent`, and an empty value leaves a button unbound. Anything missing or
+misspelled falls back to its default and says so in the log.
 
-Settings > Screen Size draws the picture at 1x, 2x, 3x or 4x and packs the window around it, and
-the size is remembered. The window is still resizable by hand from there and the picture is still
-fitted to it, letterboxed to keep its shape; the menu is how to get back to a whole multiple, where
-every NES pixel is the same number of screen pixels as every other one rather than some of them
-being a row taller than their neighbours.
+## What works
 
-Machine > Fast Forward switches the speed on and off, and Machine > Fast Forward Speed picks which
-one. Whether it is on is not remembered between runs; which speed it uses is. Asking for more than
-the computer manages is not an error -- it simply runs at whatever it manages, which on the machine
-this was written on is around ten times, so 4x and 8x are kept and `unlimited` is the rest of it.
+**The console.** The CPU runs cycle by cycle and the PPU dot by dot: background and sprite
+pipelines, the loopy scroll registers, sprite 0 hit, the sprite overflow bug, the delayed $2006 VRAM
+address, the write-ignore window the chip holds over $2000, $2001, $2005 and $2006 while it warms
+up, open bus decay, OAM decay and colour emphasis. The PPU fills a 256x240 buffer with colour
+*indices*; turning those into pixels is the palette's job, not the chip's.
 
-Machine > Mute silences the sound, and unlike fast forward it is remembered. The machine itself is
-not told: a muted APU still runs and still raises its interrupts, so a game sounds and behaves the
-same either way. Fast forwarding cannot hand a sound card audio faster than real time, so what does
-not fit is dropped and the sound comes out chopped rather than sped up. A computer with no sound
-device runs silently and says so in the log.
+**Sound.** The whole 2A03 APU: two pulses with their sweep units, the triangle, the noise channel,
+and the DMC with its DMA, plus the frame counter and both of its interrupts. It is mixed through the
+hardware's two nonlinear ladders, filtered the way the console's output stage is, and played at
+44.1 kHz through `javax.sound.sampled`. A computer with no sound device runs silently and says so in
+the log.
+
+**Mappers 0 to 4:** NROM, MMC1, UxROM, CNROM and MMC3, the last one with its scanline IRQ.
+
+**Eleven NTSC palettes:** the NESdev set plus ten measured ones from firebrandx.com, among them NES
+Classic, PVM Style D93, Smooth and Wavebeam. **Settings > Palette...** lists them next to a swatch
+grid and applies each one as the selection moves, so you can compare them against the running game,
+or against a paused frame.
+
+**Screen size** at 1x, 2x, 3x or 4x of the 256x224 picture, from **Settings > Screen Size**, which
+packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
+every other one. You can still resize the window by hand, and the picture is fitted and letterboxed
+to keep its shape; the menu is how to get back to a clean multiple.
+
+**Fast forward** at 2x, 4x, 8x or unlimited, from the Machine menu. The console is clocked exactly
+as it always is. What shrinks is the wait between frames, and the display still shows sixty a
+second, so you see the ones that fall due. Asking for more than the computer manages is not an
+error; you simply get whatever it manages. Sound cannot be handed to a sound card faster than real
+time, so audio comes out chopped rather than sped up.
+
+**The rest of the Machine menu:** Reset (the console button, memory survives), Power Cycle, Pause
+and Mute. Mute is remembered between runs; fast forward is not. Muting does not tell the machine
+anything, so a silenced APU still runs and still raises its interrupts, and a game behaves the same
+either way.
+
+**Debug tools.** A CHR viewer shows every tile of a bank with a zoomed preview, coloured with any of
+the eight palettes the game is using, and it updates live as CHR RAM is rewritten and palettes
+change. There are also toggles to hide the background or the sprite layer without the game noticing.
+
+**Save states and battery saves**, and a **headless mode** for running with no window at all. Both
+have a section of their own below.
+
+Not there yet: a second player, and PAL timing.
+
+## Screenshots
+
+### Super Mario Bros. (mapper 0, NROM)
+
+![Super Mario Bros.](shots/game-smb.png)
+
+### Tetris (mapper 1, MMC1)
+
+![Tetris](shots/game-tetris.png)
+
+### Super Mario Bros. 2 (mapper 4, MMC3)
+
+![Super Mario Bros. 2](shots/game-smb2.png)
+
+### The palette picker
+
+Every selection takes effect the moment it is made, so the picture behind the dialog is the
+comparison. It recolours a paused frame just as well as a running one.
+
+![The palette dialog over a running game](shots/palette-dialog.png)
+
+### The CHR viewer
+
+A bank of Super Mario Bros. 3's character ROM, drawn with one of the eight palettes the game is
+running with.
+
+![The CHR viewer](shots/chr-viewer.png)
+
+### The controller dialog
+
+![The controller dialog](shots/controller-dialog.png)
 
 ## Saving
 
-Two different files, and they are not variations on one idea.
+There are two kinds of save file here, and they are not two versions of the same idea.
 
 **Save states** are the whole console frozen to a file: every register, both RAMs, the palettes, the
-half-executed instruction, where the beam is. Machine > Save State and Machine > Load State each hold
-nine slots, `F5` and `F7` are the current slot, and picking a slot from either menu makes it the
-current one. They live beside the ROM as `GAME.mn1` to `GAME.mn9`, and the Load State menu labels each
-one with the frame it was taken on and when.
+half-executed instruction, where the beam is. **Machine > Save State** and **Machine > Load State**
+each hold nine slots. `F5` and `F7` use the current slot, and picking a slot from either menu makes
+it the current one. States live beside the ROM as `GAME.mn1` through `GAME.mn9`, and the Load State
+menu labels each slot with the frame it was taken on and when.
 
-There is no standard format for this and there never has been -- cross-emulator save states have been
-proposed on NESdev more than once and abandoned every time, because every emulator models the
-pipeline differently and there are hundreds of mappers. So MyNES states load in MyNES and nowhere
-else, and a state taken from one cartridge is refused by another.
+They load in MyNES and nowhere else. There is no standard format for save states and there never has
+been: cross-emulator states have been proposed on NESdev more than once and abandoned every time,
+because every emulator models the pipeline differently and there are hundreds of mappers. A state
+taken from one cartridge is refused by another.
 
-**Battery-backed saves** are the eight kilobytes a coin cell kept alive on the cartridge, and this
-one *is* standard: `GAME.sav`, raw bytes, no header, no version. FCEUX, Nestopia and Mesen all read
-and write exactly this, so a save from any of them can be dropped next to the ROM and simply works.
-It is read when the cartridge is loaded and written when the window closes, when the cartridge
+**Battery saves** are the eight kilobytes a coin cell kept alive on the cartridge, and this format
+*is* standard: `GAME.sav`, raw bytes, no header, no version. FCEUX, Nestopia and Mesen all read and
+write exactly this, so a save from any of them can be dropped next to the ROM and it just works.
+MyNES reads it when the cartridge loads, and writes it when the window closes, when the cartridge
 changes, and once a minute if the game has saved anything since. Only cartridges whose header claims
-a battery get one; the RAM at $6000 that a test ROM prints its results through is scratch, and
+a battery get one. The RAM at $6000 that a test ROM prints its results through is scratch, and
 persisting it would invent saves nobody made.
 
-That difference is worth keeping in mind. A save state is a bookmark, and losing one costs a few
-minutes. A `.sav` is fifty hours of Zelda, which is why it is the one written through a temporary and
-a move so that a crash halfway through cannot take both it and its replacement.
+The difference is worth keeping in mind. A save state is a bookmark, and losing one costs a few
+minutes. A `.sav` is fifty hours of Zelda, which is why that one is written to a temporary file and
+moved into place, so that a crash halfway through cannot take both it and its replacement.
 
-## Headless
+## Headless mode
 
-The emulator also runs with nobody watching, which is how to see what it does without a display --
-in a cloud machine, from a script, or from a coding agent that cannot look at a window.
+The emulator also runs with nobody watching: no window, no sound card. That is useful from a script,
+on a machine with no display, or for a coding agent that cannot look at a window.
 
 ```sh
 mvn -B package -DskipTests
@@ -165,115 +172,41 @@ java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless \
     --rom smb.nes --frames 900 --input 60/40x3:start --screenshot 300,last --audio
 ```
 
-Maven can run it too, and is the shorter thing to type once:
+That runs 900 frames, presses Start to get past the title screen, and writes two PNGs, a JSON report
+and a WAV into `target/headless`. Maven can run it too, and is shorter to type if you only need it
+once:
 
 ```sh
 mvn -q compile exec:exec@headless -Dmynes.args="--rom smb.nes --frames 900 --screenshot last"
 ```
 
-The jar is worth building for anything run more than a few times: Maven takes a couple of seconds
-to get going against the jar's third of one. `--headless --help` has every option; the rest of this
-section is what is worth knowing before reading it.
+The jar is worth building for anything you run more than a few times: Maven takes a couple of
+seconds to start up, the jar about a third of one.
 
-Everything lands in `target/headless` unless `--out` says otherwise: `report.json`,
-`frame-000300.png` and friends, `audio.wav`, and a `.bin` for each `--dump`. The report is printed
-as well, so `--report - | jq .` works.
+`--headless --help` lists every option. The things worth knowing before you read it:
 
-### Saying what to press
+- **Most games never start on their own.** Super Mario Bros., Super Mario Bros. 3 and Tetris all sit
+  on their title screens for as long as anyone cares to wait, drawing the same picture and writing
+  nothing to the sound registers. Only Super Mario Bros. 2 plays untouched. `--input 60/40x3:start`
+  presses Start on frame 60 and twice more, which gets all four into their first level. The `x3`
+  matters: Start is also the pause button.
+- **The report describes the picture** for anything that cannot look at it: a hash of the visible
+  224 lines, how many colours are in the frame, whether it is one flat colour, and how many frames
+  differed from the frame before. That last number is the one that catches a game stuck on its menu.
+- **`--expect-not-blank`, `--expect-audio` and `--expect-motion N`** turn three of those questions
+  into a pass or a fail. The run exits 4 when they do not hold, which is what a script wants.
+- **Runs are deterministic.** Nothing in the machine reads a clock or a random number, so the same
+  ROM, input and frame count produce identical bytes on every run and every computer. Anything that
+  legitimately varies lives under `host` in the report, so
+  `diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)` compares two runs.
+- **`--save-state` and `--load-state`** cut the wait when the same two hundred frames of title
+  screen are in the way of every run. `--sram-in` and `--sram-out` do the same for battery RAM, in
+  the `.sav` format other emulators read.
+- **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
+  when you do not yet know the question well enough to write it down.
 
-Left alone, most cartridges never start. Super Mario Bros., Super Mario Bros. 3 and Tetris all sit
-on their title screens for as long as anyone cares to wait, drawing the same picture and writing
-nothing to the sound registers; only Super Mario Bros. 2 plays untouched. A run with no input is a
-run of the game's menu.
-
-```
---input 60:start              press on frame 60
---input 200-400:right         hold from frame 200 until frame 400, 400 excluded
---input 60/40:start           press on 60, then every 40 frames after it
---input 60/40x3:start         the same, but only three times
---input 60/40x3:start,400-900:right,500:a
-```
-
-`60/40x3:start` gets all four of those cartridges into their first level. The `x3` matters: Start
-is also the pause button, so a pulse that keeps going pauses the game it just started. Buttons are
-`a b select start up down left right`, joined with `+`, and no spec ever contains a space.
-
-### Starting somewhere other than power on
-
-A headless run normally begins at power on, which is what makes two of them comparable. `--load-state`
-starts from a save state instead, and `--save-state` writes one at the end:
-
-```sh
-JAR=target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
-
-# Get past the title screen once, and keep the machine as it was.
-java -jar $JAR --headless --rom smb.nes --frames 200 --input 60/40x3:start \
-    --save-state level-1.mn
-
-# Then start every later run from there, in a fraction of the time.
-java -jar $JAR --headless --rom smb.nes --load-state level-1.mn --frames 300 \
-    --input 20-300:right --screenshot last
-```
-
-The report's `run.state` says which of the two happened, because a run that began from a state and one
-that began at power on are not two measurements of the same thing. The state has to have come from the
-same ROM: a mismatch is exit 2, on the grounds that the file named was the wrong one.
-
-`--sram-in` and `--sram-out` do the same for the cartridge's battery RAM, in the interoperable `.sav`
-format. Two flags rather than one, so a test can start from a fixture and write the result somewhere
-it can be diffed without clobbering what it started from. Unlike the window, `--sram-out` does not ask
-whether the cartridge has a battery -- the flag is the answer.
-
-### What comes back
-
-The report says where the machine ended up -- the CPU and PPU registers, the cartridge and its
-mapper, palette RAM -- and, for anything that cannot look at the picture, describes it: a hash of
-the visible 224 lines, how many colours are in it, whether it is one flat colour, and how many
-frames differed from the frame before them. That last number is the one that catches a game that
-never got past its menu.
-
-Three questions can be asked up front instead of read out afterwards, and a run that answers any of
-them wrong exits 4:
-
-```sh
-java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless --rom smb.nes \
-    --frames 900 --input 60/40x3:start --expect-not-blank --expect-audio --expect-motion 100
-```
-
-Anything more particular than those three belongs in `jq` over the report. The other exit codes are
-0 for a run that finished, 2 for a command line that could not be read, 3 for `--timeout`, 5 for a
-file that is not a cartridge, and 1 for anything else.
-
-Those numbers only survive the jar. Run through Maven, any of them fails the build, and what comes
-back is Maven's own 1 -- so a script that wants to tell a timeout from a failed expectation should
-either use the jar or read `exitCode` out of the report.
-
-### The same command twice
-
-Nothing in the machine reads a clock or a random number -- open bus decay is counted in frames and
-OAM decay in dots -- so the same ROM, input and frame count produce identical artifacts on every
-run and every computer. Everything that legitimately differs lives under `host`:
-
-```sh
-diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)
-```
-
-That is what makes the frame hash worth writing down, and what makes starting again from power on
-cheap enough that there is nothing to keep alive between runs.
-
-### Taking commands
-
-When the question is not yet known well enough to write down -- which frame does the title screen
-land on, is that address the score -- `--interactive` reads commands on standard input and answers
-each with a line of JSON. A whole session can be piped in at once:
-
-```sh
-printf 'run 60\nscreenshot title.png\npress start\nrun-until-change 300\nread 0x0075 4\nquit\n' \
-  | java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless --rom smb.nes --interactive
-```
-
-`help` lists the commands. A command that cannot be read is answered with an error and the session
-carries on, because the state built up over a hundred frames is worth more than the typo after it.
+[CLAUDE.md](CLAUDE.md) covers all of this in more detail. It is written for coding agents, but it is
+just as accurate for people.
 
 ## Tests
 
@@ -281,52 +214,53 @@ carries on, because the state built up over a hundred frames is worth more than 
 mvn test
 ```
 
-That runs everything, including the [Tom Harte SingleStepTests](https://github.com/SingleStepTests/65x02)
-for all 256 opcodes against a committed subset of 500 cases per opcode. Each opcode is checked
-twice: once for its end state and cycle count, and once for its exact per-cycle bus traffic.
+That runs everything.
 
-### PPU test ROMs
-
-The PPU is verified against blargg's test ROMs, vendored under `src/test/resources` together with
-the readme that came with each suite: `ppu-vbl-nmi` (VBlank and NMI timing to a single PPU clock),
-`ppu-sprite-hit`, `ppu-sprite-overflow`, `oam` (`oam_read` and `oam_stress`), `ppu-open-bus`,
-`ppu-read-buffer` and `ppu-tests-2005` (palette RAM, VRAM access, sprite RAM, VBlank clear time).
-All of them pass except `oam_stress`, which is an accepted deviation: it hammers OAM for thirty
-seconds with rendering switched off and does not refresh it anywhere near often enough to beat a
-millisecond of DRAM charge, so it would only pass with the decay stretched to something like a
-twentieth of a second. blargg's own readme says the ROM "passes only for one of the four random
-PPU-CPU synchronizations at power/reset" on a real console.
-
-They report in two different ways, both handled by `BlarggRunner`: the later ROMs use the $6000
-status protocol, and the 2005 era ones write a numeric result code into zero page. A failure code
-means nothing on its own -- look it up in the `readme.txt` vendored next to the ROM.
-
-### APU test ROMs
-
-`apu-test` is blargg's `apu_test` suite, `apu-reset` his `apu_reset` suite, and all fourteen ROMs
-pass. Between them they cover the length counters and their table, the frame counter's interrupt
-and the exact cycle it lands on, the clock jitter that comes of the APU running at half the CPU's
-rate, the DMC's sample handling and its sixteen rates, and what the chip looks like at power on and
-after the Reset button.
-
-### Mapper test ROMs
-
-`mmc3-test-2` covers the MMC3 scanline counter. Four of its six ROMs pass; the two that do not
-are commented out in `MMC3BlarggTests` with the reason. `4-scanline_timing` wants the interrupt
-to land on an exact PPU dot, which needs the PPU to hold each fetch address on the bus between
-accesses rather than only during them. `6-MMC3_alt` is the revision A counter, which contradicts
-`5-MMC3` by design -- no real chip passes both.
+**The CPU** is checked against the
+[Tom Harte SingleStepTests](https://github.com/SingleStepTests/65x02): all 256 opcodes, 500 cases
+each from a committed subset, and each case twice. Once for the end state and cycle count, once for
+the exact per-cycle bus traffic. nestest passes as well.
 
 For the full 10,000 cases per opcode, fetch the upstream set once:
 
 ```sh
 ./scripts/download-6502-tests.sh   # ~1.4GB into the gitignored testdata/
-mvn test                          # picks the full set up automatically
+mvn test                           # picks the full set up automatically
 ```
 
-To run only the per-cycle bus trace stage, or to skip it:
+The bus trace stage is the slow half. It can be run on its own, or skipped:
 
 ```sh
 mvn test -Dgroups=bus-trace
 mvn test -DexcludedGroups=bus-trace
 ```
+
+**The PPU** runs blargg's test ROMs, vendored under `src/test/resources` together with the readme
+that came with each suite: `ppu-vbl-nmi` (VBlank and NMI timing to a single PPU clock),
+`ppu-sprite-hit`, `ppu-sprite-overflow`, `oam` (`oam_read` and `oam_stress`), `ppu-open-bus`,
+`ppu-read-buffer` and `ppu-tests-2005` (palette RAM, VRAM access, sprite RAM, VBlank clear time).
+
+All of them pass except `oam_stress`, which is an accepted failure. It hammers OAM for thirty
+seconds with rendering switched off and never refreshes it often enough to beat a millisecond of
+DRAM charge, so it would only pass with the decay stretched to something like a twentieth of a
+second. blargg's own readme says the ROM "passes only for one of the four random PPU-CPU
+synchronizations at power/reset" on a real console.
+
+These ROMs report in two different ways, both handled by `BlarggRunner`: the later ones use the
+$6000 status protocol, and the 2005 era ones write a numeric result code into zero page. A failure
+code means nothing on its own, so look it up in the `readme.txt` vendored next to the ROM.
+
+**The APU** runs blargg's `apu_test` and `apu_reset` suites, and all fourteen ROMs pass. Between
+them they cover the length counters and their table, the frame counter's interrupt and the exact
+cycle it lands on, the clock jitter that comes of the APU running at half the CPU's rate, the DMC's
+sample handling and its sixteen rates, and what the chip looks like at power on and after Reset.
+
+**MMC3** runs `mmc3-test-2`, which covers the scanline counter. Four of its six ROMs pass, and the
+two that do not are commented out in `MMC3BlarggTests` with the reason. `4-scanline_timing` wants
+the interrupt to land on an exact PPU dot, which needs the PPU to hold each fetch address on the bus
+between accesses rather than only during them. `6-MMC3_alt` tests the revision A counter, which
+contradicts `5-MMC3` by design. No real chip passes both.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
