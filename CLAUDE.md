@@ -79,6 +79,19 @@ Other codes: 2 a bad command line, 3 a timeout, 5 not a cartridge, 1 anything el
 Those numbers only survive the jar. Through Maven any of them fails the build and you get Maven's
 own 1 back, so read `exitCode` out of the report if you need to tell them apart.
 
+### Two consoles
+
+`--region ntsc|pal` overrides the cartridge header, which usually says nothing and so means NTSC.
+They are not one machine at two speeds: 312 scanlines against 262, 3.2 dots to a CPU cycle against
+3, 50.0070 frames a second against 60.0988, and a different APU table for everything counted in CPU
+cycles. So **a PAL run and an NTSC run of the same ROM are not comparable** -- `run.region` in the
+report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`.
+
+Everything that differs is in `Region`, including the PPU's OAM decay window, which has to outlast
+the machine's own blanking interval or every sprite in the game vanishes once a frame. Its tables
+are `static` on purpose: `SaveStateCompletenessTests` vandalises every primitive array it can reach
+through the console, and an `int[]` field on `Region` would be one of them.
+
 ### It is deterministic
 
 Nothing in the machine reads a clock or a random number, so the same ROM, input and frame count give
@@ -123,7 +136,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 ## Layout
 
 ```
-mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, controllers
+mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
 mynes/mappers/    mappers 0 to 4
 mynes/state/      save states and battery .sav files
 mynes/video/      colour indices to pixels: the overscan crop and the frame renderer

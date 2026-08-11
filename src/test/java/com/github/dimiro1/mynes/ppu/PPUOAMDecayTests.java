@@ -1,19 +1,24 @@
 package com.github.dimiro1.mynes.ppu;
 
+import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * OAM decay, which is the same idea as the open bus decay next door one level coarser.
  * <p>
  * OAM is DRAM with no refresh circuit of its own. The sprite evaluation hardware reads all of it
  * once per scanline, which is enough to keep it alive -- but only while rendering is enabled, and
- * on an NTSC PPU nothing refreshes it while rendering is off. A row left alone for longer than a
- * vertical blank or so loses its charge, and the bits that have gone read back as zero.
+ * nothing refreshes it while rendering is off. A row left alone for longer than a vertical blank or
+ * so loses its charge, and the bits that have gone read back as zero.
+ * <p>
+ * "A vertical blank or so" is the part that is not the same on both machines, and {@link Blanking}
+ * is what holds the two of them apart.
  *
  * @see <a href="https://www.nesdev.org/wiki/PPU_OAM">NESdev: PPU OAM</a>
  */
@@ -107,6 +112,46 @@ class PPUOAMDecayTests extends PPUFixture {
         }
     }
 
+    /**
+     * The one thing about decay that is not the same on both machines, and the reason it is a
+     * property of the region rather than a constant.
+     */
+    @Nested
+    @DisplayName("across a vertical blank")
+    class Blanking {
+        @Test
+        void oamOutlastsTheBlankingIntervalOnBothMachines() {
+            // Nothing refreshes OAM between the last visible scanline of one frame and the first
+            // of the next, so the charge has to cover that gap or a game has no sprites at all.
+            // It is 23 scanlines on NTSC and 73 on PAL -- and 9000 dots, which comfortably covers
+            // the first, does not come close to covering the second.
+            for (var region : Region.values()) {
+                var blanking = (region.scanlinesPerFrame() - 239) * 341;
+
+                assertTrue(region.oamDecayDots() > blanking,
+                        region.label() + " loses every sprite it has once a frame: " + blanking
+                                + " dots of blanking against " + region.oamDecayDots()
+                                + " of charge");
+            }
+        }
+
+        @Test
+        void aSpriteSurvivesAWholePALFrameOfRendering() {
+            // The same thing again through the picture rather than through the numbers, because
+            // this is what it looked like when it was wrong: the falling piece in Tetris, and
+            // Mario himself, simply were not drawn.
+            createPPU(Region.PAL);
+            warmUp();
+
+            var sprites = new SpriteHardware();
+            sprites.placeASprite();
+            sprites.startRendering();
+            renderFrames(3);
+
+            assertEquals(sprites.colour(SPRITE_COLOUR), pixelAt(20, 11));
+        }
+    }
+
     @Nested
     @DisplayName("what the sprite hardware sees")
     class SpriteHardware {
@@ -138,7 +183,7 @@ class PPUOAMDecayTests extends PPUFixture {
         /**
          * A visible sprite at (20,11), on an otherwise empty screen.
          */
-        private void placeASprite() {
+        void placeASprite() {
             for (var row = 0; row < 8; row++) {
                 writeVRAM(SOLID_TILE * 16 + row, 0xFF);
             }
@@ -164,7 +209,7 @@ class PPUOAMDecayTests extends PPUFixture {
             ppu.write(OAMDATA, 20);           // X
         }
 
-        private void startRendering() {
+        void startRendering() {
             ppu.read(PPUSTATUS);
             ppu.write(PPUSCROLL, 0);
             ppu.write(PPUSCROLL, 0);
@@ -175,7 +220,7 @@ class PPUOAMDecayTests extends PPUFixture {
          * What the framebuffer holds for a palette entry drawn with no emphasis. The PPU writes colour
          * indices rather than colours, so this is only the six bits the hardware keeps.
          */
-        private int colour(final int entry) {
+        int colour(final int entry) {
             return entry & 0x3F;
         }
     }

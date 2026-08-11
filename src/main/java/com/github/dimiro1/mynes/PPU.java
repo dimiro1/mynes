@@ -6,7 +6,7 @@ import com.github.dimiro1.mynes.state.StateIO;
 import java.util.Arrays;
 
 /**
- * PPU implements the 2C02 picture processing unit found in the NTSC NES.
+ * PPU implements the picture processing unit: the 2C02 of the NTSC NES, or the 2C07 of the PAL one.
  * <p>
  * The chip is a state machine clocked three times per CPU cycle, and almost everything it is
  * known for -- the VBlank flag races, the sprite overflow bug, the $2007 increment glitch -- is a
@@ -15,16 +15,20 @@ import java.util.Arrays;
  * then moves on, and the register handlers below look at where the beam is rather than at a pile
  * of separately maintained flags.
  * <p>
- * A frame is 341 dots by 262 scanlines:
+ * A frame is 341 dots by 262 scanlines, or 312 on PAL:
  * <ul>
  *   <li>0-239: visible, one pixel per dot for the first 256 dots</li>
  *   <li>240: post-render, the PPU idles</li>
- *   <li>241-260: vertical blank; the VBlank flag is set on dot 1 of line 241</li>
- *   <li>261: pre-render, which behaves like a visible line except that nothing is drawn and the
- *       status flags are cleared on dot 1</li>
+ *   <li>241-260, or 241-310: vertical blank; the VBlank flag is set on dot 1 of line 241</li>
+ *   <li>261, or 311: pre-render, which behaves like a visible line except that nothing is drawn
+ *       and the status flags are cleared on dot 1</li>
  * </ul>
- * With rendering enabled, odd frames drop the last dot of the pre-render line, so a frame is
- * 89342 dots normally and 89341 then.
+ * The ninety extra lines are all blanking, which is the interesting half of the difference between
+ * the two machines: a PAL game has three and a half times as long between pictures to move the
+ * world on in.
+ * <p>
+ * With rendering enabled, an NTSC odd frame drops the last dot of the pre-render line, so a frame
+ * is 89342 dots normally and 89341 then. PAL does not, and is 106392 dots every time.
  *
  * @see <a href="https://www.nesdev.org/wiki/PPU_rendering">NESdev: PPU rendering</a>
  * @see <a href="https://www.nesdev.org/wiki/PPU_scrolling">NESdev: PPU scrolling</a>
@@ -46,13 +50,8 @@ public class PPU {
     private static final int VBLANK_START_LINE = 241;
 
     /**
-     * The last scanline of a frame, which prepares the shifters for line 0 rather than drawing.
-     */
-    private static final int PRE_RENDER_LINE = 261;
-
-    /**
      * The dot of {@link #VBLANK_START_LINE} the VBlank flag is set on, and equally the dot of
-     * {@link #PRE_RENDER_LINE} the status flags are cleared on.
+     * {@link #preRenderLine} the status flags are cleared on.
      * <p>
      * Also the dot a $2002 read has to land on to suppress the flag entirely: see
      * {@link #preventVBlankFlag}.
@@ -76,15 +75,6 @@ public class PPU {
      * How many dots a second $2006 write takes to reach the VRAM address counter.
      */
     private static final int ADDRESS_WRITE_DELAY_DOTS = 2;
-
-    /**
-     * How many dots an eight byte row of OAM holds its charge for.
-     * <p>
-     * A vertical blank is 6820 dots and the charge lasts "at least as long as an NTSC vertical
-     * blank interval, but not much longer than this", so this is a little over one of them --
-     * about 1.7 milliseconds.
-     */
-    private static final int OAM_DECAY_DOTS = 9000;
 
     /**
      * The registers the warm-up window covers, one bit per register number: $2000, $2001, $2005
@@ -135,10 +125,37 @@ public class PPU {
      */
     private final Mapper mapper;
 
+    /**
+     * Which console this is: how many scanlines a frame has, whether an odd one is a dot shorter,
+     * how many master clocks go into a dot, and how long OAM holds its charge.
+     */
+    private final Region region;
+
+    /**
+     * {@link Region#preRenderLine()}, which is asked for on every dot. A field rather than a call
+     * because {@link #isRenderingLine()} is the hottest branch in the emulator.
+     */
+    private final int preRenderLine;
+
+    /**
+     * {@link Region#oamDecayDots()}, read on every OAM access for the same reason.
+     */
+    private final int oamDecayDots;
+
     // ---------------------------------------------------------------- beam position
 
     private int scanline = 0;
     private int dot = 0;
+
+    /**
+     * Master clocks left over from the last CPU cycle, which is what makes 3.2 dots to a cycle
+     * possible at all: see {@link #beginCPUCycle()}. Always nought on NTSC, where twelve master
+     * clocks divide by four exactly.
+     * <p>
+     * Survives a reset, like {@link #clock} and for the same reason: the divider is the clock tree
+     * rather than state the /RES line can see.
+     */
+    private int masterClockRemainder = 0;
 
     /**
      * Frames completed since power on. Doubles as the clock the open bus decay is measured
@@ -383,9 +400,16 @@ public class PPU {
     private boolean spriteLayerVisible = true;
 
     public PPU(final PPUBus bus, final Mapper mapper) {
+        this(bus, mapper, Region.NTSC);
+    }
+
+    public PPU(final PPUBus bus, final Mapper mapper, final Region region) {
         this.bus = bus;
         this.mapper = mapper;
         this.vram = new VRAM(mapper);
+        this.region = region;
+        this.preRenderLine = region.preRenderLine();
+        this.oamDecayDots = region.oamDecayDots();
 
         bus.setNMILine(false);
     }
@@ -424,6 +448,25 @@ public class PPU {
     }
 
     /**
+     * How many dots the CPU cycle about to run is worth, counting the master clocks it takes.
+     * <p>
+     * One crystal feeds both chips through dividers of its own: on NTSC the CPU's is twelve and the
+     * PPU's four, which is three dots to a cycle exactly and leaves nothing over. On PAL they are
+     * sixteen and five, which is 3.2 -- so a cycle is worth three dots four times and four dots the
+     * fifth, and what decides which is the master clocks the last cycle could not spend.
+     * <p>
+     * Counted this way rather than from a table of the pattern because the pattern is not a fact
+     * about the machine; the two divisors are, and everything else follows from them.
+     */
+    int beginCPUCycle() {
+        var available = masterClockRemainder + region.cpuDivider();
+
+        masterClockRemainder = available % region.ppuDivider();
+
+        return available / region.ppuDivider();
+    }
+
+    /**
      * Advances the PPU by one dot.
      * <p>
      * The work belonging to the current dot happens first and the position moves afterwards, so
@@ -437,10 +480,12 @@ public class PPU {
 
         clock++;
 
-        if (warmingUp && scanline == PRE_RENDER_LINE) {
+        if (warmingUp && scanline == preRenderLine) {
             // The internal reset signal is released when the beam first reaches the pre-render
-            // line, which from power on is 89001 dots, or 29667 CPU cycles -- the wiki's "around
-            // 29658", said in the units this class thinks in.
+            // line, which on NTSC is 89001 dots from power on, or 29667 CPU cycles -- the wiki's
+            // "around 29658", said in the units this class thinks in. On PAL the beam has fifty
+            // more lines to cross first, so the window is 106051 dots, and a game that waits for
+            // two VBlanks rather than counting cycles does not care either way.
             warmingUp = false;
         }
 
@@ -462,7 +507,7 @@ public class PPU {
         }
 
         if (isRenderingLine()) {
-            if (scanline == PRE_RENDER_LINE && dot == STATUS_DOT) {
+            if (scanline == preRenderLine && dot == STATUS_DOT) {
                 endVBlank();
             }
 
@@ -512,9 +557,15 @@ public class PPU {
      * missing dot is what keeps the NTSC colour burst in step from frame to frame, and it also
      * means a frame is not a whole number of CPU cycles, so software cannot rely on the beam
      * being in the same place relative to the CPU on every frame.
+     * <p>
+     * PAL does not do it. Its burst phase is corrected by alternating it every line -- which is
+     * what the P in PAL is -- so the 2C07 has nothing left to fix, and every frame of it is the
+     * same length.
      */
     private void advance() {
-        if (scanline == PRE_RENDER_LINE && dot == LAST_DOT - 1 && oddFrame && isRenderingEnabled()) {
+        if (region.skipsDotOnOddFrames()
+                && scanline == preRenderLine && dot == LAST_DOT - 1
+                && oddFrame && isRenderingEnabled()) {
             startFrame();
             return;
         }
@@ -525,7 +576,7 @@ public class PPU {
             dot = 0;
             scanline++;
 
-            if (scanline > PRE_RENDER_LINE) {
+            if (scanline > preRenderLine) {
                 startFrame();
             }
         }
@@ -581,7 +632,7 @@ public class PPU {
             incrementY();
         } else if (dot == 257) {
             copyHorizontalPosition();
-        } else if (scanline == PRE_RENDER_LINE && dot >= 280 && dot <= 304) {
+        } else if (scanline == preRenderLine && dot >= 280 && dot <= 304) {
             copyVerticalPosition();
         } else if (dot == 337 || dot == 339) {
             // Two more nametable reads that nothing uses. They exist because the fetch machinery
@@ -689,8 +740,8 @@ public class PPU {
         if (dot == 257) {
             // Nothing was evaluated for the line after the pre-render one, so nothing is drawn
             // on it.
-            spriteCount = scanline == PRE_RENDER_LINE ? 0 : spritesFound;
-            spriteZeroOnThisLine = scanline != PRE_RENDER_LINE && spriteZeroOnNextLine;
+            spriteCount = scanline == preRenderLine ? 0 : spritesFound;
+            spriteZeroOnThisLine = scanline != preRenderLine && spriteZeroOnNextLine;
         }
 
         var offset = (dot - 257) & 7;
@@ -1330,14 +1381,14 @@ public class PPU {
      * <p>
      * OAM is DRAM with no refresh circuit of its own, so the only thing that keeps it alive is
      * being read or written. The sprite evaluation does that once per scanline, but only while
-     * rendering is enabled; a row left alone for longer than {@link #OAM_DECAY_DOTS} loses its
-     * charge and reads back as zero. Zeroing the array here rather than masking on the way out is
-     * what keeps sprite evaluation, $2004 and OAM DMA all seeing the same OAM.
+     * rendering is enabled; a row left alone for longer than {@link Region#oamDecayDots()} loses
+     * its charge and reads back as zero. Zeroing the array here rather than masking on the way out
+     * is what keeps sprite evaluation, $2004 and OAM DMA all seeing the same OAM.
      *
      * @see <a href="https://www.nesdev.org/wiki/PPU_OAM">NESdev: PPU OAM</a>
      */
     private void refreshOAMRow(final int row) {
-        if (clock - oamRefreshedOn[row] >= OAM_DECAY_DOTS) {
+        if (clock - oamRefreshedOn[row] >= oamDecayDots) {
             Arrays.fill(oam, row * 8, row * 8 + 8, 0);
         }
 
@@ -1469,7 +1520,7 @@ public class PPU {
      * pre-render line, but not the post-render line or VBlank.
      */
     private boolean isRenderingLine() {
-        return scanline < POST_RENDER_LINE || scanline == PRE_RENDER_LINE;
+        return scanline < POST_RENDER_LINE || scanline == preRenderLine;
     }
 
     /**
@@ -1577,6 +1628,13 @@ public class PPU {
         // The nametables, which live on the other side of the bus this chip owns. In here rather
         // than in a chunk of their own because nothing else can reach them.
         vram.serialize(io);
+
+        // Last, rather than up with the beam position it belongs to, because the order of this
+        // method is the file format. A field inserted in the middle would be read out of a state
+        // written before it existed as whatever byte happened to be at that offset; appended, it
+        // is simply missing from an older file, and StateIO hands back what the machine already
+        // had -- which for a state written before there was a PAL machine to write one is right.
+        masterClockRemainder = io.u8(masterClockRemainder);
 
         if (!io.saving()) {
             updateNMILine();

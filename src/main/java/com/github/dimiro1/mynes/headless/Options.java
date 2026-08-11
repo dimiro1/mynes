@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -31,7 +33,9 @@ import java.util.TreeSet;
  * @param screenshotEvery  photograph every this many frames, or 0 for none.
  * @param scale            how many times to magnify a screenshot.
  * @param fullFrame        whether to keep the scanlines a television hides.
- * @param palette          which measurement of the chip's colours to draw with.
+ * @param region           which machine to run the cartridge on, or null to believe its header.
+ * @param palette          which measurement of the chip's colours to draw with, or null to let the
+ *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
  * @param dumps            which memories to write out when the run ends.
  * @param loadState        a save state to start from instead of power on, or null.
@@ -61,6 +65,7 @@ public record Options(
         long screenshotEvery,
         int scale,
         boolean fullFrame,
+        Region region,
         NESPalette palette,
         boolean audio,
         List<String> dumps,
@@ -126,6 +131,12 @@ public record Options(
                                     far. Default 120.
               --reset-at N          Press the console Reset button at the start of frame N.
                                     Repeatable.
+              --region ntsc|pal     Which machine to run it on. Left off, the cartridge's header
+                                    decides -- and since nearly every dump leaves that field at
+                                    zero, that means NTSC. A PAL machine has 312 scanlines instead
+                                    of 262, 3.2 dots to a CPU cycle instead of 3, and 50.0070
+                                    frames a second instead of 60.0988, so the two are not
+                                    comparable runs: the report's run.region says which happened.
 
             Input
               --input SPEC[,SPEC..] What to press, and when. Repeatable. Frames count from power on.
@@ -165,7 +176,8 @@ public record Options(
                                     leaving this off is what a player would see. The frame hash
                                     always covers the cropped picture, whichever this is.
               --palette ID          Which measurement of the chip's colours to draw with. Default
-                                    nesdev.  --list-palettes has the rest.
+                                    nesdev, or 2c07 on a PAL machine, whose PPU does not generate
+                                    the same colours at all. --list-palettes has the rest.
               --list-palettes       Print the palette ids and names, then stop.
 
             Sound
@@ -240,7 +252,8 @@ public record Options(
         var screenshotEvery = 0L;
         var scale = 1;
         var fullFrame = false;
-        var palette = Palettes.defaultPalette();
+        Region region = null;
+        NESPalette palette = null;
         var audio = false;
         var dumps = new LinkedHashSet<String>();
         Path loadState = null;
@@ -279,6 +292,7 @@ public record Options(
                         positive(value(args, ++i, flag), flag);
                 case "--scale" -> scale = parseScale(value(args, ++i, flag));
                 case "--full-frame" -> fullFrame = true;
+                case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--audio" -> audio = true;
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
@@ -324,6 +338,7 @@ public record Options(
                 screenshotEvery,
                 scale,
                 fullFrame,
+                region,
                 palette,
                 audio,
                 List.copyOf(dumps),
@@ -338,6 +353,24 @@ public record Options(
                 scriptPath,
                 help,
                 listPalettes);
+    }
+
+    /**
+     * Which machine to run this cartridge on: the one asked for, or the one it asks for.
+     */
+    public Region regionFor(final Cart cart) {
+        return region == null ? cart.region() : region;
+    }
+
+    /**
+     * Which palette to draw with on that machine.
+     * <p>
+     * The region has a say because the two PPUs do not make the same colours -- an NTSC table on a
+     * PAL game is wrong rather than merely a different measurement -- but only when nobody has
+     * named one, since an explicit {@code --palette} is somebody who knows what they want.
+     */
+    public NESPalette paletteFor(final Region region) {
+        return palette == null ? Palettes.defaultPalette(region) : palette;
     }
 
     /**
@@ -466,6 +499,25 @@ public record Options(
 
             dumps.add(trimmed);
         }
+    }
+
+    /**
+     * Finds a region by id.
+     * <p>
+     * Refused rather than defaulted for the reason a misspelled palette is: a run that quietly
+     * happened on the other machine would look like it had worked, and every number in the report
+     * would be about a console nobody asked for.
+     */
+    private static Region parseRegion(final String id) {
+        var region = Region.byId(id);
+
+        if (region == null) {
+            throw new UsageException(
+                    "--region is ntsc or pal, not \"" + id + "\". Leave it off to believe the"
+                            + " cartridge's header.");
+        }
+
+        return region;
     }
 
     /**

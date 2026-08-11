@@ -103,8 +103,16 @@ public final class Headless {
             return EXIT_ROM;
         }
 
-        logger.info("running {}, mapper {}, {} frames",
-                options.rom().getFileName(), cart.mapperNumber(), options.frames());
+        var region = options.regionFor(cart);
+        var palette = options.paletteFor(region);
+
+        if (cart.timing() == Cart.Timing.DENDY && options.region() == null) {
+            logger.warn("{} says Dendy, which is not modelled; running it as PAL",
+                    options.rom().getFileName());
+        }
+
+        logger.info("running {}, mapper {}, {}, {} frames",
+                options.rom().getFileName(), cart.mapperNumber(), region.label(), options.frames());
 
         Files.createDirectories(options.outDir());
 
@@ -116,7 +124,7 @@ public final class Headless {
         // a file if one was asked for.
         try (var wav = options.audio() ? new WavWriter(options.wavPath()) : null) {
             var session = new Session(
-                    new NES(cart), options.palette().colours(), wav);
+                    new NES(cart, region), palette.colours(), wav);
 
             // The cartridge RAM first and the save state second, because a state carries its own copy
             // of that RAM and is the more specific answer of the two.

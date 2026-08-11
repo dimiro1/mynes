@@ -292,6 +292,43 @@ class HeadlessRunTests {
                 "and it came back looking the same");
     }
 
+    /**
+     * The region reaches the machine, and the machine really is a different one. nestest is an
+     * NTSC cartridge -- like everything vendored here -- so this is the override doing the work.
+     */
+    @Test
+    void aPalRunIsADifferentMachineFromTopToBottom() throws Exception {
+        run("--frames", "120");
+
+        var ntscCycles = report().at("/run/cpuCycles").asLong();
+
+        assertEquals("ntsc", report().at("/run/region").asText());
+        assertFalse(report().at("/run/regionForced").asBoolean());
+        assertEquals("nesdev", report().at("/video/palette").asText());
+
+        run("--frames", "120", "--region", "pal");
+
+        assertEquals("pal", report().at("/run/region").asText());
+        assertTrue(report().at("/run/regionForced").asBoolean());
+        assertEquals("2c07", report().at("/video/palette").asText(),
+                "a PAL machine draws with the PAL table unless somebody says otherwise");
+
+        // 120 frames of 33247.5 cycles rather than of 29780.5: a PAL frame is longer, so the same
+        // number of them is more work.
+        assertEquals(120 * 33247.5, report().at("/run/cpuCycles").asLong(), 2);
+        assertTrue(report().at("/run/cpuCycles").asLong() > ntscCycles);
+    }
+
+    @Test
+    void theReportSaysWhatTheCartridgeAskedFor() throws Exception {
+        run();
+
+        // Every ROM vendored here has a header of zeros, which says nothing at all -- which is
+        // exactly what nearly every real dump says too.
+        assertEquals("unstated", report().at("/cart/timing").asText());
+        assertEquals("ntsc", report().at("/cart/region").asText());
+    }
+
     @Test
     void theReportSaysWhereTheRunStartedFrom() throws Exception {
         run();

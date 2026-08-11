@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
@@ -112,7 +113,7 @@ public class GameUIFrame extends JFrame {
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
-        screen.setPalette(config.palette());
+        screen.setPalette(config.palette(currentRegion()));
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
         // at the default and then jumping.
@@ -150,6 +151,8 @@ public class GameUIFrame extends JFrame {
         machineMenuPowerCycle.setAccelerator(
                 KeyStroke.getKeyStroke(KeyEvent.VK_R, command | InputEvent.SHIFT_DOWN_MASK));
         machineMenu.add(machineMenuPowerCycle);
+
+        machineMenu.add(regionMenu());
 
         machineMenu.addSeparator();
 
@@ -241,9 +244,13 @@ public class GameUIFrame extends JFrame {
         // The palette belongs to the television rather than to the machine, so this is front end
         // state all the way down: no ROM has to be loaded, nothing has to be posted to the
         // emulation thread, and a power cycle cannot lose it.
+        //
+        // It is remembered against the kind of machine that is running, though, because the two
+        // PPUs do not generate the same colours. Somebody comparing palettes over a European game
+        // is choosing what their European games look like.
         settingsMenuPalette.addActionListener(e ->
-                new PaletteDialog(this, config.palette(), chosen -> {
-                    config.setPalette(chosen);
+                new PaletteDialog(this, config.palette(currentRegion()), chosen -> {
+                    config.setPalette(currentRegion(), chosen);
                     screen.setPalette(chosen);
 
                     if (chrViewerFrame != null) {
@@ -363,7 +370,8 @@ public class GameUIFrame extends JFrame {
                     }
 
                     if (chrViewerFrame == null) {
-                        chrViewerFrame = new CHRViewerFrame(this, cart, nes.getPPU(), config.palette());
+                        chrViewerFrame = new CHRViewerFrame(
+                                this, cart, nes.getPPU(), config.palette(currentRegion()));
                     }
 
                     chrViewerFrame.setVisible(true);
@@ -451,6 +459,64 @@ public class GameUIFrame extends JFrame {
         }
 
         return menu;
+    }
+
+    /**
+     * Builds the Region submenu: believe the cartridge, or insist on one machine or the other.
+     * <p>
+     * Sitting under Power Cycle because that is what picking one does. The chips are built around
+     * their region and a running machine cannot be rewired, so changing this starts the game again
+     * from power on -- through the same path as loading a ROM, which saves the battery first, so
+     * what it costs is the current life rather than the save file.
+     * <p>
+     * There is a menu at all because the header field for this is left at zero in nearly every
+     * dump, so Automatic answers NTSC for most European cartridges. A game running 17% fast with
+     * the music too high is the symptom, and this is the cure.
+     */
+    private JMenu regionMenu() {
+        var menu = new JMenu("Region");
+        menu.setMnemonic(KeyEvent.VK_G);
+
+        var group = new ButtonGroup();
+
+        for (var setting : RegionSetting.values()) {
+            var item = new JRadioButtonMenuItem(setting.label(), setting == config.region());
+
+            item.addActionListener(e -> {
+                if (setting == config.region()) {
+                    return;
+                }
+
+                config.setRegion(setting);
+                saveConfig();
+
+                // Nothing to restart when nothing is running, and the setting is still remembered
+                // for the next cartridge.
+                if (cart != null) {
+                    startMachine(cart);
+                }
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Which machine is running, or which one a cartridge would be run on if one were loaded.
+     * <p>
+     * The palette is asked this rather than the config directly, because Automatic has no answer
+     * until there is a cartridge to ask -- and with no cartridge at all, NTSC is the right thing to
+     * paint the empty screen with.
+     */
+    private Region currentRegion() {
+        if (nes != null) {
+            return nes.getRegion();
+        }
+
+        return cart == null ? Region.NTSC : config.region().resolve(cart);
     }
 
     /**
@@ -799,7 +865,13 @@ public class GameUIFrame extends JFrame {
         destroyCHRViewerFrame();
 
         this.cart = cart;
-        nes = new NES(cart);
+        nes = new NES(cart, config.region().resolve(cart));
+
+        logger.info("running {} as {}", cart.filename(), nes.getRegion().label());
+
+        // Which television this machine is plugged into. Only here, rather than everywhere a
+        // palette is chosen, because this is the one moment the kind of machine can change.
+        screen.setPalette(config.palette(nes.getRegion()));
 
         // A fresh PPU has both layers on, but the menu remembers what the last one was told.
         // The runner has not started yet, so the machine is still this thread's to touch.
@@ -865,7 +937,18 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        setTitle("MyNES - " + cart.filename() + machineState());
+        setTitle("MyNES - " + cart.filename() + machineKind() + machineState());
+    }
+
+    /**
+     * The kind of machine, when it is not the usual one.
+     * <p>
+     * Only PAL is worth the words. A machine's region is invisible from the picture until something
+     * is wrong, and when it is wrong -- a game running fast because the header said nothing -- this
+     * is the line that says which way to reach for.
+     */
+    private String machineKind() {
+        return nes != null && nes.getRegion() == Region.PAL ? " (PAL)" : "";
     }
 
     /**

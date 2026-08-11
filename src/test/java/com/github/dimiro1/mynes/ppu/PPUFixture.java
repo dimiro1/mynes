@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ppu;
 
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.Region;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -25,6 +26,11 @@ abstract class PPUFixture {
     static final int DOTS_PER_FRAME = 341 * 262;
 
     /**
+     * Fifty more scanlines of vertical blank, and no dot ever skipped.
+     */
+    static final int PAL_DOTS_PER_FRAME = 341 * 312;
+
+    /**
      * How many dots the second $2006 write takes to reach the VRAM address counter.
      */
     static final int ADDRESS_UPDATE_DOTS = 2;
@@ -42,9 +48,21 @@ abstract class PPUFixture {
      * a mapper watching the address bus, say.
      */
     protected void createPPU(final StubMapper mapper) {
+        createPPU(mapper, Region.NTSC);
+    }
+
+    /**
+     * Builds the PPU of a particular console. Everything here that does not say otherwise is
+     * testing the 2C02, which is what the test ROMs were all written for.
+     */
+    protected void createPPU(final Region region) {
+        createPPU(new StubMapper(), region);
+    }
+
+    protected void createPPU(final StubMapper mapper, final Region region) {
         this.mapper = mapper;
         this.bus = new RecordingPPUBus();
-        this.ppu = new PPU(bus, mapper);
+        this.ppu = new PPU(bus, mapper, region);
     }
 
     /**

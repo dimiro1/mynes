@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.input.KeyBindings.Button;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
@@ -98,24 +99,43 @@ class ConfigTests {
         @Test
         void aMissingEntryGivesTheDefault() throws IOException {
             assertSame(Palettes.defaultPalette(),
-                    Config.load(write("controller1.a=VK_K\n")).palette());
+                    Config.load(write("controller1.a=VK_K\n")).palette(Region.NTSC));
         }
 
         @Test
         void anIdNamesItsPalette() throws IOException {
-            assertSame(OTHER, Config.load(write("video.palette=" + OTHER.id() + "\n")).palette());
+            assertSame(OTHER,
+                    Config.load(write("video.palette=" + OTHER.id() + "\n")).palette(Region.NTSC));
         }
 
         @Test
         void surroundingSpaceIsIgnored() throws IOException {
             // Properties keeps everything after the '=', trailing spaces included.
-            assertSame(OTHER, Config.load(write("video.palette= " + OTHER.id() + "  \n")).palette());
+            assertSame(OTHER,
+                    Config.load(write("video.palette= " + OTHER.id() + "  \n")).palette(Region.NTSC));
         }
 
         @Test
         void anUnknownIdFallsBackToTheDefault() throws IOException {
             assertSame(Palettes.defaultPalette(),
-                    Config.load(write("video.palette=not-a-palette\n")).palette());
+                    Config.load(write("video.palette=not-a-palette\n")).palette(Region.NTSC));
+        }
+
+        @Test
+        void aPALMachineHasAPaletteOfItsOwn() throws IOException {
+            // Two entries, because the two PPUs do not generate the same colours. A choice made
+            // for one machine must not follow the emulator onto the other.
+            var config = Config.load(write(
+                    "video.palette=" + OTHER.id() + "\nvideo.palette.pal=nesdev\n"));
+
+            assertSame(OTHER, config.palette(Region.NTSC));
+            assertSame(Palettes.NESDEV, config.palette(Region.PAL));
+        }
+
+        @Test
+        void aMissingPALEntryGivesThePALPalette() throws IOException {
+            assertSame(Palettes.defaultPalette(Region.PAL),
+                    Config.load(write("video.palette=nesdev\n")).palette(Region.PAL));
         }
     }
 
@@ -142,6 +162,35 @@ class ConfigTests {
         void anUnknownIdFallsBackToTheDefault() throws IOException {
             // A window with no size is not a thing to start up with.
             assertSame(ScreenScale.defaultScale(), Config.load(write("video.scale=12\n")).screenScale());
+        }
+    }
+
+    @Nested
+    @DisplayName("loading the region")
+    class LoadingRegion {
+        @Test
+        void aMissingEntryGivesTheDefault() throws IOException {
+            assertSame(RegionSetting.AUTOMATIC,
+                    Config.load(write("video.palette=nesdev\n")).region());
+        }
+
+        @Test
+        void anIdNamesItsRegion() throws IOException {
+            assertSame(RegionSetting.PAL, Config.load(write("emulation.region=pal\n")).region());
+            assertSame(RegionSetting.NTSC, Config.load(write("emulation.region=ntsc\n")).region());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertSame(RegionSetting.PAL, Config.load(write("emulation.region= pal \n")).region());
+        }
+
+        @Test
+        void anUnknownIdFallsBackToTheDefault() throws IOException {
+            // Believing the cartridge is the mildest way to be wrong: it is the answer somebody
+            // who had never opened this file would have got anyway.
+            assertSame(RegionSetting.AUTOMATIC,
+                    Config.load(write("emulation.region=secam\n")).region());
         }
     }
 
@@ -221,10 +270,25 @@ class ConfigTests {
         @Test
         void thePaletteSurvivesTheRoundTrip() throws IOException {
             var config = Config.load(config());
-            config.setPalette(OTHER);
+            config.setPalette(Region.NTSC, OTHER);
             config.save(config());
 
-            assertSame(OTHER, Config.load(config()).palette());
+            assertSame(OTHER, Config.load(config()).palette(Region.NTSC));
+        }
+
+        @Test
+        void bothPalettesSurviveTheRoundTrip() throws IOException {
+            // Separately, which is the whole point of there being two: choosing a palette for
+            // European games must not quietly become the choice for all of them.
+            var config = Config.load(config());
+            config.setPalette(Region.NTSC, OTHER);
+            config.setPalette(Region.PAL, Palettes.NESDEV);
+            config.save(config());
+
+            var loaded = Config.load(config());
+
+            assertSame(OTHER, loaded.palette(Region.NTSC));
+            assertSame(Palettes.NESDEV, loaded.palette(Region.PAL));
         }
 
         @Test
@@ -234,6 +298,15 @@ class ConfigTests {
             config.save(config());
 
             assertSame(ScreenScale.FOUR_TIMES, Config.load(config()).screenScale());
+        }
+
+        @Test
+        void theRegionSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setRegion(RegionSetting.PAL);
+            config.save(config());
+
+            assertSame(RegionSetting.PAL, Config.load(config()).region());
         }
 
         @Test
@@ -283,8 +356,9 @@ class ConfigTests {
         void aSaveWritesEverySection() throws IOException {
             var config = Config.load(config());
             config.setKeyBindings(KeyBindings.defaults().with(Button.A, KeyEvent.VK_L));
-            config.setPalette(OTHER);
+            config.setPalette(Region.NTSC, OTHER);
             config.setScreenScale(ScreenScale.THREE_TIMES);
+            config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
             config.save(config());
@@ -292,7 +366,9 @@ class ConfigTests {
             var text = Files.readString(config());
 
             assertTrue(text.contains("video.palette=" + OTHER.id()), text);
+            assertTrue(text.contains("video.palette.pal=" + Palettes.PAL_ID), text);
             assertTrue(text.contains("video.scale=3"), text);
+            assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
@@ -309,12 +385,12 @@ class ConfigTests {
             // truncates the file, so a dialog that wrote only its own half would drop the binding
             // above -- which is the bug this class exists to keep from coming back.
             var second = Config.load(config());
-            second.setPalette(OTHER);
+            second.setPalette(Region.NTSC, OTHER);
             second.save(config());
 
             var reloaded = Config.load(config());
 
-            assertSame(OTHER, reloaded.palette(), "the palette just picked");
+            assertSame(OTHER, reloaded.palette(Region.NTSC), "the palette just picked");
             assertEquals(KeyEvent.VK_L, reloaded.keyBindings().keyFor(Button.A),
                     "and the binding from the run before");
         }

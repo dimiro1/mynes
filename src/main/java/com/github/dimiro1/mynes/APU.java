@@ -4,7 +4,8 @@ import com.github.dimiro1.mynes.mappers.IRQHandler;
 import com.github.dimiro1.mynes.state.StateIO;
 
 /**
- * APU implements the audio unit built into the 2A03 found in the NTSC NES.
+ * APU implements the audio unit built into the CPU: the 2A03 of the NTSC NES, or the 2A07 of the
+ * PAL one.
  * <p>
  * Five channels -- two pulses, a triangle, a noise generator and a delta modulation channel --
  * each of which is a divider driving a sequencer, gated by counters that a shared frame counter
@@ -34,18 +35,6 @@ public class APU {
      * is what every sound card takes without resampling.
      */
     public static final int SAMPLE_RATE = 44_100;
-
-    /**
-     * The NTSC CPU clock, which is what the chip counts in and so what the decimator divides down
-     * from: 21.477272MHz divided by twelve.
-     */
-    private static final double CPU_CLOCK_HZ = 1_789_773.0;
-
-    /**
-     * How many CPU cycles go into one output sample. Not a whole number, which is the whole
-     * difficulty: see {@link #sample()}.
-     */
-    private static final double CYCLES_PER_SAMPLE = CPU_CLOCK_HZ / SAMPLE_RATE;
 
     /**
      * How many samples the ring between the chip and the front end holds, which at 44.1kHz is
@@ -120,56 +109,9 @@ public class APU {
 
     // ---------------------------------------------------------------- frame counter timing
     //
-    // Every number below is in CPU cycles counted from the point the sequencer was last reset,
-    // which is what NESdev tabulates. They are named rather than inlined because blargg's
-    // 4-jitter, 5-len_timing and 6-irq_flag_timing are sensitive to all of them at once, and this
-    // is where a disagreement with real hardware is calibrated out.
-
-    /**
-     * The first quarter-frame step: envelopes and the triangle's linear counter.
-     */
-    private static final int STEP_1_CYCLE = 7457;
-
-    /**
-     * The first half-frame step: length counters and sweep units, plus a quarter frame.
-     */
-    private static final int STEP_2_CYCLE = 14913;
-
-    /**
-     * The third step, a quarter frame again.
-     */
-    private static final int STEP_3_CYCLE = 22371;
-
-    /**
-     * The last step of the four step sequence: a half frame, so a quarter frame too.
-     */
-    private static final int STEP_4_CYCLE = 29829;
-
-    /**
-     * The first of the three consecutive cycles the four step sequence sets its interrupt flag on.
-     * <p>
-     * It is set on this cycle, on {@link #STEP_4_CYCLE} and on the cycle the sequence wraps -- and
-     * since nothing but a $4015 read or the inhibit bit clears it, what that amounts to is a flag
-     * that comes up here and stays up. The width matters only to a program reading $4015 in the
-     * middle of the window, which is exactly what {@code 6-irq_flag_timing} does.
-     */
-    private static final int IRQ_FIRST_CYCLE = 29828;
-
-    /**
-     * How long the four step sequence is, so also the cycle it wraps on.
-     */
-    private static final int FOUR_STEP_PERIOD = 29830;
-
-    /**
-     * The extra half-frame step the five step sequence ends on. Its first three steps are the
-     * four step sequence's, and its fourth is a cycle where nothing happens at all.
-     */
-    private static final int STEP_5_CYCLE = 37281;
-
-    /**
-     * How long the five step sequence is, so also the cycle it wraps on.
-     */
-    private static final int FIVE_STEP_PERIOD = 37282;
+    // The sequence the frame counter steps through is in CPU cycles and differs between the two
+    // machines, so it lives on Region rather than here. Everything that reads it goes through the
+    // region field below.
 
     /**
      * How long a $4017 write takes to reach the sequencer when it lands on an APU cycle.
@@ -205,6 +147,19 @@ public class APU {
     private final IRQHandler frameIRQHandler;
     private final IRQHandler dmcIRQHandler;
 
+    /**
+     * Which console this is: the frame counter's sequence, the noise periods and the DMC's rates
+     * are all counted in CPU cycles, and the CPU cycle is a different length on each.
+     */
+    private final Region region;
+
+    /**
+     * How many CPU cycles go into one output sample. Not a whole number, which is the whole
+     * difficulty: see {@link #sample()}. About 40.6 on NTSC and 37.7 on PAL -- a PAL machine makes
+     * fewer cycles a second and the sound card still wants 44100 samples out of them.
+     */
+    private final double cyclesPerSample;
+
     private final Pulse pulse1 = new Pulse(true);
     private final Pulse pulse2 = new Pulse(false);
     private final Triangle triangle = new Triangle();
@@ -238,7 +193,7 @@ public class APU {
      * samples rather than rounded, which is what keeps 44100 samples a second exact over an hour
      * instead of drifting by the third of a cycle that is thrown away each time.
      */
-    private double cyclesToNextSample = CYCLES_PER_SAMPLE;
+    private double cyclesToNextSample;
 
     private final short[] sampleRing = new short[SAMPLE_RING_SIZE];
     private int sampleRead;
@@ -250,8 +205,23 @@ public class APU {
      * @param dmcIRQHandler   the DMC's end of the shared /IRQ line.
      */
     public APU(final IRQHandler frameIRQHandler, final IRQHandler dmcIRQHandler) {
+        this(frameIRQHandler, dmcIRQHandler, Region.NTSC);
+    }
+
+    /**
+     * @param frameIRQHandler the frame counter's end of the shared /IRQ line.
+     * @param dmcIRQHandler   the DMC's end of the shared /IRQ line.
+     * @param region          which console this is.
+     */
+    public APU(
+            final IRQHandler frameIRQHandler,
+            final IRQHandler dmcIRQHandler,
+            final Region region) {
         this.frameIRQHandler = frameIRQHandler;
         this.dmcIRQHandler = dmcIRQHandler;
+        this.region = region;
+        this.cyclesPerSample = region.cpuClockHz() / SAMPLE_RATE;
+        this.cyclesToNextSample = cyclesPerSample;
     }
 
     /**
@@ -294,7 +264,7 @@ public class APU {
 
         sampleSum = 0;
         sampleCycles = 0;
-        cyclesToNextSample += CYCLES_PER_SAMPLE;
+        cyclesToNextSample += cyclesPerSample;
 
         // Two high passes and a low pass, which between them are the console's own tone: the
         // 90Hz one is the coupling capacitor on the way out (and is what stops the DMC's level
@@ -773,37 +743,40 @@ public class APU {
             }
         }
 
+        // The two below would read better as a switch, and were one until the step cycles moved to
+        // Region: a case label has to be a compile-time constant, and which sequence this chip
+        // steps through is now a question about the machine it is in. The order is the order the
+        // cases were in, and the three interrupt cycles are consecutive rather than alternative.
+
         private void tickFourStep() {
-            switch (cycle) {
-                case STEP_1_CYCLE, STEP_3_CYCLE -> clockQuarterFrame();
-                case STEP_2_CYCLE -> {
-                    clockQuarterFrame();
-                    clockHalfFrame();
-                }
-                case IRQ_FIRST_CYCLE -> raiseIRQ();
-                case STEP_4_CYCLE -> {
-                    clockQuarterFrame();
-                    clockHalfFrame();
-                    raiseIRQ();
-                }
-                case FOUR_STEP_PERIOD -> {
-                    raiseIRQ();
-                    cycle = 0;
-                }
-                default -> { /* one of the many cycles the sequencer only counts */ }
+            if (cycle == region.step1Cycle() || cycle == region.step3Cycle()) {
+                clockQuarterFrame();
+            } else if (cycle == region.step2Cycle()) {
+                clockQuarterFrame();
+                clockHalfFrame();
+            } else if (cycle == region.irqFirstCycle()) {
+                raiseIRQ();
+            } else if (cycle == region.step4Cycle()) {
+                clockQuarterFrame();
+                clockHalfFrame();
+                raiseIRQ();
+            } else if (cycle == region.fourStepPeriod()) {
+                raiseIRQ();
+                cycle = 0;
             }
         }
 
         private void tickFiveStep() {
-            switch (cycle) {
-                case STEP_1_CYCLE, STEP_3_CYCLE -> clockQuarterFrame();
-                case STEP_2_CYCLE, STEP_5_CYCLE -> {
-                    clockQuarterFrame();
-                    clockHalfFrame();
-                }
-                case FIVE_STEP_PERIOD -> cycle = 0;
-                default -> { /* the fourth step of this sequence really does nothing */ }
+            if (cycle == region.step1Cycle() || cycle == region.step3Cycle()) {
+                clockQuarterFrame();
+            } else if (cycle == region.step2Cycle() || cycle == region.step5Cycle()) {
+                clockQuarterFrame();
+                clockHalfFrame();
+            } else if (cycle == region.fiveStepPeriod()) {
+                cycle = 0;
             }
+
+            // The fourth step of this sequence really does nothing.
         }
 
         private void raiseIRQ() {
@@ -1379,18 +1352,7 @@ public class APU {
      * The noise channel: a shift register whose feedback makes a sequence long enough to hear as
      * hiss, gated by an envelope and a length counter like a pulse.
      */
-    private static final class Noise {
-        /**
-         * The sixteen periods $400E can select, in CPU cycles, as NESdev tabulates them.
-         * <p>
-         * The divider here counts APU cycles, which is every other one of those; all sixteen are
-         * even, so halving them loses nothing. The bottom of the table is not really noise at all
-         * -- at four cycles the shift register runs at 447kHz and what comes out is a tone.
-         */
-        private static final int[] PERIODS = {
-                4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
-        };
-
+    private final class Noise {
         private final LengthCounter lengthCounter = new LengthCounter();
         private final Envelope envelope = new Envelope();
 
@@ -1438,7 +1400,12 @@ public class APU {
                 }
                 case 2 -> {
                     shortMode = (data & 0x80) != 0;
-                    period = PERIODS[data & 0x0F] / 2 - 1;
+
+                    // The divider here counts APU cycles, which is every other CPU cycle; every
+                    // period in either region's table is even, so halving them loses nothing. The
+                    // bottom of the table is not really noise at all -- at four cycles the shift
+                    // register runs at 447kHz and what comes out is a tone.
+                    period = region.noisePeriod(data & 0x0F) / 2 - 1;
                 }
                 case 3 -> {
                     lengthCounter.load(data);
@@ -1495,14 +1462,6 @@ public class APU {
      * {@link APU#isDMCFetchPending()} and its two companions are for.
      */
     private final class DMC {
-        /**
-         * The sixteen rates $4010 can select, in CPU cycles between one bit of the sample and the
-         * next. The fastest is 33kHz and the slowest 4kHz.
-         */
-        private static final int[] RATES = {
-                428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
-        };
-
         /**
          * The highest level the output can be stepped up to. Steps are two at a time from a seven
          * bit level, so 126 is the top and 125 the last one a step can start from.
@@ -1579,7 +1538,10 @@ public class APU {
                 case 0 -> {
                     irqEnabled = (data & 0x80) != 0;
                     loop = (data & 0x40) != 0;
-                    period = RATES[data & 0x0F] - 1;
+
+                    // One of the sixteen rates $4010 can select, in CPU cycles between one bit of
+                    // the sample and the next. The fastest is 33kHz and the slowest 4kHz.
+                    period = region.dmcRate(data & 0x0F) - 1;
 
                     // Switching the interrupt off acknowledges one that is already there, which is
                     // the other way a program has of clearing it besides writing $4015.

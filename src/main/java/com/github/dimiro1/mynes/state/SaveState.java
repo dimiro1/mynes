@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.state;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -78,9 +79,19 @@ public final class SaveState {
     private static final int SHA256_BYTES = 32;
 
     /**
-     * Bit 0 of the flags byte: the body is gzipped. Every other bit is reserved and written zero.
+     * Bit 0 of the flags byte: the body is gzipped.
      */
     private static final int FLAG_GZIPPED = 0x01;
+
+    /**
+     * Bit 1: the machine was a PAL one. Every other bit is reserved and written zero.
+     * <p>
+     * Taking a reserved bit does not need {@link #VERSION} bumping, because every file written
+     * before this bit meant anything has it clear -- and clear is NTSC, which is what those
+     * machines all were. The bit is only a lie if a file claims to be something it never could
+     * have been.
+     */
+    private static final int FLAG_PAL = 0x02;
 
     private static final String TAG_CPU = "CPU ";
     private static final String TAG_PPU = "PPU ";
@@ -112,8 +123,12 @@ public final class SaveState {
      * @param romSHA256     which cartridge it came from, as lowercase hex.
      * @param mapperNumber  that cartridge's mapper, for the error message rather than for identity.
      * @param frame         the frame it was taken on, so a menu can label it.
+     * @param region        which machine it was taken from. Part of what a state can be refused
+     *                      for: the same cartridge runs on either, and where the beam is halfway
+     *                      through a 312 line frame is nonsense to a chip with 262 of them.
      */
-    public record Header(int formatVersion, String romSHA256, int mapperNumber, long frame) {
+    public record Header(
+            int formatVersion, String romSHA256, int mapperNumber, long frame, Region region) {
     }
 
     // ==================================================================================== writing
@@ -129,7 +144,8 @@ public final class SaveState {
         putShort(header, OFFSET_VERSION, VERSION);
         System.arraycopy(hexToBytes(nes.getCart().sha256()), 0, header, OFFSET_SHA256, SHA256_BYTES);
         header[OFFSET_MAPPER] = (byte) nes.getCart().mapperNumber();
-        header[OFFSET_FLAGS] = FLAG_GZIPPED;
+        header[OFFSET_FLAGS] =
+                (byte) (FLAG_GZIPPED | (nes.getRegion() == Region.PAL ? FLAG_PAL : 0));
         putLong(header, OFFSET_FRAME, nes.getPPU().getFrame());
         putInt(header, OFFSET_BODY_LENGTH, body.length);
 
@@ -235,6 +251,14 @@ public final class SaveState {
                             + cart.sha256().substring(0, 12) + ".");
         }
 
+        if (header.region() != nes.getRegion()) {
+            throw new SaveStateException(
+                    "that save state was taken from a " + header.region().label()
+                            + " machine and this one is " + nes.getRegion().label()
+                            + ". The cartridge is right, but the two chips do not agree on how big"
+                            + " a frame is.");
+        }
+
         var declared = readInt(file, OFFSET_BODY_LENGTH);
         var body = inflate(file, (file[OFFSET_FLAGS] & FLAG_GZIPPED) != 0);
 
@@ -320,7 +344,8 @@ public final class SaveState {
                 readShort(file, OFFSET_VERSION),
                 bytesToHex(sha256),
                 Byte.toUnsignedInt(file[OFFSET_MAPPER]),
-                readLong(file, OFFSET_FRAME));
+                readLong(file, OFFSET_FRAME),
+                (file[OFFSET_FLAGS] & FLAG_PAL) != 0 ? Region.PAL : Region.NTSC);
     }
 
     private static byte[] inflate(final byte[] file, final boolean gzipped) throws IOException {

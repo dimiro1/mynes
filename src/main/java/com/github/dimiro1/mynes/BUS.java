@@ -24,6 +24,11 @@ public class BUS implements CPUBus, PPUBus {
     private final Controller controller1;
     private final Controller controller2;
 
+    /**
+     * Which console this is, for the two chips whose timing depends on it.
+     */
+    private final Region region;
+
     // The three devices that can pull /IRQ low, each holding its own end of the wire. The CPU sees
     // one line, so what it is told is the OR of these; see updateIRQLine().
     private boolean mapperIRQ;
@@ -38,9 +43,26 @@ public class BUS implements CPUBus, PPUBus {
      * @param controller2 the second controller
      */
     public BUS(final Mapper mapper, final Controller controller1, final Controller controller2) {
+        this(mapper, controller1, controller2, Region.NTSC);
+    }
+
+    /**
+     * The same, on a console of a particular kind.
+     *
+     * @param mapper      the cartridge mapper
+     * @param controller1 the first controller
+     * @param controller2 the second controller
+     * @param region      which console this is
+     */
+    public BUS(
+            final Mapper mapper,
+            final Controller controller1,
+            final Controller controller2,
+            final Region region) {
         this.mapper = mapper;
         this.controller1 = controller1;
         this.controller2 = controller2;
+        this.region = region;
     }
 
     /**
@@ -48,8 +70,8 @@ public class BUS implements CPUBus, PPUBus {
      * This must be called after construction to wire up all dependencies.
      */
     public void initialize() {
-        this.ppu = new PPU(this, mapper);
-        this.apu = new APU(this::setAPUFrameIRQ, this::setDMCIRQ);
+        this.ppu = new PPU(this, mapper, region);
+        this.apu = new APU(this::setAPUFrameIRQ, this::setDMCIRQ, region);
         this.mmu = new MMU(ppu, apu, mapper, controller1, controller2);
         this.cpu = new CPU(this);
 

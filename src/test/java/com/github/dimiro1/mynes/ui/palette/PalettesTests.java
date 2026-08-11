@@ -1,10 +1,13 @@
 package com.github.dimiro1.mynes.ui.palette;
 
+import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.Test;
 
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
@@ -16,9 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  */
 class PalettesTests {
     /**
-     * The ten bundled measurements plus the built-in NESdev set.
+     * The ten bundled NTSC measurements, the one PAL palette, and the built-in NESdev set.
      */
-    private static final int EXPECTED = 11;
+    private static final int EXPECTED = 12;
 
     @Test
     void everyPaletteLoads() {
@@ -71,5 +74,25 @@ class PalettesTests {
         // A hand-edited config file, or a palette dropped in a later version.
         assertSame(Palettes.defaultPalette(), Palettes.byId("not-a-palette"));
         assertSame(Palettes.defaultPalette(), Palettes.byId(""));
+    }
+
+    @Test
+    void aPALMachineDefaultsToThePALPalette() {
+        assertEquals(Palettes.PAL_ID, Palettes.defaultPalette(Region.PAL).id());
+        assertEquals("nesdev", Palettes.defaultPalette(Region.NTSC).id());
+    }
+
+    @Test
+    void thePALPaletteSpellsOutItsEmphasisVariants() {
+        // 1536 bytes rather than 192: the file measures all eight emphasis combinations instead of
+        // leaving them to the approximation in NESPalette. If it ever arrives as a plain 64 colour
+        // file the picture would still be right, so this is the only place that difference shows.
+        var pal = Palettes.byId(Palettes.PAL_ID);
+
+        assertNotSame(Palettes.defaultPalette(), pal, "the PAL palette did not load");
+        assertNotEquals(
+                pal.colour(0x21),
+                pal.colours()[(0b001 << 6) | 0x21],
+                "emphasised red should not leave a colour untouched");
     }
 }

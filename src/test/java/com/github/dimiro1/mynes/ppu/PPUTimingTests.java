@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ppu;
 
+import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -155,6 +156,71 @@ class PPUTimingTests extends PPUFixture {
             runTo(261, 1);
             ppu.write(PPUMASK, 0x08);
             runTo(0, 0);
+        }
+    }
+
+    /**
+     * The 2C07, which differs from everything above in three ways: fifty more scanlines, all of
+     * them vertical blank, and no odd frame ever losing a dot.
+     */
+    @Nested
+    @DisplayName("a PAL machine")
+    class PALTiming {
+        @BeforeEach
+        void setUp() {
+            createPPU(Region.PAL);
+        }
+
+        @Test
+        void wrapsToTheNextFrameAfter312Scanlines() {
+            run(PAL_DOTS_PER_FRAME);
+
+            assertEquals(0, ppu.getScanline());
+            assertEquals(0, ppu.getDot());
+            assertEquals(1, ppu.getFrame());
+        }
+
+        @Test
+        void startsVBlankOnTheSameLineAsAnNTSCMachine() {
+            // The picture is the same 240 lines and the blanking after it is what grew, so the
+            // flag goes up where it always did and stays up three and a half times as long.
+            runTo(241, 1);
+            assertFalse(vblankSet(), "dot 1 has not done its work yet");
+
+            ppu.tick();
+            assertTrue(vblankSet(), "and now it has");
+        }
+
+        @Test
+        void clearsTheStatusFlagsOnLine311() {
+            runTo(311, 1);
+            assertTrue(vblankSet(), "still up right to the end of a much longer VBlank");
+
+            ppu.tick();
+            assertFalse(vblankSet());
+        }
+
+        @Test
+        void isAlways106392DotsWhetherOrNotAnythingIsRendering() {
+            assertEquals(
+                    List.of(PAL_DOTS_PER_FRAME, PAL_DOTS_PER_FRAME, PAL_DOTS_PER_FRAME),
+                    List.of(measureFrame(), measureFrame(), measureFrame()),
+                    "with rendering off");
+
+            runTo(311, 1);
+            ppu.write(PPUMASK, 0x08);
+            runTo(0, 0);
+
+            // The 2C02 would drop a dot from every other one of these. PAL corrects its burst
+            // phase by alternating it line by line instead, so there is nothing to compensate for.
+            assertEquals(
+                    List.of(PAL_DOTS_PER_FRAME, PAL_DOTS_PER_FRAME, PAL_DOTS_PER_FRAME),
+                    List.of(measureFrame(), measureFrame(), measureFrame()),
+                    "and with it on");
+        }
+
+        private boolean vblankSet() {
+            return (ppu.peek(PPUSTATUS) & VBLANK_FLAG) != 0;
         }
     }
 }

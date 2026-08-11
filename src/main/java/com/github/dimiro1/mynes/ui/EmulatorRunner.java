@@ -52,6 +52,13 @@ public class EmulatorRunner {
     private final AudioOutput audio = new AudioOutput();
 
     /**
+     * How long one frame of this machine lasts, which is the whole of what the region means to this
+     * class: 16.6ms on NTSC and 20ms on PAL. Everything else about the difference is inside the NES
+     * and this loop cannot tell.
+     */
+    private final long frameNanos;
+
+    /**
      * Where the APU's finished samples land on their way to the sound card. Belongs to the
      * emulation thread, like everything else it is handed to.
      */
@@ -78,6 +85,7 @@ public class EmulatorRunner {
     public EmulatorRunner(final NES nes, final ScreenComponent screen) {
         this.nes = nes;
         this.screen = screen;
+        this.frameNanos = nes.getRegion().frameNanos();
     }
 
     /**
@@ -194,7 +202,7 @@ public class EmulatorRunner {
 
             var speed = this.speed;
             var deadline = System.nanoTime();
-            var nextPresent = deadline + EmulationSpeed.FRAME_NANOS;
+            var nextPresent = deadline + frameNanos;
             var lastFrame = ppu.getFrame();
             var wasPaused = false;
 
@@ -219,7 +227,7 @@ public class EmulatorRunner {
                     // A frame's worth of sleep at a time, so a resume or a posted command is
                     // picked up quickly, and the schedule restarts cleanly on resume instead of
                     // sprinting through the pause as missed frames.
-                    LockSupport.parkNanos(EmulationSpeed.FRAME_NANOS);
+                    LockSupport.parkNanos(frameNanos);
                     deadline = System.nanoTime();
                     continue;
                 }
@@ -232,7 +240,7 @@ public class EmulatorRunner {
                     // that was being kept at all.
                     speed = this.speed;
                     deadline = System.nanoTime();
-                    nextPresent = deadline + EmulationSpeed.FRAME_NANOS;
+                    nextPresent = deadline + frameNanos;
                 }
 
                 // The PPU has no frame-complete callback; its frame counter is the signal. One
@@ -268,11 +276,11 @@ public class EmulatorRunner {
                 if (speed == EmulationSpeed.NORMAL || now - nextPresent >= 0) {
                     screen.present(ppu.getFrameBuffer());
 
-                    nextPresent += EmulationSpeed.FRAME_NANOS;
+                    nextPresent += frameNanos;
                     if (nextPresent - now < 0) {
                         // A frame's worth behind, which is a machine too slow for the speed it was
                         // asked for. Owing it pictures it will never draw helps nobody.
-                        nextPresent = now + EmulationSpeed.FRAME_NANOS;
+                        nextPresent = now + frameNanos;
                     }
                 }
 
@@ -283,14 +291,14 @@ public class EmulatorRunner {
 
                 // Absolute deadlines rather than "sleep 16ms": the time spent emulating the frame
                 // comes out of the wait instead of being added to it, so the error cannot pile up.
-                deadline += speed.frameNanos();
+                deadline += speed.frameNanos(nes.getRegion());
 
                 // Read again: presenting the frame took real time too, and at eight times speed
                 // the whole budget is two milliseconds.
                 now = System.nanoTime();
                 if (deadline - now > 0) {
                     LockSupport.parkNanos(deadline - now);
-                } else if (now - deadline > MAX_LAG_FRAMES * speed.frameNanos()) {
+                } else if (now - deadline > MAX_LAG_FRAMES * speed.frameNanos(nes.getRegion())) {
                     deadline = now;
                 }
             }

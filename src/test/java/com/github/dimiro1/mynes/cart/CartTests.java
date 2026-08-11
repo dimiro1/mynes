@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.cart;
 
 import com.github.dimiro1.mynes.InvalidNesFileException;
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.UnsupportedMapperException;
 import com.github.dimiro1.mynes.mappers.Mapper0;
 import com.github.dimiro1.mynes.mappers.Mapper1;
@@ -100,6 +101,94 @@ public class CartTests {
         );
 
         assertTrue(thrown.getMessage().contains("66"), "should name the mapper: " + thrown.getMessage());
+    }
+
+    /**
+     * NES 2.0 announces itself in bits 2 and 3 of flags 7, and then byte 12 says which console the
+     * cartridge was made for. It is the only one of the three ways of asking that has more than two
+     * answers, and the only one that is usually filled in.
+     */
+    @ParameterizedTest(name = "NES 2.0 byte 12 = ${0} is ${1}")
+    @MethodSource("nes20Timings")
+    void theRegionComesFromByte12OfANES20Header(final int byte12, final Cart.Timing expected) {
+        var rom = synthesizeRom(0x00, 0x08);
+        rom[12] = (byte) byte12;
+
+        assertEquals(expected, Cart.load(rom, "timing.nes").timing());
+    }
+
+    private static Stream<Arguments> nes20Timings() {
+        return Stream.of(
+                arguments(0, Cart.Timing.NTSC),
+                arguments(1, Cart.Timing.PAL),
+                arguments(2, Cart.Timing.MULTI_REGION),
+                arguments(3, Cart.Timing.DENDY),
+                // Only the bottom two bits are the timing; the rest of the byte is not ours.
+                arguments(0xFD, Cart.Timing.PAL)
+        );
+    }
+
+    @Test
+    void aCartridgeThatRunsOnEitherMachineIsRunAsNTSC() {
+        var rom = synthesizeRom(0x00, 0x08);
+        rom[12] = 2;
+
+        var cart = Cart.load(rom, "multi.nes");
+
+        assertEquals(Cart.Timing.MULTI_REGION, cart.timing(), "what the header said");
+        assertEquals(Region.NTSC, cart.region(), "and what that comes to");
+    }
+
+    @Test
+    void aDendyCartridgeIsRunAsPAL() {
+        // Dendy is not modelled. Of the two machines here it is much the nearer: the picture and
+        // the frame rate are PAL's, and only the CPU rate is out.
+        var rom = synthesizeRom(0x00, 0x08);
+        rom[12] = 3;
+
+        assertEquals(Region.PAL, Cart.load(rom, "dendy.nes").region());
+    }
+
+    @Test
+    void plainINESIsAskedAboutBytes9And10() {
+        var byNine = synthesizeRom(0x00, 0x00);
+        byNine[9] = 1;
+
+        assertEquals(Cart.Timing.PAL, Cart.load(byNine, "flags9.nes").timing());
+
+        var byTen = synthesizeRom(0x00, 0x00);
+        byTen[10] = 2;
+
+        assertEquals(Cart.Timing.PAL, Cart.load(byTen, "flags10.nes").timing());
+
+        var eitherMachine = synthesizeRom(0x00, 0x00);
+        eitherMachine[10] = 1;
+
+        assertEquals(Cart.Timing.MULTI_REGION, Cart.load(eitherMachine, "dual.nes").timing());
+    }
+
+    @Test
+    void aHeaderWithAnythingWrittenAcrossItsTailIsNotBelieved() {
+        // Dumps from the 1990s wrote the ripper's name over the end of the header, and a byte of
+        // somebody's handle lands in byte 9 as readily as anywhere else. A cartridge declared PAL
+        // by the letter "P" of a signature would be a mystifying thing to debug.
+        var rom = synthesizeRom(0x00, 0x00);
+        rom[9] = 1;
+        rom[13] = 'D';
+        rom[14] = 'i';
+        rom[15] = 'z';
+
+        assertEquals(Cart.Timing.UNSTATED, Cart.load(rom, "signed.nes").timing());
+        assertEquals(Region.NTSC, Cart.load(rom, "signed.nes").region());
+    }
+
+    @Test
+    void aHeaderThatSaysNothingIsNTSC() {
+        // Which is most of them, and the reason there is a way to say otherwise by hand.
+        var cart = Cart.load(synthesizeRom(0x00, 0x00), "quiet.nes");
+
+        assertEquals(Cart.Timing.UNSTATED, cart.timing());
+        assertEquals(Region.NTSC, cart.region());
     }
 
     /**
