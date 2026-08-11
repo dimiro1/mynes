@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.video.FrameRenderer;
 import org.junit.jupiter.api.Test;
 
 import java.awt.image.BufferedImage;
@@ -19,11 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class ScreenComponentTests {
     /**
-     * The visible picture: the component hides eight scanlines at the top and eight at the bottom,
-     * so painting at this size maps a screen pixel to a framebuffer pixel eight rows down.
+     * The visible picture, taken from the component's own definition of it rather than restated:
+     * painting at this size maps a screen pixel to a framebuffer pixel eight rows down.
      */
-    private static final int VISIBLE_HEIGHT = PPU.SCREEN_HEIGHT - 16;
-    private static final int OVERSCAN_TOP = 8;
+    private static final int VISIBLE_HEIGHT = FrameRenderer.VISIBLE_HEIGHT;
+    private static final int OVERSCAN_TOP = FrameRenderer.OVERSCAN_TOP;
 
     /**
      * Paints the component at 1:1 and reads a pixel back, in framebuffer coordinates.
