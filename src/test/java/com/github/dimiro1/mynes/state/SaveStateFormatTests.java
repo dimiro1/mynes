@@ -273,6 +273,31 @@ class SaveStateFormatTests {
                 "the body is compressed: " + state.length + " bytes for a console with 150KB in it");
     }
 
+    /**
+     * The only part of the window's slot handling that is a function rather than a gesture, so the
+     * only part worth a test. Beside the ROM, numbered, which is the same place a battery file goes.
+     */
+    @Test
+    void aSlotIsNamedAfterTheRomAndNumbered() {
+        assertEquals(
+                Path.of("/games/Zelda.mn1"),
+                SaveState.slotPath(Path.of("/games/Zelda.nes"), 1));
+        assertEquals(
+                Path.of("/games/Zelda.mn9"),
+                SaveState.slotPath(Path.of("/games/Zelda.nes"), 9));
+        assertEquals(
+                Path.of("/games/Mario Bros 3.mn1"),
+                SaveState.slotPath(Path.of("/games/Mario Bros 3.nes"), 1),
+                "everything up to the last dot, so spaces and dots in a name survive");
+        assertEquals(
+                Path.of("/games/no-extension.mn1"),
+                SaveState.slotPath(Path.of("/games/no-extension"), 1));
+        assertNotEquals(
+                SaveState.slotPath(Path.of("/games/Zelda.nes"), 1),
+                BatteryRAM.pathFor(Path.of("/games/Zelda.nes")),
+                "a slot must never collide with the battery file, which is the one that matters");
+    }
+
     // ================================================================================== internals
 
     /**

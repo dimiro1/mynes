@@ -87,6 +87,24 @@ identical bytes every time. Everything that legitimately varies is under `host`,
 hash is a fair regression test, and starting again from power on is cheap enough that there is never
 a reason to keep a session alive.
 
+### Skipping the boring part
+
+`--save-state FILE` and `--load-state FILE` cut the wait when the same two hundred frames of title
+screen are in the way of every run. Get past it once, then start from there:
+
+```sh
+java -jar $JAR --headless --rom ROM.nes --frames 200 --input 60/40x3:start --save-state level1.mn
+java -jar $JAR --headless --rom ROM.nes --load-state level1.mn --frames 300 --screenshot last
+```
+
+A state carries the whole machine, so this is exact rather than approximate -- resuming from one and
+running straight through give byte-identical pictures. It has to be the same ROM; anything else is
+exit 2.
+
+**But it breaks the assumption above.** Two runs are only comparable when they started the same way,
+so `run.state.startedFromPowerOn` in the report is part of what to check before diffing two of them.
+`--sram-in`/`--sram-out` do the same for battery RAM, in the `.sav` format other emulators read.
+
 ## House style
 
 The code has a strong voice. Match it rather than the language's defaults.
@@ -107,6 +125,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 ```
 mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, controllers
 mynes/mappers/    mappers 0 to 4
+mynes/state/      save states and battery .sav files
 mynes/video/      colour indices to pixels: the overscan crop and the frame renderer
 mynes/headless/   the command line mode
 mynes/ui/         the Swing window, the palettes, the key bindings, the CHR viewer
@@ -120,3 +139,13 @@ should reach into `mynes/ui`, save for the palette tables.
 `peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
 address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that
 dumped memory through `read` would fire interrupts the game never asked for. Use `peek`.
+
+Cartridge RAM is the one memory `peek` is *wrong* for. `MMU.peek` at $6000 falls through to the
+mapper, and MMC1 and MMC3 read back zero when the game has switched the chip off -- which is exactly
+what a battery board does around anything risky. Use `Mapper.prgRAM()`, which is the chip rather than
+the bus.
+
+Adding a field to any of the chips means adding it to that class's `serialize`, or adding it to
+`NOT_IN_THE_STATE` in `SaveStateCompletenessTests` with a reason. That test walks the console
+reflectively and will fail otherwise, which is the point of it -- one list of fields, used for both
+saving and loading, so a field can only be forgotten in both directions at once.

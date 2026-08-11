@@ -279,6 +279,21 @@ public final class SaveState {
     }
 
     /**
+     * Where a numbered slot for a ROM lives: beside it, with the extension replaced by {@code .mn}
+     * and the slot number.
+     * <p>
+     * Beside the ROM rather than in a directory of its own, so that a game and its states travel
+     * together -- the same reason a battery file goes there, and the one convention this and
+     * {@link BatteryRAM} share.
+     */
+    public static Path slotPath(final Path rom, final int slot) {
+        var name = rom.getFileName().toString();
+        var dot = name.lastIndexOf('.');
+
+        return rom.resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".mn" + slot);
+    }
+
+    /**
      * What the file says about itself. Reads the header alone, which is why it is not compressed.
      */
     public static Header header(final Path path) throws IOException {
