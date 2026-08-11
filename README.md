@@ -10,7 +10,9 @@ A Work in Progress Nes emulator.
   over $2000, $2001, $2005 and $2006 while it warms up, open bus decay, OAM decay and colour
   emphasis, into a 256x240 framebuffer of colour indices;
 - Game window: File > Open a `.nes` file and it runs, at 60.0988 frames a second, with the
-  overscan cropped and the picture scaled to the window;
+  overscan cropped and the picture scaled to the window -- which Settings > Screen Size sets to
+  1x, 2x, 3x or 4x of the 256x224 picture, whole multiples so that every pixel comes out the same
+  size as every other one;
 - Eleven NTSC palettes: the NESdev set plus the ten measured ones from firebrandx.com, among them
   NES Classic, PVM Style D93, Smooth and Wavebeam. Settings > Palette... lists them next to a
   swatch grid and applies each one as the selection moves, so they can be compared against the
@@ -92,10 +94,11 @@ running with.
 
 Settings > Controller... remaps any of them: click a button, press the key you want on it. The
 change applies at once, no save button, and lands in `~/.mynes/config.properties` along with the
-chosen palette and fast forward speed:
+chosen palette, screen size and fast forward speed:
 
 ```properties
 video.palette=nesdev
+video.scale=2
 emulation.fast-forward=4x
 audio.muted=false
 controller1.a=VK_X
@@ -104,8 +107,14 @@ controller1.left=VK_LEFT
 
 That file can be edited by hand instead. Binding values are the names of the `VK_` constants in
 `java.awt.event.KeyEvent`, an empty value leaves the button unbound, and an entry that is missing
-or misspelled -- a key name, a palette id, a speed -- falls back to its default and says so in the
-log.
+or misspelled -- a key name, a palette id, a speed, a size -- falls back to its default and says so
+in the log.
+
+Settings > Screen Size draws the picture at 1x, 2x, 3x or 4x and packs the window around it, and
+the size is remembered. The window is still resizable by hand from there and the picture is still
+fitted to it, letterboxed to keep its shape; the menu is how to get back to a whole multiple, where
+every NES pixel is the same number of screen pixels as every other one rather than some of them
+being a row taller than their neighbours.
 
 Machine > Fast Forward switches the speed on and off, and Machine > Fast Forward Speed picks which
 one. Whether it is on is not remembered between runs; which speed it uses is. Asking for more than

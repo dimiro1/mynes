@@ -36,6 +36,7 @@ public final class Config {
             Path.of(System.getProperty("user.home"), ".mynes", "config.properties");
 
     private static final String PALETTE_KEY = "video.palette";
+    private static final String SCALE_KEY = "video.scale";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
 
@@ -48,9 +49,15 @@ public final class Config {
 
             """;
 
-    private static final String VIDEO_HEADER = """
+    private static final String PALETTE_HEADER = """
             # The palette the picture is drawn with. Settings > Palette... has the list; the
             # value is the id shown there in lower case with dashes, such as nes-classic.
+            """;
+
+    private static final String SCALE_HEADER = """
+            # How many screen pixels wide a picture pixel is drawn, and so how big the window
+            # opens: 1, 2, 3 or 4. Settings > Screen Size is the same setting, and the window
+            # can still be dragged to any size at all from there.
             """;
 
     private static final String EMULATION_HEADER = """
@@ -66,16 +73,19 @@ public final class Config {
 
     private KeyBindings keyBindings;
     private NESPalette palette;
+    private ScreenScale screenScale;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
 
     private Config(
             final KeyBindings keyBindings,
             final NESPalette palette,
+            final ScreenScale screenScale,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted) {
         this.keyBindings = keyBindings;
         this.palette = palette;
+        this.screenScale = screenScale;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
     }
@@ -106,6 +116,7 @@ public final class Config {
         return new Config(
                 KeyBindings.from(properties),
                 paletteFrom(properties),
+                screenScaleFrom(properties),
                 fastForwardSpeedFrom(properties),
                 mutedFrom(properties));
     }
@@ -127,6 +138,16 @@ public final class Config {
         }
 
         return Palettes.byId(id.trim());
+    }
+
+    private static ScreenScale screenScaleFrom(final Properties properties) {
+        var id = properties.getProperty(SCALE_KEY);
+
+        if (id == null) {
+            return ScreenScale.defaultScale();
+        }
+
+        return ScreenScale.byId(id.trim());
     }
 
     private static EmulationSpeed fastForwardSpeedFrom(final Properties properties) {
@@ -151,10 +172,16 @@ public final class Config {
     public void save(final Path path) throws IOException {
         var text = new StringBuilder(HEADER);
 
-        text.append(VIDEO_HEADER)
+        text.append(PALETTE_HEADER)
                 .append(PALETTE_KEY)
                 .append('=')
                 .append(palette.id())
+                .append("\n\n");
+
+        text.append(SCALE_HEADER)
+                .append(SCALE_KEY)
+                .append('=')
+                .append(screenScale.id())
                 .append("\n\n");
 
         text.append(EMULATION_HEADER)
@@ -197,6 +224,18 @@ public final class Config {
 
     public void setPalette(final NESPalette palette) {
         this.palette = palette;
+    }
+
+    /**
+     * How big the picture is drawn, and so how big the window opens. Remembered, since a window that
+     * came back the wrong size on every run would be the first thing to fix every run.
+     */
+    public ScreenScale screenScale() {
+        return screenScale;
+    }
+
+    public void setScreenScale(final ScreenScale screenScale) {
+        this.screenScale = screenScale;
     }
 
     /**

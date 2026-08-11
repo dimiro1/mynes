@@ -120,6 +120,32 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the screen size")
+    class LoadingScreenScale {
+        @Test
+        void aMissingEntryGivesTheDefault() throws IOException {
+            assertSame(ScreenScale.defaultScale(),
+                    Config.load(write("video.palette=nesdev\n")).screenScale());
+        }
+
+        @Test
+        void anIdNamesItsSize() throws IOException {
+            assertSame(ScreenScale.THREE_TIMES, Config.load(write("video.scale=3\n")).screenScale());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertSame(ScreenScale.FOUR_TIMES, Config.load(write("video.scale= 4 \n")).screenScale());
+        }
+
+        @Test
+        void anUnknownIdFallsBackToTheDefault() throws IOException {
+            // A window with no size is not a thing to start up with.
+            assertSame(ScreenScale.defaultScale(), Config.load(write("video.scale=12\n")).screenScale());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the fast forward speed")
     class LoadingFastForward {
         @Test
@@ -202,6 +228,15 @@ class ConfigTests {
         }
 
         @Test
+        void theScreenSizeSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setScreenScale(ScreenScale.FOUR_TIMES);
+            config.save(config());
+
+            assertSame(ScreenScale.FOUR_TIMES, Config.load(config()).screenScale());
+        }
+
+        @Test
         void theFastForwardSpeedSurvivesTheRoundTrip() throws IOException {
             var config = Config.load(config());
             config.setFastForwardSpeed(EmulationSpeed.UNLIMITED);
@@ -249,6 +284,7 @@ class ConfigTests {
             var config = Config.load(config());
             config.setKeyBindings(KeyBindings.defaults().with(Button.A, KeyEvent.VK_L));
             config.setPalette(OTHER);
+            config.setScreenScale(ScreenScale.THREE_TIMES);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
             config.save(config());
@@ -256,6 +292,7 @@ class ConfigTests {
             var text = Files.readString(config());
 
             assertTrue(text.contains("video.palette=" + OTHER.id()), text);
+            assertTrue(text.contains("video.scale=3"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
