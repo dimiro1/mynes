@@ -22,6 +22,8 @@ import java.nio.ByteOrder;
  * @param prgROM program ROM data (CPU-addressable)
  * @param chrROM character ROM data (PPU-addressable pattern tables)
  * @param mapper the memory mapper implementation
+ * @param mapperNumber the iNES mapper number the header asked for, kept alongside the mapper
+ *                     itself because it is what a person names a cartridge's hardware by
  * @param mirror the mirroring mode (horizontal, vertical, four-screen)
  * @param hasBattery whether this cart has battery-backed save RAM
  */
@@ -30,6 +32,7 @@ public record Cart(
         byte[] prgROM,
         byte[] chrROM,
         Mapper mapper,
+        int mapperNumber,
         int mirror,
         boolean hasBattery) {
 
@@ -147,6 +150,6 @@ public record Cart(
             default -> throw new UnsupportedMapperException(mapperNumber, filename);
         };
 
-        return new Cart(filename, prgROM, chrROM, mapper, mirror, hasBattery);
+        return new Cart(filename, prgROM, chrROM, mapper, mapperNumber, mirror, hasBattery);
     }
 }

@@ -1592,6 +1592,34 @@ public class PPU {
     }
 
     /**
+     * Reads a byte of OAM without side effects, for debug UIs.
+     * <p>
+     * Unlike {@link #readOAM} this does not refresh the row, which is the whole point: a debugger
+     * that kept OAM alive by looking at it would hide the decay it was there to watch.
+     *
+     * @param address a byte of OAM, 0 to 255.
+     * @return the byte at that address.
+     */
+    public int peekOAM(final int address) {
+        return oam[address & 0xFF];
+    }
+
+    /**
+     * Reads a byte off the PPU bus without side effects, for debug UIs -- the pattern tables and
+     * the nametables, which live outside the chip.
+     * <p>
+     * Palette RAM is not on that bus and so is not reachable here; {@link #peekPalette} is where
+     * it lives.
+     *
+     * @param address any address; only the low fourteen lines exist.
+     * @return the byte at that address.
+     * @see VRAM#peek(int)
+     */
+    public int peekVRAM(final int address) {
+        return vram.peek(address);
+    }
+
+    /**
      * What the sprite evaluation state machine is in the middle of doing.
      */
     private enum EvaluationStep {

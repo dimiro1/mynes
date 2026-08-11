@@ -49,6 +49,24 @@ public class VRAM {
         // lines sees a nametable read just as clearly as a pattern table one.
         mapper.ppuAddress(addr);
 
+        return peek(addr);
+    }
+
+    /**
+     * Reads a byte without putting the address on the bus.
+     * <p>
+     * This is the difference that matters, and it is not a small one. {@link #read} tells the
+     * mapper what the PPU is looking at, and MMC3 counts the rises of A12 in that signal to decide
+     * when to raise its scanline interrupt -- so a debugger walking the nametables through
+     * {@code read} would clock the counter and fire interrupts the game never asked for. A picture
+     * of memory has to be taken from outside the glass.
+     *
+     * @param address any address; only the low fourteen lines exist, so it is masked first.
+     * @return the byte at that address.
+     */
+    public int peek(final int address) {
+        var addr = address & 0x3FFF;
+
         if (addr < 0x2000) {
             return mapper.charRead(addr);
         }

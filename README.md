@@ -28,6 +28,10 @@ A Work in Progress Nes emulator.
   palettes the game is running with, live -- CHR RAM rewrites and palette changes show up as
   they happen;
 - Debug toggles to hide the background or sprite layer without the game noticing;
+- Headless mode: runs a cartridge with no window and no sound card, plays a written down sequence
+  of button presses, and writes out PNGs, a JSON report, memory dumps and a WAV -- or takes
+  commands one at a time. The machine is deterministic, so the same command produces the same
+  bytes every run;
 - Most of blargg tests are passing;
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;
@@ -108,6 +112,101 @@ not told: a muted APU still runs and still raises its interrupts, so a game soun
 same either way. Fast forwarding cannot hand a sound card audio faster than real time, so what does
 not fit is dropped and the sound comes out chopped rather than sped up. A computer with no sound
 device runs silently and says so in the log.
+
+## Headless
+
+The emulator also runs with nobody watching, which is how to see what it does without a display --
+in a cloud machine, from a script, or from a coding agent that cannot look at a window.
+
+```sh
+mvn -B package -DskipTests
+java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless \
+    --rom smb.nes --frames 900 --input 60/40x3:start --screenshot 300,last --audio
+```
+
+Maven can run it too, and is the shorter thing to type once:
+
+```sh
+mvn -q compile exec:exec@headless -Dmynes.args="--rom smb.nes --frames 900 --screenshot last"
+```
+
+The jar is worth building for anything run more than a few times: Maven takes a couple of seconds
+to get going against the jar's third of one. `--headless --help` has every option; the rest of this
+section is what is worth knowing before reading it.
+
+Everything lands in `target/headless` unless `--out` says otherwise: `report.json`,
+`frame-000300.png` and friends, `audio.wav`, and a `.bin` for each `--dump`. The report is printed
+as well, so `--report - | jq .` works.
+
+### Saying what to press
+
+Left alone, most cartridges never start. Super Mario Bros., Super Mario Bros. 3 and Tetris all sit
+on their title screens for as long as anyone cares to wait, drawing the same picture and writing
+nothing to the sound registers; only Super Mario Bros. 2 plays untouched. A run with no input is a
+run of the game's menu.
+
+```
+--input 60:start              press on frame 60
+--input 200-400:right         hold from frame 200 until frame 400, 400 excluded
+--input 60/40:start           press on 60, then every 40 frames after it
+--input 60/40x3:start         the same, but only three times
+--input 60/40x3:start,400-900:right,500:a
+```
+
+`60/40x3:start` gets all four of those cartridges into their first level. The `x3` matters: Start
+is also the pause button, so a pulse that keeps going pauses the game it just started. Buttons are
+`a b select start up down left right`, joined with `+`, and no spec ever contains a space.
+
+### What comes back
+
+The report says where the machine ended up -- the CPU and PPU registers, the cartridge and its
+mapper, palette RAM -- and, for anything that cannot look at the picture, describes it: a hash of
+the visible 224 lines, how many colours are in it, whether it is one flat colour, and how many
+frames differed from the frame before them. That last number is the one that catches a game that
+never got past its menu.
+
+Three questions can be asked up front instead of read out afterwards, and a run that answers any of
+them wrong exits 4:
+
+```sh
+java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless --rom smb.nes \
+    --frames 900 --input 60/40x3:start --expect-not-blank --expect-audio --expect-motion 100
+```
+
+Anything more particular than those three belongs in `jq` over the report. The other exit codes are
+0 for a run that finished, 2 for a command line that could not be read, 3 for `--timeout`, 5 for a
+file that is not a cartridge, and 1 for anything else.
+
+Those numbers only survive the jar. Run through Maven, any of them fails the build, and what comes
+back is Maven's own 1 -- so a script that wants to tell a timeout from a failed expectation should
+either use the jar or read `exitCode` out of the report.
+
+### The same command twice
+
+Nothing in the machine reads a clock or a random number -- open bus decay is counted in frames and
+OAM decay in dots -- so the same ROM, input and frame count produce identical artifacts on every
+run and every computer. Everything that legitimately differs lives under `host`:
+
+```sh
+diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)
+```
+
+That is what makes the frame hash worth writing down, and what makes starting again from power on
+cheap enough that there is nothing to keep alive between runs.
+
+### Taking commands
+
+When the question is not yet known well enough to write down -- which frame does the title screen
+land on, is that address the score -- `--interactive` reads commands on standard input and answers
+each with a line of JSON. A whole session can be piped in at once:
+
+```sh
+printf 'run 60\nscreenshot title.png\npress start\nrun-until-change 300\nread 0x0075 4\nquit\n' \
+  | java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless --rom smb.nes --interactive
+```
+
+`help` lists the commands. A command that cannot be read is answered with an error and the session
+carries on, because the state built up over a hundred frames is worth more than the typo after it.
 
 ## Tests
 

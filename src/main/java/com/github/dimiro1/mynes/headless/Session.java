@@ -1,0 +1,381 @@
+package com.github.dimiro1.mynes.headless;
+
+import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.video.FrameAnalysis;
+import com.github.dimiro1.mynes.video.FrameRenderer;
+
+import javax.imageio.ImageIO;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+/**
+ * A machine being run by hand, with somebody taking notes.
+ * <p>
+ * This is what the two headless modes share. The one-shot run walks a schedule over it and the
+ * interactive mode takes commands against it, but neither of them knows how to clock a NES or what
+ * a frame hash is, and this does not know which of the two is driving.
+ * <p>
+ * The frame loop is deliberately the same shape as the one in
+ * {@link com.github.dimiro1.mynes.ui.EmulatorRunner}, down to using the PPU's frame counter as the
+ * only frame-complete signal. What is missing from it is the whole point: no pacing, because there
+ * is no display to keep in step with; no {@link com.github.dimiro1.mynes.ui.AudioOutput}, because
+ * opening a sound card would make the run depend on the computer it ran on; and no
+ * {@link com.github.dimiro1.mynes.ui.ScreenComponent}, because nobody is watching.
+ */
+public final class Session {
+    /**
+     * Where the APU's samples land on their way to being counted, and to the WAV file if one was
+     * asked for. A frame is about 735 of them.
+     */
+    private static final int AUDIO_BUFFER_SAMPLES = 4096;
+
+    /**
+     * What one frame looked like.
+     *
+     * @param number  frames since power on, counting the one just finished.
+     * @param hash    a hash of the visible picture, {@link FrameAnalysis#hash(int[])}.
+     * @param changed whether that picture differs from the frame before it.
+     */
+    public record Frame(long number, long hash, boolean changed) {
+    }
+
+    /**
+     * What the sound has been doing.
+     *
+     * @param samples      how many samples the APU has produced.
+     * @param peak         the loudest of them, 0 to 1.
+     * @param rms          the root mean square of them, 0 to 1, which is closer to how loud it
+     *                     actually sounded.
+     * @param silentFrames how many frames produced nothing but silence.
+     */
+    public record AudioStats(long samples, double peak, double rms, long silentFrames) {
+    }
+
+    private final NES nes;
+    private final int[] palette;
+    private final WavWriter wav;
+
+    private final short[] samples = new short[AUDIO_BUFFER_SAMPLES];
+
+    /**
+     * The sound of the whole run, which is what the report describes.
+     */
+    private final Accumulator total = new Accumulator();
+
+    /**
+     * The sound since somebody last asked, which is what the interactive mode's audio command
+     * describes. Two of them rather than one, because "was there any sound at all?" and "did
+     * pressing Start make a noise?" are different questions and a run wants both answered.
+     */
+    private final Accumulator window = new Accumulator();
+
+    private long previousHash;
+    private long frameChanges;
+    private long lastChangeFrame;
+
+    private int buttons;
+
+    /**
+     * @param nes     the machine, already built from a cartridge.
+     * @param palette 512 packed ARGB entries, which is what a screenshot is drawn with.
+     * @param wav     where to write the sound, or null to only count it.
+     */
+    public Session(final NES nes, final int[] palette, final WavWriter wav) {
+        this.nes = nes;
+        this.palette = palette;
+        this.wav = wav;
+        this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
+    }
+
+    public NES nes() {
+        return nes;
+    }
+
+    public long frame() {
+        return nes.getPPU().getFrame();
+    }
+
+    public int buttons() {
+        return buttons;
+    }
+
+    /**
+     * Holds these buttons down from the next frame until told otherwise.
+     */
+    public void setButtons(final int mask) {
+        buttons = mask;
+        nes.getController1().setButtons(mask);
+    }
+
+    /**
+     * The console's Reset button.
+     */
+    public void reset() {
+        nes.reset();
+    }
+
+    /**
+     * Runs the machine until the PPU finishes a frame, then writes down what happened.
+     * <p>
+     * One tick is three dots, so this can overshoot the frame boundary by up to two of them -- at
+     * most the first pixel of the next frame arrives early, on scanline 0, which is under the
+     * overscan crop the hash is taken through.
+     */
+    public Frame advanceFrame() throws IOException {
+        var ppu = nes.getPPU();
+        var completed = ppu.getFrame();
+
+        do {
+            nes.tick();
+        } while (ppu.getFrame() == completed);
+
+        collectAudio();
+
+        var hash = FrameAnalysis.hash(ppu.getFrameBuffer());
+        var changed = hash != previousHash;
+        previousHash = hash;
+
+        if (changed) {
+            frameChanges++;
+            lastChangeFrame = ppu.getFrame();
+        }
+
+        return new Frame(ppu.getFrame(), hash, changed);
+    }
+
+    /**
+     * How many frames differed from the frame before them.
+     * <p>
+     * This is the signal that answers "is anything happening at all?", and it is the one that
+     * catches a game still sitting on its title screen. A program counter that has stopped moving
+     * would not: sampled at a frame boundary, almost every game is idling in the same one
+     * instruction loop waiting for its next interrupt.
+     */
+    public long frameChanges() {
+        return frameChanges;
+    }
+
+    /**
+     * How long the picture has been standing still.
+     */
+    public long framesSinceLastChange() {
+        return frame() - lastChangeFrame;
+    }
+
+    /**
+     * The sound of the whole run so far. Never reset, so a report describes everything that
+     * happened whatever anybody asked along the way.
+     */
+    public AudioStats audioStats() {
+        return total.snapshot();
+    }
+
+    /**
+     * The sound since {@link #markAudio()} was last called, or since power on.
+     */
+    public AudioStats audioSinceMark() {
+        return window.snapshot();
+    }
+
+    /**
+     * Starts the shorter of the two readings again from here.
+     */
+    public void markAudio() {
+        window.reset();
+    }
+
+    /**
+     * Looks at the picture as it stands.
+     */
+    public FrameAnalysis analyse() {
+        return FrameAnalysis.of(nes.getPPU().getFrameBuffer());
+    }
+
+    /**
+     * Writes the picture as it stands to a PNG.
+     *
+     * @param path         where to write it. Its directory is created if it is not there.
+     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param scale        how many times to magnify.
+     */
+    public void screenshot(final Path path, final boolean cropOverscan, final int scale)
+            throws IOException {
+        var image = FrameRenderer.render(
+                nes.getPPU().getFrameBuffer(), palette, cropOverscan, scale);
+
+        var parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
+        ImageIO.write(image, "png", path.toFile());
+    }
+
+    // ============================================================================ reading memory
+
+    /**
+     * Reads the CPU's address space without side effects.
+     */
+    public int[] readCPU(final int address, final int count) {
+        var out = new int[count];
+
+        for (var i = 0; i < count; i++) {
+            out[i] = nes.getMemory().peek((address + i) & 0xFFFF);
+        }
+
+        return out;
+    }
+
+    /**
+     * Reads the PPU's address space -- the pattern tables and the nametables -- without side
+     * effects, and in particular without telling the mapper what was looked at.
+     *
+     * @see com.github.dimiro1.mynes.VRAM#peek(int)
+     */
+    public int[] readPPU(final int address, final int count) {
+        var out = new int[count];
+
+        for (var i = 0; i < count; i++) {
+            out[i] = nes.getPPU().peekVRAM((address + i) & 0x3FFF);
+        }
+
+        return out;
+    }
+
+    public int[] readOAM(final int address, final int count) {
+        var out = new int[count];
+
+        for (var i = 0; i < count; i++) {
+            out[i] = nes.getPPU().peekOAM((address + i) & 0xFF);
+        }
+
+        return out;
+    }
+
+    public int[] readPalette() {
+        var out = new int[32];
+
+        for (var i = 0; i < out.length; i++) {
+            out[i] = nes.getPPU().peekPalette(i);
+        }
+
+        return out;
+    }
+
+    /**
+     * The bytes of one of the things {@code --dump} can name.
+     *
+     * @throws UsageException if it names nothing.
+     */
+    public byte[] dump(final String what) {
+        var values = switch (what) {
+            case "ram" -> nes.getMemory().getInternalRAM();
+            case "oam" -> readOAM(0, 256);
+            case "palette" -> readPalette();
+            case "nametables" -> readPPU(0x2000, 0x1000);
+            case "prgram" -> readCPU(0x6000, 0x2000);
+            case "chr" -> readPPU(0x0000, 0x2000);
+            default -> throw new UsageException(
+                    "\"" + what + "\" is not something to dump. They are "
+                            + String.join(", ", DUMPS) + ".");
+        };
+
+        var bytes = new byte[values.length];
+
+        for (var i = 0; i < values.length; i++) {
+            bytes[i] = (byte) values[i];
+        }
+
+        return bytes;
+    }
+
+    /**
+     * Everything {@link #dump} understands, in the order a report lists them.
+     */
+    public static final List<String> DUMPS =
+            List.of("ram", "oam", "palette", "nametables", "prgram", "chr");
+
+    // ================================================================================== internals
+
+    private void collectAudio() throws IOException {
+        var count = nes.getAPU().drainSamples(samples);
+
+        if (count == 0) {
+            total.endFrame(true);
+            window.endFrame(true);
+            return;
+        }
+
+        var silent = true;
+
+        for (var i = 0; i < count; i++) {
+            if (samples[i] != 0) {
+                silent = false;
+            }
+
+            total.add(samples[i]);
+            window.add(samples[i]);
+        }
+
+        total.endFrame(silent);
+        window.endFrame(silent);
+
+        if (wav != null) {
+            wav.write(samples, count);
+        }
+    }
+
+    /**
+     * Sound counted as it goes past, so that a run of any length costs the same four fields.
+     */
+    private static final class Accumulator {
+        private long samples;
+        private long peak;
+        private double sumSquares;
+        private long silentFrames;
+
+        void add(final short sample) {
+            var magnitude = Math.abs((long) sample);
+
+            if (magnitude > peak) {
+                peak = magnitude;
+            }
+
+            sumSquares += (double) sample * sample;
+            samples++;
+        }
+
+        void endFrame(final boolean silent) {
+            if (silent) {
+                silentFrames++;
+            }
+        }
+
+        AudioStats snapshot() {
+            var rms = samples == 0 ? 0.0 : Math.sqrt(sumSquares / samples) / Short.MAX_VALUE;
+
+            return new AudioStats(
+                    samples,
+                    round(peak / (double) Short.MAX_VALUE),
+                    round(rms),
+                    silentFrames);
+        }
+
+        void reset() {
+            samples = 0;
+            peak = 0;
+            sumSquares = 0;
+            silentFrames = 0;
+        }
+    }
+
+    /**
+     * Six decimal places, which is past the point where more of them would say anything about a
+     * sixteen bit sample, and keeps two runs of the same command producing the same report.
+     */
+    private static double round(final double value) {
+        return Math.round(value * 1_000_000.0) / 1_000_000.0;
+    }
+}

@@ -17,6 +17,11 @@
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
         <main.class>com.github.dimiro1.mynes.ui.Main</main.class>
+
+        <!-- What `mvn compile exec:exec@headless` passes to the headless mode. Declared empty so
+             that leaving it off is an empty argument list rather than an uninterpolated
+             ${mynes.args} arriving as a flag nobody recognises. -->
+        <mynes.args></mynes.args>
     </properties>
 
     <dependencies>
@@ -51,6 +56,14 @@
             <version>26.1.0</version>
         </dependency>
 
+        <!-- Writes the headless mode's reports, and parses the Tom Harte SingleStepTests
+             fixtures the CPU is checked against. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.22.1</version>
+        </dependency>
+
         <!-- Test Dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -68,13 +81,6 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
             <version>6.1.3</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- Parses the Tom Harte SingleStepTests JSON fixtures -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>2.22.1</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -113,14 +119,26 @@
                 </configuration>
             </plugin>
 
-            <!-- Exec Maven Plugin, so `mvn compile exec:exec` launches the emulator UI -->
+            <!-- Exec Maven Plugin, giving the emulator's two shapes one command each:
+
+                   mvn -q compile exec:exec               the window
+                   mvn -q compile exec:exec@headless -Dmynes.args="..."     no window
+
+                 Both forks of the same goal, and deliberately not exec:java for the second, which
+                 would be the obvious choice. exec:java cannot read this plugin's configuration at
+                 all: its own arguments parameter is a plain String array, so the <classpath/>
+                 element the window needs stops it before it starts.
+
+                 The headless side passes its flags as one interpolated string through
+                 <commandlineArgs>, which the plugin splits itself, honouring quotes. That is the
+                 only route a user's arguments can take: an <argument> is one argv element whatever
+                 whitespace is inside it, and setting the exec.args property instead would throw
+                 away the whole list it was meant to extend, %classpath included. -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.1</version>
                 <configuration>
-                    <!-- exec:exec forks the java launcher. The exec:java goal cannot be used:
-                         it reflects for main(String[]), which Main does not declare. -->
                     <executable>java</executable>
                     <arguments>
                         <!-- FlatLaf loads a native library, which the JDK warns about
@@ -131,6 +149,17 @@
                         <argument>${main.class}</argument>
                     </arguments>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>headless</id>
+                        <configuration>
+                            <!-- No native access to grant: nothing headless loads the look and
+                                 feel. java.awt.headless is set by Main itself, so that the jar and
+                                 this take the same route. -->
+                            <commandlineArgs>-classpath %classpath ${main.class} --headless ${mynes.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Maven Assembly Plugin for creating distributions -->

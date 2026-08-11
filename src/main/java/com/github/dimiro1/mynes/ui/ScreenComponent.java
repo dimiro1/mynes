@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.video.FrameRenderer;
 
 import javax.swing.*;
 import java.awt.*;
@@ -24,19 +25,10 @@ import java.awt.image.DataBufferInt;
  * 61440 array lookups, sixty times a second -- tens of microseconds, so neither side waits for
  * long.
  * <p>
- * The picture is cropped: a real television hides roughly the outer eight scanlines behind the
- * bezel, and games rely on it, drawing partial tiles and scroll seams up there. Showing the whole
- * 240 lines shows that mess.
+ * The picture is cropped, by {@link FrameRenderer#OVERSCAN_TOP} and its neighbours, which is also
+ * where the reason for it is written down.
  */
 public class ScreenComponent extends JComponent {
-    /**
-     * Scanlines hidden at the top and the bottom of the picture, leaving 224 visible.
-     */
-    private static final int OVERSCAN_TOP = 8;
-    private static final int OVERSCAN_BOTTOM = 8;
-
-    private static final int VISIBLE_HEIGHT = PPU.SCREEN_HEIGHT - OVERSCAN_TOP - OVERSCAN_BOTTOM;
-
     /**
      * How much the picture is magnified when the window first opens. 256x224 is tiny on a modern
      * display; the window is resizable from there.
@@ -72,7 +64,7 @@ public class ScreenComponent extends JComponent {
 
     public ScreenComponent() {
         setPreferredSize(new Dimension(
-                PPU.SCREEN_WIDTH * DEFAULT_SCALE, VISIBLE_HEIGHT * DEFAULT_SCALE));
+                PPU.SCREEN_WIDTH * DEFAULT_SCALE, FrameRenderer.VISIBLE_HEIGHT * DEFAULT_SCALE));
         setOpaque(true);
     }
 
@@ -143,9 +135,9 @@ public class ScreenComponent extends JComponent {
             // Uniform scale, centred, so the aspect ratio survives a resize in either direction.
             var scale = Math.min(
                     getWidth() / (double) PPU.SCREEN_WIDTH,
-                    getHeight() / (double) VISIBLE_HEIGHT);
+                    getHeight() / (double) FrameRenderer.VISIBLE_HEIGHT);
             var width = (int) (PPU.SCREEN_WIDTH * scale);
-            var height = (int) (VISIBLE_HEIGHT * scale);
+            var height = (int) (FrameRenderer.VISIBLE_HEIGHT * scale);
             var x = (getWidth() - width) / 2;
             var y = (getHeight() - height) / 2;
 
@@ -153,7 +145,8 @@ public class ScreenComponent extends JComponent {
                 g2.drawImage(
                         image,
                         x, y, x + width, y + height,
-                        0, OVERSCAN_TOP, PPU.SCREEN_WIDTH, PPU.SCREEN_HEIGHT - OVERSCAN_BOTTOM,
+                        0, FrameRenderer.OVERSCAN_TOP,
+                        PPU.SCREEN_WIDTH, FrameRenderer.VISIBLE_BOTTOM,
                         null);
             }
         } finally {

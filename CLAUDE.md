@@ -1,0 +1,122 @@
+# Working on MyNES
+
+A NES emulator in Java 25, built with Maven. `mvn -B test` runs everything.
+
+## Seeing what the emulator does
+
+**Use headless mode.** Do not write a harness that reaches into `GameUIFrame`'s private fields, and
+do not photograph the screen with `java.awt.Robot`. Everything those used to do is a flag now, and
+a flag survives a refactor.
+
+Build the jar once, then run it as often as you like:
+
+```sh
+mvn -B package -DskipTests
+JAR=target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
+
+java -jar $JAR --headless --rom ROM.nes --frames 900 \
+    --input 60/40x3:start --screenshot 300,last --audio --dump ram
+```
+
+`java -jar $JAR --headless --help` lists every option. Maven can run it too --
+`mvn -q compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"` -- but it costs a
+couple of seconds a run against the jar's third of one, so build the jar for anything iterative.
+`mvn -q compile exec:exec` opens the window, which a cloud workspace has nowhere to put.
+
+### What you get, and where
+
+Everything under `--out`, which defaults to `target/headless`:
+
+| File | What it is |
+|---|---|
+| `report.json` | Where the machine ended up, and what the picture and the sound were like. Also printed, so `--report - \| jq .` works. |
+| `frame-000300.png` | The picture at that frame. **Read these** -- it is the only way to see whether a change actually worked. |
+| `audio.wav` | The APU's output, with `--audio`. Peak, RMS and silent-frame counts are in the report either way. |
+| `ram.bin`, `oam.bin`, … | With `--dump ram,oam,palette,nametables,prgram,chr` or `--dump all`. |
+
+The report describes the picture for you: `video.finalFrame.blank` (one flat colour, which is what a
+machine that never started looks like), `uniqueColours`, `topColours`, a `hash` of the visible 224
+lines, and `video.frameChanges` -- how many frames differed from the one before. That last number is
+the one that catches a game sitting on its menu.
+
+### A game will not start unless you press something
+
+Left alone, **Super Mario Bros., Super Mario Bros. 3 and Tetris never leave their title screens** --
+same picture forever, nothing written to the sound registers. Only Super Mario Bros. 2 plays
+untouched. A run with no `--input` is a run of the menu, and an APU that looks completely dead is
+usually a game nobody asked to play.
+
+`--input 60/40x3:start` gets all four past their menus. The `x3` matters: Start is also the pause
+button, so a pulse that keeps going pauses the game it just started.
+
+```
+60:start          press on frame 60
+200-400:right     hold from 200 until 400, 400 excluded
+60/40:start       press on 60, then every 40 frames
+60/40x3:start     the same, three times only
+```
+
+Combine with `+` (`a+right`) and separate with commas. No spec contains a space.
+
+### Exploring rather than checking
+
+When you do not yet know what to ask for, `--interactive` takes commands on standard input and
+answers each with one line of JSON. Pipe a whole session in:
+
+```sh
+printf 'run 60\nscreenshot /tmp/title.png\npress start\nrun-until-change 300\nstate\nquit\n' \
+  | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+`run-until-change` answers "which frame does something happen on". `help` lists the rest.
+
+### Failing on purpose
+
+`--expect-not-blank`, `--expect-audio` and `--expect-motion N` make a run exit 4 when they do not
+hold, which is what to use in a script. Anything more particular belongs in `jq` over the report.
+Other codes: 2 a bad command line, 3 a timeout, 5 not a cartridge, 1 anything else.
+
+Those numbers only survive the jar. Through Maven any of them fails the build and you get Maven's
+own 1 back, so read `exitCode` out of the report if you need to tell them apart.
+
+### It is deterministic
+
+Nothing in the machine reads a clock or a random number, so the same ROM, input and frame count give
+identical bytes every time. Everything that legitimately varies is under `host`, so
+`diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)` compares two runs. Rely on this: a frame
+hash is a fair regression test, and starting again from power on is cheap enough that there is never
+a reason to keep a session alive.
+
+## House style
+
+The code has a strong voice. Match it rather than the language's defaults.
+
+- **Javadoc says *why*, not *what*.** `getFrame()` needs no comment; the reason the NMI is sampled
+  one dot into `NES.tick()` needs three paragraphs, and has them. If a comment restates the code,
+  delete it. If a decision would look wrong to the next reader, explain it where they will be
+  standing.
+- **British spelling**: `colour`, `colourise`, `magnitude`. There is a `NESPalette.colours()`.
+- `var` for locals, `final` on parameters and fields.
+- **No new runtime dependencies without asking.** There are five and each one earns its place.
+- slf4j loggers are named with a short string -- `"UI"`, `"EMU"`, `"HEADLESS"` -- not with a class.
+- Tests are `class FooTests`, package-private, no `@DisplayName`, with method names that read as
+  sentences: `aFrameIsColouredThroughTheChosenPalette`, `theCropTakesEightScanlinesFromEachEnd`.
+
+## Layout
+
+```
+mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, controllers
+mynes/mappers/    mappers 0 to 4
+mynes/video/      colour indices to pixels: the overscan crop and the frame renderer
+mynes/headless/   the command line mode
+mynes/ui/         the Swing window, the palettes, the key bindings, the CHR viewer
+```
+
+The core knows nothing about the front end. `Cart.load` takes a `byte[]`, `NES` has no UI
+dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never RGB, because
+which RGB is a question about televisions. Keep it that way: nothing in `mynes` or `mynes/headless`
+should reach into `mynes/ui`, save for the palette tables.
+
+`peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
+address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that
+dumped memory through `read` would fire interrupts the game never asked for. Use `peek`.
