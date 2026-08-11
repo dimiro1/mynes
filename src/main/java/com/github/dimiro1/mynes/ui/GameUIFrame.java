@@ -114,6 +114,10 @@ public class GameUIFrame extends JFrame {
         keyboardInput = new KeyboardInput(this, config.keyBindings());
         screen.setPalette(config.palette());
 
+        // Before init()'s pack(), so the window opens at the size it was left at rather than opening
+        // at the default and then jumping.
+        screen.setScale(config.screenScale());
+
         init();
     }
 
@@ -206,6 +210,8 @@ public class GameUIFrame extends JFrame {
 
         JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
         settingsMenu.add(settingsMenuPalette);
+
+        settingsMenu.add(screenSizeMenu());
 
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
@@ -445,6 +451,56 @@ public class GameUIFrame extends JFrame {
         }
 
         return menu;
+    }
+
+    /**
+     * Builds the Screen Size submenu, one item per size {@link ScreenScale} offers.
+     * <p>
+     * No accelerators, for the same reason the save state slots have none: Command-1 to Command-4 is
+     * spoken for everywhere else, and unlike a slot this is not something anybody reaches for in the
+     * middle of a jump.
+     */
+    private JMenu screenSizeMenu() {
+        var menu = new JMenu("Screen Size");
+        menu.setMnemonic(KeyEvent.VK_S);
+
+        var group = new ButtonGroup();
+
+        for (var scale : ScreenScale.values()) {
+            var item = new JRadioButtonMenuItem(scale.label(), scale == config.screenScale());
+
+            item.addActionListener(e -> {
+                config.setScreenScale(scale);
+                saveConfig();
+                applyScreenScale(scale);
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Resizes the window around the picture.
+     * <p>
+     * The screen is the only thing in the frame, so packing it around the component's new preferred
+     * size is the whole of it. The window is left where it is rather than centred again: stepping
+     * through the sizes to compare them would otherwise walk the window across the display.
+     * <p>
+     * At 1x the window comes out wider than the picture, because five menus will not fit in 256
+     * pixels and the menu bar is what the frame is then packed to. The picture is still drawn at
+     * exactly one screen pixel per NES pixel, centred, with black either side of it.
+     */
+    private void applyScreenScale(final ScreenScale scale) {
+        screen.setScale(scale);
+
+        // A maximized window would keep the size the window manager gave it and quietly ignore the
+        // one just asked for, leaving a tick in the menu against a size nobody is looking at.
+        setExtendedState(Frame.NORMAL);
+
+        pack();
     }
 
     /**

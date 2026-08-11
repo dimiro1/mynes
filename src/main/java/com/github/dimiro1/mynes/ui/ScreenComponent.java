@@ -29,12 +29,6 @@ import java.awt.image.DataBufferInt;
  * where the reason for it is written down.
  */
 public class ScreenComponent extends JComponent {
-    /**
-     * How much the picture is magnified when the window first opens. 256x224 is tiny on a modern
-     * display; the window is resizable from there.
-     */
-    private static final int DEFAULT_SCALE = 2;
-
     private final Object frameLock = new Object();
     private final BufferedImage image = new BufferedImage(
             PPU.SCREEN_WIDTH, PPU.SCREEN_HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -63,9 +57,24 @@ public class ScreenComponent extends JComponent {
     private int[] palette = Palettes.defaultPalette().colours();
 
     public ScreenComponent() {
-        setPreferredSize(new Dimension(
-                PPU.SCREEN_WIDTH * DEFAULT_SCALE, FrameRenderer.VISIBLE_HEIGHT * DEFAULT_SCALE));
+        setScale(ScreenScale.defaultScale());
         setOpaque(true);
+    }
+
+    /**
+     * Asks to be drawn at {@code scale} times the size of the NES's visible picture.
+     * <p>
+     * A request rather than a size: this is the preferred size, and it is the window packing itself
+     * around the component that makes it the real one. Nothing about the drawing changes, which is
+     * the point -- {@link #paintComponent} works from whatever size the component ends up at, so a
+     * window dragged to some size in between keeps working exactly as it did.
+     */
+    public void setScale(final ScreenScale scale) {
+        setPreferredSize(new Dimension(
+                PPU.SCREEN_WIDTH * scale.factor(),
+                FrameRenderer.VISIBLE_HEIGHT * scale.factor()));
+
+        revalidate();
     }
 
     /**
