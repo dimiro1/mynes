@@ -218,6 +218,23 @@ class Mapper4Tests {
 
             assertEquals(0x42, mapper.prgRAMRead(0x6123));
         }
+
+        /**
+         * Why {@link Mapper#prgRAM()} exists at all. A battery is soldered to the chip, so what it
+         * holds has nothing to do with whether the enable line happens to be low -- and a game
+         * switches that line off around anything that might crash, which is exactly the moment a
+         * save file is most likely to be written.
+         */
+        @Test
+        void theSaveRamIsTheChipRatherThanTheBus() {
+            var mapper = mmc3();
+            mapper.prgRAMWrite(0x6123, 0x42);
+
+            mapper.prgWrite(0xA001, 0x00);
+
+            assertEquals(0, mapper.prgRAMRead(0x6123), "the bus sees nothing");
+            assertEquals(0x42, Byte.toUnsignedInt(mapper.prgRAM()[0x0123]), "the chip still has it");
+        }
     }
 
     @Nested

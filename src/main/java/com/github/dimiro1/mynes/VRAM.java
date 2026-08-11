@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
+import com.github.dimiro1.mynes.state.StateIO;
 
 /**
  * The PPU's own address bus.
@@ -102,6 +103,21 @@ public class VRAM {
      * @param address an address in $2000-$3EFF.
      * @return the index into {@link #ciram} that address names.
      */
+    /**
+     * The console's nametable RAM.
+     * <p>
+     * Package-private, and called only from {@link PPU#serialize}, because that mirrors how the
+     * object graph is wired: the PPU holds the only reference to this bus, so the nametables travel
+     * inside its chunk rather than getting one of their own. The other way round would mean
+     * inventing a public accessor for the array, which is the thing {@code peek} exists to avoid.
+     * <p>
+     * The mirroring is not saved here. {@link #ciramIndex} asks the mapper afresh on every access,
+     * so it arrives with the mapper's registers instead.
+     */
+    void serialize(final StateIO io) {
+        io.bytes(ciram);
+    }
+
     private int ciramIndex(final int address) {
         // $3000-$3EFF is a mirror of $2000-$2EFF, so only the low twelve bits matter.
         var addr = address & 0x0FFF;

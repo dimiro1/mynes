@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Represents a NES controller/joypad.
  */
@@ -39,4 +41,14 @@ public interface Controller {
      * @param buttons bitmask of pressed buttons
      */
     void setButtons(int buttons);
+
+    /**
+     * Reads or writes the chip, but not the hands holding it.
+     * <p>
+     * The shift register and the strobe belong to the machine and are saved. Which buttons are down
+     * is not: a save state cannot restore somebody's fingers, and a machine that came back with A
+     * held would never see it released, because the keyboard it is not being pressed on has no
+     * release to send.
+     */
+    void serialize(StateIO io);
 }

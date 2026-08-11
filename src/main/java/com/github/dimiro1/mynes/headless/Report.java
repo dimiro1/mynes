@@ -65,7 +65,6 @@ public final class Report {
      * @param stoppedBecause  why it stopped.
      * @param wallClockMillis how long that took in real time.
      * @param startedAt       when it started.
-     * @param sha256          the cartridge's hash, so a report names the exact ROM.
      * @param screenshots     the frames photographed.
      * @param dumps           the memories written out.
      * @param expectations    what was asked of the run, and whether it held.
@@ -76,7 +75,6 @@ public final class Report {
             StoppedBecause stoppedBecause,
             long wallClockMillis,
             Instant startedAt,
-            String sha256,
             List<Long> screenshots,
             List<Dump> dumps,
             List<Expectation> expectations,
@@ -120,7 +118,7 @@ public final class Report {
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());
         cartridge.put("name", Path.of(cart.filename()).getFileName().toString());
-        cartridge.put("sha256", outcome.sha256());
+        cartridge.put("sha256", cart.sha256());
         cartridge.put("mapper", cart.mapperNumber());
         cartridge.put("prgROMBytes", cart.prgROM().length);
         cartridge.put("chrROMBytes", cart.chrROM().length);

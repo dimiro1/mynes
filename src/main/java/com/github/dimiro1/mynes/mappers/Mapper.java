@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * The cartridge, as the rest of the console sees it.
  * <p>
@@ -10,6 +12,11 @@ package com.github.dimiro1.mynes.mappers;
  * that in CPU addresses, so passing anything else would mean translating every wiki page.
  */
 public interface Mapper {
+
+    /**
+     * What {@link #prgRAM} hands back for a board with no RAM chip fitted.
+     */
+    byte[] NO_PRG_RAM = new byte[0];
 
     /**
      * Reads a single byte of PRG ROM.
@@ -48,6 +55,21 @@ public interface Mapper {
      * @param address an address in $6000-$7FFF.
      */
     default void prgRAMWrite(int address, int data) { /* No RAM on the board by default */ }
+
+    /**
+     * The cartridge's own RAM at $6000-$7FFF, as a battery would hold it: the live array, and not
+     * filtered through the chip's enable line.
+     * <p>
+     * That last part is the whole point. Reading the window through the bus comes back as zeros on
+     * a chip the game has switched off, and switching it off before anything risky is exactly what
+     * the enable line is there for -- so a save file taken that way would be blank precisely when
+     * it mattered most. The battery is soldered to the chip, not to the enable line.
+     *
+     * @return the eight kilobytes, or {@link #NO_PRG_RAM} on a board with no RAM fitted.
+     */
+    default byte[] prgRAM() {
+        return NO_PRG_RAM;
+    }
 
     /**
      * Reads a single byte from the CHAR ROM/RAM.
@@ -90,6 +112,21 @@ public interface Mapper {
      * hardware ignores this.
      */
     default void setIRQHandler(IRQHandler handler) { /* No interrupt hardware by default */ }
+
+    /**
+     * Reads or writes everything the board remembers: its registers, its PRG RAM, and its CHR RAM
+     * if it has any.
+     * <p>
+     * Abstract rather than a default no-op, unlike the rest of the optional hardware here. Those
+     * defaults all say "this board has no such thing", and there is no such thing as a board with
+     * no state -- even NROM has eight kilobytes of RAM in the window at $6000. A default would mean
+     * the next mapper someone adds ships with save states that silently lose every bank register,
+     * and the symptom would be a corrupted game rather than a compile error.
+     * <p>
+     * What the board is <em>currently doing to the /IRQ line</em> does not belong here: no mapper
+     * remembers that, and {@link com.github.dimiro1.mynes.BUS} keeps the level bit.
+     */
+    void serialize(StateIO io);
 
     /**
      * How this cartridge wires the console's nametable RAM.

@@ -270,12 +270,19 @@ public final class Session {
      * @throws UsageException if it names nothing.
      */
     public byte[] dump(final String what) {
+        // The cartridge's RAM is taken from the chip rather than read through the bus, because the
+        // window at $6000 comes back as zeros on a chip the game has switched off -- and switching
+        // it off around anything risky is precisely what a battery board's enable line is for. A
+        // board with no RAM fitted dumps nothing at all, which is the honest answer.
+        if (what.equals("prgram")) {
+            return nes.getBus().getMapper().prgRAM().clone();
+        }
+
         var values = switch (what) {
             case "ram" -> nes.getMemory().getInternalRAM();
             case "oam" -> readOAM(0, 256);
             case "palette" -> readPalette();
             case "nametables" -> readPPU(0x2000, 0x1000);
-            case "prgram" -> readCPU(0x6000, 0x2000);
             case "chr" -> readPPU(0x0000, 0x2000);
             default -> throw new UsageException(
                     "\"" + what + "\" is not something to dump. They are "

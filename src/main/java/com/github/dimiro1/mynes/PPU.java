@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
+import com.github.dimiro1.mynes.state.StateIO;
 
 import java.util.Arrays;
 
@@ -1486,6 +1487,101 @@ public class PPU {
     }
 
     // ================================================================ inspection
+
+    /**
+     * Reads or writes the chip, the nametable RAM behind it, and everything in flight.
+     * <p>
+     * The long tail here is what makes a save state land mid-frame rather than only between frames.
+     * A frame boundary is not a quiet moment for this chip: the background shift registers are
+     * holding two tiles, the sprite evaluation state machine is partway through a scan, and eight
+     * sprite output units are loaded for the line about to be drawn. All of it is on the list.
+     * <p>
+     * Three things deliberately are not:
+     * <ul>
+     *   <li><strong>The framebuffer</strong>, which travels as its own optional chunk. Every visible
+     *       pixel is rewritten every frame whether or not rendering is on, so it is not needed for
+     *       correctness -- only so that loading a state shows the picture it was taken on rather
+     *       than the one that was already on screen.</li>
+     *   <li><strong>The /NMI output</strong>, which is not a field at all: {@link #updateNMILine()}
+     *       computes it from {@link #vblankFlag} and {@link #ctrl}, so it is recomputed on the way
+     *       in rather than restored. The CPU's own latches are a different matter and are in its
+     *       chunk.</li>
+     *   <li><strong>The two layer switches</strong>, which belong to whoever is watching rather than
+     *       to the machine. Restoring them would hide a layer while the Debug menu still said it was
+     *       showing.</li>
+     * </ul>
+     * The two decay tables come with {@link #clock} and {@link #frame}, which is what they are
+     * measured against -- a table restored without its clock would decay at the wrong time.
+     *
+     * @see com.github.dimiro1.mynes.state.SaveState
+     */
+    public void serialize(final StateIO io) {
+        scanline = io.u16(scanline);
+        dot = io.u16(dot);
+        frame = io.u64(frame);
+        clock = io.u64(clock);
+        oddFrame = io.bool(oddFrame);
+        warmingUp = io.bool(warmingUp);
+
+        ctrl = io.u8(ctrl);
+        mask = io.u8(mask);
+        pendingMask = io.u8(pendingMask);
+        maskDelay = io.u8(maskDelay);
+        vblankFlag = io.bool(vblankFlag);
+        spriteZeroHit = io.bool(spriteZeroHit);
+        spriteOverflow = io.bool(spriteOverflow);
+        preventVBlankFlag = io.bool(preventVBlankFlag);
+
+        v = io.u16(v);
+        t = io.u16(t);
+        addressDelay = io.u8(addressDelay);
+        fineX = io.u8(fineX);
+        writeLatch = io.bool(writeLatch);
+        readBuffer = io.u8(readBuffer);
+
+        oamAddress = io.u8(oamAddress);
+        io.bytes(oam);
+        io.longs(oamRefreshedOn);
+        io.bytes(palette);
+
+        nameTableLatch = io.u8(nameTableLatch);
+        attributeLatch = io.u8(attributeLatch);
+        patternLowLatch = io.u8(patternLowLatch);
+        patternHighLatch = io.u8(patternHighLatch);
+        patternShiftLow = io.u16(patternShiftLow);
+        patternShiftHigh = io.u16(patternShiftHigh);
+        attributeShiftLow = io.u16(attributeShiftLow);
+        attributeShiftHigh = io.u16(attributeShiftHigh);
+
+        io.bytes(secondaryOAM);
+        evaluationSprite = io.u8(evaluationSprite);
+        evaluationByte = io.u8(evaluationByte);
+        evaluationSlot = io.u8(evaluationSlot);
+        evaluationLatch = io.u8(evaluationLatch);
+        evaluationStep = io.enumeration(evaluationStep, EvaluationStep.class);
+        overflowReadsLeft = io.u8(overflowReadsLeft);
+        firstSpriteExamined = io.u8(firstSpriteExamined);
+        spritesFound = io.u8(spritesFound);
+        spriteZeroOnNextLine = io.bool(spriteZeroOnNextLine);
+        spriteZeroOnThisLine = io.bool(spriteZeroOnThisLine);
+
+        spriteCount = io.u8(spriteCount);
+        io.bytes(spriteX);
+        io.bytes(spriteAttributes);
+        io.bytes(spritePatternLow);
+        io.bytes(spritePatternHigh);
+
+        openBus = io.u8(openBus);
+        io.longs(openBusRefreshedOn);
+
+        // The nametables, which live on the other side of the bus this chip owns. In here rather
+        // than in a chunk of their own because nothing else can reach them.
+        vram.serialize(io);
+
+        if (!io.saving()) {
+            updateNMILine();
+        }
+    }
 
     /**
      * The finished picture, 256 by 240 pixels.

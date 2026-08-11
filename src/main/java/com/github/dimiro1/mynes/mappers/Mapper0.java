@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Mapper 0, NROM: no bank switching at all.
  * <p>
@@ -66,6 +68,11 @@ public class Mapper0 implements Mapper {
     }
 
     @Override
+    public byte[] prgRAM() {
+        return prgRAM;
+    }
+
+    @Override
     public int charRead(final int address) {
         return Byte.toUnsignedInt(chr[address & 0x1FFF]);
     }
@@ -81,5 +88,20 @@ public class Mapper0 implements Mapper {
     @Override
     public Mirroring mirroring() {
         return mirroring;
+    }
+
+    /**
+     * No registers to save: the board has no bank switching, and the solder pad that sets its
+     * mirroring is not something a game can change. Only the two memories, and the pattern tables
+     * only when they are RAM -- the same branch on both sides, because the header hash matched, so
+     * the cartridge cannot have been ROM when this was written and RAM now.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        io.bytes(prgRAM);
+
+        if (chrIsRAM) {
+            io.bytes(chr);
+        }
     }
 }

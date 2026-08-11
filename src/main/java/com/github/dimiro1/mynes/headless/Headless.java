@@ -11,8 +11,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -135,7 +133,6 @@ public final class Headless {
                             outcome.stoppedBecause(),
                             wallClockMillis,
                             startedAt,
-                            sha256(image),
                             outcome.screenshots(),
                             dumps,
                             expectations,
@@ -323,19 +320,4 @@ public final class Headless {
         }
     }
 
-    private static String sha256(final byte[] image) {
-        try {
-            var digest = MessageDigest.getInstance("SHA-256").digest(image);
-            var hex = new StringBuilder(digest.length * 2);
-
-            for (var b : digest) {
-                hex.append(String.format("%02x", b));
-            }
-
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            // Every JRE has SHA-256; this is here because the API says it might not.
-            throw new IllegalStateException(e);
-        }
-    }
 }

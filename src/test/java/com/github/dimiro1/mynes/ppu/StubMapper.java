@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ppu;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.mappers.Mirroring;
+import com.github.dimiro1.mynes.state.StateIO;
 
 /**
  * A cartridge that is nothing but memory.
@@ -50,5 +51,15 @@ class StubMapper implements Mapper {
     @Override
     public Mirroring mirroring() {
         return mirroring;
+    }
+
+    /**
+     * Both memories, since both are writable here. The mirroring is not: a test sets it directly,
+     * and restoring it would undo that.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        io.bytes(prg);
+        io.bytes(chr);
     }
 }
