@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 
@@ -262,6 +263,31 @@ public final class Session {
         }
 
         return out;
+    }
+
+    /**
+     * Writes the whole machine to a file.
+     */
+    public void saveState(final Path path) throws IOException {
+        SaveState.write(nes, path);
+    }
+
+    /**
+     * Puts a machine back from a file.
+     * <p>
+     * Here rather than in {@link Headless} and {@link Repl} separately for one reason that is easy to
+     * miss: {@link #previousHash} is what {@link #frameChanges} is counted against, and after a load
+     * it describes a picture this machine no longer has. Left alone, the next frame would be reported
+     * as a change that never happened and every {@code frameChanges} in the report would be one out.
+     * Reseeding it belongs where it cannot be forgotten.
+     *
+     * @throws com.github.dimiro1.mynes.state.SaveStateException if the file will not load, in which
+     *                                                           case the machine is untouched.
+     */
+    public void loadState(final Path path) throws IOException {
+        SaveState.read(nes, path);
+
+        previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
     }
 
     /**

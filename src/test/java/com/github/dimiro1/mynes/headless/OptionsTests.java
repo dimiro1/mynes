@@ -6,6 +6,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -152,5 +153,40 @@ class OptionsTests {
     void theUsageMentionsBothWaysIn() {
         assertTrue(Options.usage().contains("exec:exec@headless"));
         assertTrue(Options.usage().contains("jar-with-dependencies"));
+    }
+
+    @Test
+    void theStateAndBatteryFilesAreWhereTheyWereNamed() {
+        var options = parse(
+                "--rom", "x.nes",
+                "--load-state", "in.mn", "--save-state", "out.mn",
+                "--sram-in", "in.sav", "--sram-out", "out.sav");
+
+        assertEquals(Path.of("in.mn"), options.loadState());
+        assertEquals(Path.of("out.mn"), options.saveState());
+        assertEquals(Path.of("in.sav"), options.sramIn());
+        assertEquals(Path.of("out.sav"), options.sramOut());
+    }
+
+    @Test
+    void aRunStartsAtPowerOnUnlessToldOtherwise() {
+        var options = parse("--rom", "x.nes");
+
+        assertNull(options.loadState());
+        assertNull(options.saveState());
+        assertNull(options.sramIn());
+        assertNull(options.sramOut());
+    }
+
+    @Test
+    void aStateFlagWithNothingAfterItIsRefused() {
+        assertThrows(UsageException.class, () -> parse("--rom", "x.nes", "--load-state"));
+        assertThrows(UsageException.class, () -> parse("--rom", "x.nes", "--sram-out"));
+    }
+
+    @Test
+    void theUsageExplainsThatABatteryFileIsTheInteroperableOne() {
+        assertTrue(Options.usage().contains("every other emulator"),
+                "somebody reading --help should learn that a .sav can come from anywhere");
     }
 }

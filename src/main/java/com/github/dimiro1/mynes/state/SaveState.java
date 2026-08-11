@@ -229,9 +229,10 @@ public final class SaveState {
 
         if (!header.romSHA256().equals(cart.sha256())) {
             throw new SaveStateException(
-                    "that save state was taken from another cartridge -- mapper "
-                            + header.mapperNumber() + ", " + header.romSHA256().substring(0, 12)
-                            + " -- and this one is " + cart.sha256().substring(0, 12) + ".");
+                    "that save state was taken from another cartridge. It belongs to mapper "
+                            + header.mapperNumber() + " " + header.romSHA256().substring(0, 12)
+                            + ", and the one in the machine is mapper " + cart.mapperNumber() + " "
+                            + cart.sha256().substring(0, 12) + ".");
         }
 
         var declared = readInt(file, OFFSET_BODY_LENGTH);

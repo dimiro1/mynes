@@ -34,6 +34,10 @@ import java.util.TreeSet;
  * @param palette          which measurement of the chip's colours to draw with.
  * @param audio            whether to write the sound to a file as well as counting it.
  * @param dumps            which memories to write out when the run ends.
+ * @param loadState        a save state to start from instead of power on, or null.
+ * @param saveState        where to write a save state when the run ends, or null.
+ * @param sramIn           a battery file to fill the cartridge's RAM from before starting, or null.
+ * @param sramOut          where to write that RAM when the run ends, or null.
  * @param expectNotBlank   the final picture must show more than one colour.
  * @param expectAudio      some sample must not have been silence.
  * @param expectMotion     at least this many frames must have differed from the one before, or -1.
@@ -60,6 +64,10 @@ public record Options(
         NESPalette palette,
         boolean audio,
         List<String> dumps,
+        Path loadState,
+        Path saveState,
+        Path sramIn,
+        Path sramOut,
         boolean expectNotBlank,
         boolean expectAudio,
         long expectMotion,
@@ -171,6 +179,22 @@ public record Options(
                                     one file each, under <out>. Palette RAM is in the report as
                                     well, being 32 bytes.
 
+            Saved games and save states
+              --sram-in FILE        Fill the cartridge's battery RAM from FILE before the run. Raw
+                                    8KB of $6000-$7FFF, which is what every other emulator writes,
+                                    so a save from one of them can be handed straight over. A
+                                    shorter file fills what it can and a longer one is cut.
+              --sram-out FILE       Write that RAM out when the run ends. Unlike the window, this
+                                    does not ask the cartridge whether it has a battery fitted: the
+                                    flag is the answer. Taken from the chip rather than read through
+                                    the bus, so a game that has switched the chip off still saves.
+              --load-state FILE     Start from a save state instead of from power on. It has to have
+                                    been taken from this exact ROM, and a run that starts this way
+                                    is not comparable with one that starts at power on -- the
+                                    report's run.state says which happened.
+              --save-state FILE     Write a save state when the run ends. Applied after --sram-in,
+                                    so a state's own copy of the cartridge RAM wins.
+
             Expectations. Each one that fails makes the run exit 4; the report says which. Anything
             more particular than these belongs in jq over the report.
               --expect-not-blank    The final picture must show more than one colour.
@@ -219,6 +243,10 @@ public record Options(
         var palette = Palettes.defaultPalette();
         var audio = false;
         var dumps = new LinkedHashSet<String>();
+        Path loadState = null;
+        Path saveState = null;
+        Path sramIn = null;
+        Path sramOut = null;
         var expectNotBlank = false;
         var expectAudio = false;
         var expectMotion = -1L;
@@ -254,6 +282,10 @@ public record Options(
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--audio" -> audio = true;
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
+                case "--load-state" -> loadState = Path.of(value(args, ++i, flag));
+                case "--save-state" -> saveState = Path.of(value(args, ++i, flag));
+                case "--sram-in" -> sramIn = Path.of(value(args, ++i, flag));
+                case "--sram-out" -> sramOut = Path.of(value(args, ++i, flag));
                 case "--expect-not-blank" -> expectNotBlank = true;
                 case "--expect-audio" -> expectAudio = true;
                 case "--expect-motion" -> expectMotion = positive(value(args, ++i, flag), flag);
@@ -295,6 +327,10 @@ public record Options(
                 palette,
                 audio,
                 List.copyOf(dumps),
+                loadState,
+                saveState,
+                sramIn,
+                sramOut,
                 expectNotBlank,
                 expectAudio,
                 expectMotion,

@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.dimiro1.mynes.state.SaveStateException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -36,6 +37,8 @@ public final class Repl {
             read-ppu ADDR [COUNT]      PPU bus: pattern tables and nametables
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
+            save-state PATH            write the whole machine to a file
+            load-state PATH            put one back, from this same ROM
             audio                      peak, RMS and silence since the last audio command
             help                       this
             quit                       stop
@@ -131,6 +134,8 @@ public final class Repl {
             case "read", "read-ppu" -> read(name, words);
             case "oam" -> oam(words);
             case "dump" -> dump(words);
+            case "save-state" -> saveState(words);
+            case "load-state" -> loadState(words);
             case "audio" -> audio();
             case "help" -> reply("help", node -> node.put("commands", HELP));
             default -> error(name, "\"" + name + "\" is not a command. Try help.");
@@ -330,6 +335,68 @@ public final class Repl {
             node.put("path", path.toString());
             node.put("bytes", bytes.length);
         });
+    }
+
+    /**
+     * A bookmark, which is what makes trying two things from the same place cheap: save, try one,
+     * load, try the other. The reply carries the frame and the picture hash like every other, so the
+     * answer to "where am I now" comes back with it.
+     */
+    private void saveState(final String[] words) throws IOException {
+        if (words.length < 2) {
+            throw new UsageException(
+                    "save-state wants somewhere to write it, as in \"save-state before.mn\".");
+        }
+
+        var path = Path.of(words[1]);
+
+        // A file that cannot be written is a bad command rather than the end of the session, the same
+        // as a misspelled address -- so it takes the UsageException route and gets answered with an
+        // error. Only a failure writing the *reply* is allowed to escape.
+        try {
+            var parent = path.getParent();
+
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+
+            session.saveState(path);
+        } catch (IOException | SaveStateException e) {
+            throw new UsageException("could not write " + path + ": " + e.getMessage());
+        }
+
+        reply("save-state", node -> {
+            node.put("path", path.toString());
+            node.put("bytes", sizeOf(path));
+        });
+    }
+
+    private void loadState(final String[] words) throws IOException {
+        if (words.length < 2) {
+            throw new UsageException(
+                    "load-state wants a file to read, as in \"load-state before.mn\".");
+        }
+
+        var path = Path.of(words[1]);
+
+        // Likewise, and doubly so here: the machine is untouched by a state that would not load, so
+        // there is a session left to carry on with. A hundred frames of setting something up is worth
+        // more than the typo that follows it.
+        try {
+            session.loadState(path);
+        } catch (IOException | SaveStateException e) {
+            throw new UsageException("could not load " + path + ": " + e.getMessage());
+        }
+
+        reply("load-state", node -> node.put("path", path.toString()));
+    }
+
+    private static long sizeOf(final Path path) {
+        try {
+            return Files.size(path);
+        } catch (IOException e) {
+            return -1;
+        }
     }
 
     /**
