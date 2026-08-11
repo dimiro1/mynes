@@ -32,12 +32,15 @@ A Work in Progress Nes emulator.
   of button presses, and writes out PNGs, a JSON report, memory dumps and a WAV -- or takes
   commands one at a time. The machine is deterministic, so the same command produces the same
   bytes every run;
+- Save states: the whole console to a file and back, nine slots per cartridge, on the command line
+  as well as in the window;
+- Battery-backed saves, in the `.sav` format every other emulator reads and writes;
 - Most of blargg tests are passing;
 - nestests is passing;
 - Per-opcode verification against the Tom Harte single step tests;
 
 Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM) and 4 (MMC3, with the scanline IRQ) are
-supported. There is no second player, no PAL timing and no save states.
+supported. There is no second player and no PAL timing.
 
 ## Screenshots
 
@@ -84,6 +87,8 @@ running with.
 | B | Z |
 | Start | Enter |
 | Select | Shift |
+| Quick Save | F5 |
+| Quick Load | F7 |
 
 Settings > Controller... remaps any of them: click a button, press the key you want on it. The
 change applies at once, no save button, and lands in `~/.mynes/config.properties` along with the
@@ -112,6 +117,33 @@ not told: a muted APU still runs and still raises its interrupts, so a game soun
 same either way. Fast forwarding cannot hand a sound card audio faster than real time, so what does
 not fit is dropped and the sound comes out chopped rather than sped up. A computer with no sound
 device runs silently and says so in the log.
+
+## Saving
+
+Two different files, and they are not variations on one idea.
+
+**Save states** are the whole console frozen to a file: every register, both RAMs, the palettes, the
+half-executed instruction, where the beam is. Machine > Save State and Machine > Load State each hold
+nine slots, `F5` and `F7` are the current slot, and picking a slot from either menu makes it the
+current one. They live beside the ROM as `GAME.mn1` to `GAME.mn9`, and the Load State menu labels each
+one with the frame it was taken on and when.
+
+There is no standard format for this and there never has been -- cross-emulator save states have been
+proposed on NESdev more than once and abandoned every time, because every emulator models the
+pipeline differently and there are hundreds of mappers. So MyNES states load in MyNES and nowhere
+else, and a state taken from one cartridge is refused by another.
+
+**Battery-backed saves** are the eight kilobytes a coin cell kept alive on the cartridge, and this
+one *is* standard: `GAME.sav`, raw bytes, no header, no version. FCEUX, Nestopia and Mesen all read
+and write exactly this, so a save from any of them can be dropped next to the ROM and simply works.
+It is read when the cartridge is loaded and written when the window closes, when the cartridge
+changes, and once a minute if the game has saved anything since. Only cartridges whose header claims
+a battery get one; the RAM at $6000 that a test ROM prints its results through is scratch, and
+persisting it would invent saves nobody made.
+
+That difference is worth keeping in mind. A save state is a bookmark, and losing one costs a few
+minutes. A `.sav` is fifty hours of Zelda, which is why it is the one written through a temporary and
+a move so that a crash halfway through cannot take both it and its replacement.
 
 ## Headless
 
@@ -156,6 +188,32 @@ run of the game's menu.
 `60/40x3:start` gets all four of those cartridges into their first level. The `x3` matters: Start
 is also the pause button, so a pulse that keeps going pauses the game it just started. Buttons are
 `a b select start up down left right`, joined with `+`, and no spec ever contains a space.
+
+### Starting somewhere other than power on
+
+A headless run normally begins at power on, which is what makes two of them comparable. `--load-state`
+starts from a save state instead, and `--save-state` writes one at the end:
+
+```sh
+JAR=target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
+
+# Get past the title screen once, and keep the machine as it was.
+java -jar $JAR --headless --rom smb.nes --frames 200 --input 60/40x3:start \
+    --save-state level-1.mn
+
+# Then start every later run from there, in a fraction of the time.
+java -jar $JAR --headless --rom smb.nes --load-state level-1.mn --frames 300 \
+    --input 20-300:right --screenshot last
+```
+
+The report's `run.state` says which of the two happened, because a run that began from a state and one
+that began at power on are not two measurements of the same thing. The state has to have come from the
+same ROM: a mismatch is exit 2, on the grounds that the file named was the wrong one.
+
+`--sram-in` and `--sram-out` do the same for the cartridge's battery RAM, in the interoperable `.sav`
+format. Two flags rather than one, so a test can start from a fixture and write the result somewhere
+it can be diffed without clobbering what it started from. Unlike the window, `--sram-out` does not ask
+whether the cartridge has a battery -- the flag is the answer.
 
 ### What comes back
 

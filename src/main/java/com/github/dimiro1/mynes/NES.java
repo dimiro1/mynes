@@ -3,11 +3,23 @@ package com.github.dimiro1.mynes;
 public class NES {
     private final BUS bus;
 
+    /**
+     * Kept rather than only read from, because things done to a running machine need to know which
+     * cartridge is in it: a save state refuses to load into the wrong one, and a battery file is
+     * named after it.
+     */
+    private final Cart cart;
+
     public NES(final Cart cart) {
         Controller controller1 = new StandardController();
         Controller controller2 = new StandardController();
+        this.cart = cart;
         bus = new BUS(cart.mapper(), controller1, controller2);
         bus.initialize();
+    }
+
+    public Cart getCart() {
+        return cart;
     }
 
     public CPU getCPU() {

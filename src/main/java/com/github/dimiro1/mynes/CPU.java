@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -161,6 +163,59 @@ public class CPU {
      *
      * @param state the state to load.
      */
+    /**
+     * Reads or writes the whole chip, depending on which way {@code io} is pointing.
+     * <p>
+     * One list rather than two. The assignment form is what makes that work: saving, {@code u8(a)}
+     * writes the byte and hands it straight back, so the assignment is a no-op; loading, it ignores
+     * what it was given and returns what it read. A field can therefore only be forgotten in both
+     * directions at once, which the divergence test catches and a mismatched pair of read and write
+     * lists would not.
+     * <p>
+     * Everything after {@link #cycles} is the half-executed instruction: which of its cycles comes
+     * next, the addresses it has worked out so far, and the interrupt latches. None of it can be
+     * left out, because a frame boundary is nothing like an instruction boundary -- a state saved
+     * without this would resume from the start of an instruction it was three cycles into.
+     * <p>
+     * Not to be confused with {@link #loadState(State)}, which is a test entry point and
+     * deliberately throws all of that away.
+     *
+     * @see com.github.dimiro1.mynes.state.SaveState
+     */
+    public void serialize(final StateIO io) {
+        a = io.u8(a);
+        x = io.u8(x);
+        y = io.u8(y);
+        sp = io.u8(sp);
+        pc = io.u16(pc);
+        p = io.u8(p);
+        cycles = io.u64(cycles);
+
+        opcode = io.u8(opcode);
+        tick = io.u16(tick);
+        intTick = io.u16(intTick);
+        tickValue = io.u8(tickValue);
+        tickBaseAddress = io.u16(tickBaseAddress);
+        tickUnfixedAddress = io.u16(tickUnfixedAddress);
+        tickAddress = io.u16(tickAddress);
+        tickLow = io.u8(tickLow);
+        tickHigh = io.u8(tickHigh);
+
+        // The interrupt latches, as opposed to the lines driving them. Both lines are written too,
+        // even though the PPU and the BUS re-drive them once their own chunks land: two bits, and a
+        // machine that is internally consistent is easier to reason about than one with a
+        // deliberate hole in it.
+        rstPending = io.bool(rstPending);
+        nmiPending = io.bool(nmiPending);
+        nmiLine = io.bool(nmiLine);
+        nmiLineLastSample = io.bool(nmiLineLastSample);
+        irqLine = io.bool(irqLine);
+        interruptPending = io.bool(interruptPending);
+        sequence = io.enumeration(sequence, Sequence.class);
+        interruptVector = io.u16(interruptVector);
+        stalled = io.bool(stalled);
+    }
+
     public void loadState(final State state) {
         setA(state.a());
         setX(state.x());

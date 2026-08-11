@@ -228,6 +228,61 @@ class ReplTests {
         assertEquals(5, replies.getFirst().get("frame").asLong());
     }
 
+    /**
+     * The shape a session actually uses this in: bookmark, try one thing, come back, try another.
+     * The reply to a load carries the frame it landed on, which is the confirmation worth having.
+     */
+    @Test
+    void aStateGoesBackToWhereItWasTaken() throws Exception {
+        var path = directory.resolve("bookmark.mn").toString();
+
+        var replies = session(
+                "run 30",
+                "save-state " + path,
+                "run 90",
+                "load-state " + path,
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals(30, replies.get(1).get("frame").asLong());
+        assertTrue(replies.get(1).get("bytes").asLong() > 0, "the file has something in it");
+        assertEquals(120, replies.get(2).get("frame").asLong());
+        assertEquals(30, replies.get(3).get("frame").asLong(), "back where it started");
+        assertEquals(
+                replies.get(1).get("hash").asText(),
+                replies.get(3).get("hash").asText(),
+                "and looking the way it did");
+    }
+
+    @Test
+    void aStateThatWillNotLoadIsAnErrorRatherThanTheEndOfTheSession() throws Exception {
+        var missing = directory.resolve("nothing-here.mn").toString();
+
+        var replies = session("run 5", "load-state " + missing, "run 5", "quit");
+
+        assertEquals(4, replies.size(), "the session carried on");
+        assertFalse(replies.get(1).get("ok").asBoolean());
+        assertEquals(10, replies.get(2).get("frame").asLong(),
+                "and the failed load cost it nothing: ten frames run, ten frames on");
+    }
+
+    @Test
+    void loadStateWantsAFile() throws Exception {
+        var replies = session("load-state", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean());
+        assertTrue(replies.getFirst().get("error").asText().contains("load-state"));
+    }
+
+    @Test
+    void theHelpListsTheStateCommands() throws Exception {
+        var help = session("help", "quit").getFirst().get("commands").asText();
+
+        assertTrue(help.contains("save-state"));
+        assertTrue(help.contains("load-state"));
+    }
+
     private static List<String> buttons(final JsonNode reply) {
         var names = new ArrayList<String>();
         reply.get("buttons").forEach(name -> names.add(name.asText()));

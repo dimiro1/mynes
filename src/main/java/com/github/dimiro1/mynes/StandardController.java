@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Standard NES controller implementation.
  * Buttons are read in sequence: A, B, Select, Start, Up, Down, Left, Right
@@ -53,6 +55,12 @@ public class StandardController implements Controller {
     @Override
     public void setButtons(int buttons) {
         this.buttons = buttons & 0xFF;
+    }
+
+    @Override
+    public void serialize(final StateIO io) {
+        shiftRegister = io.u8(shiftRegister);
+        strobe = io.u8(strobe);
     }
 
     private void reloadShiftRegister() {

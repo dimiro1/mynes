@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Mapper 3, CNROM: NROM with a switchable character bank.
  * <p>
@@ -67,6 +69,11 @@ public class Mapper3 implements Mapper {
     }
 
     @Override
+    public byte[] prgRAM() {
+        return prgRAM;
+    }
+
+    @Override
     public int charRead(final int address) {
         return Byte.toUnsignedInt(chrROM[chrBank * CHR_BANK_SIZE + (address & 0x1FFF)]);
     }
@@ -77,5 +84,16 @@ public class Mapper3 implements Mapper {
     @Override
     public Mirroring mirroring() {
         return mirroring;
+    }
+
+    /**
+     * One register and the cartridge RAM. CNROM's pattern tables are always ROM -- {@code charWrite}
+     * is a no-op -- so there is nothing there that a save state could have changed.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        chrBank = io.u8(chrBank);
+
+        io.bytes(prgRAM);
     }
 }

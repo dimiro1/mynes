@@ -9,7 +9,9 @@ import javax.imageio.ImageIO;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -258,5 +260,131 @@ class HeadlessRunTests {
         var untouched = report().at("/video/finalFrame/hash").asText();
 
         assertNotEquals(untouched, pressed);
+    }
+
+    /**
+     * What a save state is for, from outside the emulator: a run that starts from one draws the
+     * picture the run it was taken from was looking at.
+     * <p>
+     * {@code --frames 0} does no work at all -- the loop runs no iterations, and {@code --screenshot
+     * last} still photographs whatever frame the machine is on -- so this compares the two PNGs byte
+     * for byte with nothing in between to muddy it.
+     */
+    @Test
+    void aRunThatStartsFromAStateDrawsWhatTheStateWasSavedOn() throws Exception {
+        var state = out.resolve("at-60.mn");
+
+        assertEquals(Headless.EXIT_OK, run("--save-state", state.toString(), "--screenshot", "60"));
+
+        var taken = Files.readAllBytes(out.resolve("frame-000060.png"));
+        var frameSaved = report().at("/ppu/frame").asLong();
+
+        assertTrue(Files.size(state) > 0, "there is a state file to load");
+
+        assertEquals(Headless.EXIT_OK, run(
+                "--frames", "0", "--load-state", state.toString(), "--screenshot", "last"));
+
+        assertEquals(frameSaved, report().at("/ppu/frame").asLong(),
+                "the machine came back on the frame the state was taken on");
+        assertArrayEquals(
+                taken,
+                Files.readAllBytes(out.resolve("frame-%06d.png".formatted(frameSaved))),
+                "and it came back looking the same");
+    }
+
+    @Test
+    void theReportSaysWhereTheRunStartedFrom() throws Exception {
+        run();
+
+        assertTrue(report().at("/run/state/startedFromPowerOn").asBoolean());
+        assertTrue(report().at("/run/state/loadedFrom").isNull());
+
+        var state = out.resolve("bookmark.mn");
+        run("--save-state", state.toString());
+
+        assertEquals(state.toString(), report().at("/run/state/savedTo").asText());
+
+        run("--frames", "1", "--load-state", state.toString());
+
+        assertFalse(report().at("/run/state/startedFromPowerOn").asBoolean(),
+                "a run from a state is not comparable with one from power on, and says so");
+        assertEquals(state.toString(), report().at("/run/state/loadedFrom").asText());
+    }
+
+    @Test
+    void aStateFromAnotherCartridgeStopsTheRun() throws Exception {
+        var state = out.resolve("nestest.mn");
+        run("--save-state", state.toString());
+
+        var args = new String[]{
+                "--rom", "src/test/resources/mmc3-test-2/1-clocking.nes",
+                "--out", out.toString(), "--quiet", "--frames", "1",
+                "--load-state", state.toString()};
+
+        assertEquals(Headless.EXIT_USAGE, Headless.run(args),
+                "the wrong cartridge is a mistake on the command line, not a crash");
+    }
+
+    /**
+     * The battery file is the interoperable one, so what matters is that it is exactly the bytes and
+     * nothing else -- no header, no length, no version.
+     */
+    @Test
+    void theBatteryRamMakesTheRoundTripThroughTheCommandLine() throws Exception {
+        var sram = out.resolve("nestest.sav");
+
+        run("--sram-out", sram.toString(), "--dump", "prgram");
+
+        var written = Files.readAllBytes(sram);
+
+        assertEquals(0x2000, written.length, "eight kilobytes, and no header on the front");
+        assertArrayEquals(
+                Files.readAllBytes(out.resolve("prgram.bin")),
+                written,
+                "the same bytes --dump prgram reports");
+
+        // Hand it back and it has to arrive intact, which is the whole of the interoperability claim.
+        Files.write(sram, patterned(written.length));
+        run("--frames", "0", "--sram-in", sram.toString(), "--dump", "prgram");
+
+        assertArrayEquals(
+                patterned(written.length),
+                Files.readAllBytes(out.resolve("prgram.bin")),
+                "what went in came back out");
+        assertEquals(0x2000, report().at("/cart/sram/bytes").asInt());
+    }
+
+    @Test
+    void aShorterBatteryFileFillsWhatItCanAndALongerOneIsCut() throws Exception {
+        var sram = out.resolve("short.sav");
+        Files.write(sram, patterned(64));
+
+        assertEquals(Headless.EXIT_OK, run("--frames", "0", "--sram-in", sram.toString(),
+                "--dump", "prgram"), "a file another emulator wrote is worked with, not refused");
+
+        var ram = Files.readAllBytes(out.resolve("prgram.bin"));
+
+        assertEquals(0x2000, ram.length);
+        assertArrayEquals(patterned(64), Arrays.copyOf(ram, 64));
+
+        var long_ = out.resolve("long.sav");
+        Files.write(long_, patterned(0x8000));
+
+        assertEquals(Headless.EXIT_OK,
+                run("--frames", "0", "--sram-in", long_.toString(), "--dump", "prgram"));
+        assertArrayEquals(
+                patterned(0x2000),
+                Files.readAllBytes(out.resolve("prgram.bin")),
+                "the first bank of a bigger board's file");
+    }
+
+    private static byte[] patterned(final int length) {
+        var bytes = new byte[length];
+
+        for (var i = 0; i < length; i++) {
+            bytes[i] = (byte) (i * 7 + 1);
+        }
+
+        return bytes;
     }
 }

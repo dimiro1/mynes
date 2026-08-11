@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.state.BatteryRAM;
+import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,8 +13,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -67,7 +67,9 @@ public final class Headless {
 
         try {
             return runCartridge(options);
-        } catch (UsageException e) {
+        } catch (UsageException | SaveStateException e) {
+            // A save state that will not load is a mistake on the command line in every sense that
+            // matters to a script: the file named was the wrong one. No sixth exit code for it.
             System.err.println(e.getMessage());
             return EXIT_USAGE;
         } catch (IOException e) {
@@ -116,11 +118,48 @@ public final class Headless {
             var session = new Session(
                     new NES(cart), options.palette().colours(), wav);
 
+            // The cartridge RAM first and the save state second, because a state carries its own copy
+            // of that RAM and is the more specific answer of the two.
+            if (options.sramIn() != null) {
+                var read = BatteryRAM.read(session.nes(), options.sramIn());
+
+                if (read < 0) {
+                    throw new UsageException(options.sramIn()
+                            + " cannot be loaded: this cartridge has no RAM at $6000 to put it in.");
+                }
+
+                logger.info("filled {} bytes of cartridge RAM from {}", read, options.sramIn());
+            }
+
+            if (options.loadState() != null) {
+                session.loadState(options.loadState());
+                logger.info("started from {}, at frame {}", options.loadState(), session.frame());
+            }
+
             var outcome = options.interactive()
                     ? interactive(options, session)
                     : oneShot(options, session);
 
             var wallClockMillis = (System.nanoTime() - startedNanos) / 1_000_000;
+
+            if (options.saveState() != null) {
+                session.saveState(options.saveState());
+                logger.info("wrote a save state to {}", options.saveState());
+            }
+
+            if (options.sramOut() != null) {
+                // Deliberately not asking the cartridge whether it has a battery. The window obeys
+                // the cartridge; the command line obeys the flag, which is also what makes this
+                // testable against the only ROM vendored here.
+                var written = BatteryRAM.write(session.nes(), options.sramOut());
+
+                if (written < 0) {
+                    throw new UsageException(
+                            "there is no cartridge RAM to write to " + options.sramOut() + ".");
+                }
+
+                logger.info("wrote {} bytes of cartridge RAM to {}", written, options.sramOut());
+            }
 
             var dumps = writeDumps(options, session);
             var expectations = check(options, session);
@@ -135,7 +174,6 @@ public final class Headless {
                             outcome.stoppedBecause(),
                             wallClockMillis,
                             startedAt,
-                            sha256(image),
                             outcome.screenshots(),
                             dumps,
                             expectations,
@@ -323,19 +361,4 @@ public final class Headless {
         }
     }
 
-    private static String sha256(final byte[] image) {
-        try {
-            var digest = MessageDigest.getInstance("SHA-256").digest(image);
-            var hex = new StringBuilder(digest.length * 2);
-
-            for (var b : digest) {
-                hex.append(String.format("%02x", b));
-            }
-
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            // Every JRE has SHA-256; this is here because the API says it might not.
-            throw new IllegalStateException(e);
-        }
-    }
 }

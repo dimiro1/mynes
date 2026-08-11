@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Mapper 4, MMC3: the workhorse of the later library -- Super Mario Bros. 3, Mega Man 3 to 6,
  * Kirby's Adventure, Startropics.
@@ -188,6 +190,11 @@ public class Mapper4 implements Mapper {
     }
 
     @Override
+    public byte[] prgRAM() {
+        return prgRAM;
+    }
+
+    @Override
     public int charRead(final int address) {
         return Byte.toUnsignedInt(chr[charIndex(address & 0x1FFF)]);
     }
@@ -295,5 +302,42 @@ public class Mapper4 implements Mapper {
         };
 
         return ((bank & chrBankMask) * CHR_PAGE_SIZE) | (a & 0x3FF);
+    }
+
+    /**
+     * The banking, the scanline counter, and where the A12 filter has got to.
+     * <p>
+     * The filter is the part that is easy to leave out and expensive to get wrong. Saving in the
+     * middle of a scanline and restoring without {@code a12} and {@code dotsLow} gives back a chip
+     * that has forgotten how long the line has been quiet, so the next rise either counts when it
+     * should not or fails to when it should. That is one scanline of one split screen, once, which
+     * is exactly the sort of thing that gets mistaken for a mapper bug.
+     * <p>
+     * What is <em>not</em> here is whether the chip is currently pulling /IRQ low. Nothing on the
+     * board remembers it -- $E000 drops the line without emptying the counter, $E001 arms the
+     * counter without raising the line -- so {@link com.github.dimiro1.mynes.BUS} keeps that bit.
+     * The handler itself is wiring rather than state, and survives because a state is loaded into
+     * the machine that is already running rather than into a rebuilt one.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        bankSelect = io.u8(bankSelect);
+        io.bytes(banks);
+        horizontalMirroring = io.bool(horizontalMirroring);
+        prgRAMProtect = io.u8(prgRAMProtect);
+
+        irqLatch = io.u8(irqLatch);
+        irqCounter = io.u8(irqCounter);
+        irqReloadPending = io.bool(irqReloadPending);
+        irqEnabled = io.bool(irqEnabled);
+
+        a12 = io.bool(a12);
+        dotsLow = io.u16(dotsLow);
+
+        io.bytes(prgRAM);
+
+        if (chrIsRAM) {
+            io.bytes(chr);
+        }
     }
 }

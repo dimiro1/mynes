@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Mapper 2, UxROM: one switchable PRG bank and one that never moves.
  * <p>
@@ -87,5 +89,18 @@ public class Mapper2 implements Mapper {
     @Override
     public Mirroring mirroring() {
         return mirroring;
+    }
+
+    /**
+     * One latch, and the pattern tables when they are RAM. Nothing answers at $6000 on a UxROM
+     * board, so there is no cartridge RAM to carry.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        prgBank = io.u8(prgBank);
+
+        if (chrIsRAM) {
+            io.bytes(chr);
+        }
     }
 }

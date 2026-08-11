@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.IRQHandler;
+import com.github.dimiro1.mynes.state.StateIO;
 
 /**
  * APU implements the audio unit built into the 2A03 found in the NTSC NES.
@@ -404,6 +405,41 @@ public class APU {
     }
 
     /**
+     * Reads or writes the five channels, the frame counter, and the pipeline that turns their
+     * output into samples.
+     * <p>
+     * What is not here is the ring buffer, along with its three indices. That is the queue between
+     * this chip and the sound card rather than anything the chip remembers, and it is empty at the
+     * moment a state is written anyway -- both drivers drain it at the end of every frame. What
+     * <em>is</em> here is everything upstream of it: the box filter's running sum, the fractional
+     * count to the next sample, and the three filters' accumulated state, because those decide what
+     * the next few hundred samples sound like and dropping them would put a click in.
+     * <p>
+     * The nested classes are all private and stay that way. They are nestmates, so this can call
+     * straight into them without widening anything.
+     *
+     * @see com.github.dimiro1.mynes.state.SaveState
+     */
+    public void serialize(final StateIO io) {
+        cycles = io.u64(cycles);
+
+        pulse1.serialize(io);
+        pulse2.serialize(io);
+        triangle.serialize(io);
+        noise.serialize(io);
+        dmc.serialize(io);
+        frameCounter.serialize(io);
+
+        sampleSum = io.f64(sampleSum);
+        sampleCycles = io.u16(sampleCycles);
+        cyclesToNextSample = io.f64(cyclesToNextSample);
+
+        highPass90.serialize(io);
+        highPass440.serialize(io);
+        lowPass14k.serialize(io);
+    }
+
+    /**
      * Writes one of the registers in $4000-$4017.
      * <p>
      * The whole window arrives here except the four addresses that are not the APU's: $4014 is the
@@ -706,6 +742,19 @@ public class APU {
          */
         private int pendingValue;
 
+        /**
+         * Where the sequence has got to, and a $4017 write that has not landed yet. The interrupt
+         * flag is a latch and so comes out of the file; the /IRQ line it drives is the BUS's.
+         */
+        private void serialize(final StateIO io) {
+            cycle = io.u16(cycle);
+            fiveStep = io.bool(fiveStep);
+            irqInhibit = io.bool(irqInhibit);
+            irqFlag = io.bool(irqFlag);
+            writeDelay = io.u8(writeDelay);
+            pendingValue = io.u8(pendingValue);
+        }
+
         private void tick() {
             // The cycle a $4017 write lands on is cycle zero of the new sequence, not the cycle
             // before it: the sequencer is reset rather than clocked. One cycle either way here
@@ -844,6 +893,12 @@ public class APU {
         private boolean halt;
         private boolean enabled;
 
+        private void serialize(final StateIO io) {
+            value = io.u8(value);
+            halt = io.bool(halt);
+            enabled = io.bool(enabled);
+        }
+
         private void clock() {
             if (!halt && value > 0) {
                 value--;
@@ -898,6 +953,15 @@ public class APU {
         private int divider;
         private int decay;
 
+        private void serialize(final StateIO io) {
+            period = io.u8(period);
+            constantVolume = io.bool(constantVolume);
+            loop = io.bool(loop);
+            start = io.bool(start);
+            divider = io.u8(divider);
+            decay = io.u8(decay);
+        }
+
         private void clock() {
             if (start) {
                 start = false;
@@ -942,6 +1006,15 @@ public class APU {
         private double lastInput;
         private double lastOutput;
 
+        /**
+         * The coefficient is not here: it is final and derived from the cutoff, so it is the same
+         * number in every build. Only what the filter has accumulated travels.
+         */
+        private void serialize(final StateIO io) {
+            lastInput = io.f64(lastInput);
+            lastOutput = io.f64(lastOutput);
+        }
+
         private HighPass(final double cutoffHz) {
             var rc = 1.0 / (2.0 * Math.PI * cutoffHz);
             var dt = 1.0 / SAMPLE_RATE;
@@ -965,6 +1038,10 @@ public class APU {
         private final double coefficient;
 
         private double lastOutput;
+
+        private void serialize(final StateIO io) {
+            lastOutput = io.f64(lastOutput);
+        }
 
         private LowPass(final double cutoffHz) {
             var rc = 1.0 / (2.0 * Math.PI * cutoffHz);
@@ -1047,6 +1124,27 @@ public class APU {
 
         private Pulse(final boolean onesComplementNegate) {
             this.onesComplementNegate = onesComplementNegate;
+        }
+
+        /**
+         * Which pulse this is stays out of it: {@code onesComplementNegate} is which chip pin the
+         * channel is wired to, not something it remembers.
+         */
+        private void serialize(final StateIO io) {
+            lengthCounter.serialize(io);
+            envelope.serialize(io);
+
+            duty = io.u8(duty);
+            sequencerStep = io.u8(sequencerStep);
+            period = io.u16(period);
+            timer = io.u16(timer);
+
+            sweepEnabled = io.bool(sweepEnabled);
+            sweepNegate = io.bool(sweepNegate);
+            sweepPeriod = io.u8(sweepPeriod);
+            sweepShift = io.u8(sweepShift);
+            sweepReload = io.bool(sweepReload);
+            sweepDivider = io.u8(sweepDivider);
         }
 
         private void write(final int register, final int data) {
@@ -1200,6 +1298,18 @@ public class APU {
         private int timer;
         private int sequencerStep;
 
+        private void serialize(final StateIO io) {
+            lengthCounter.serialize(io);
+
+            linearCounterReload = io.u8(linearCounterReload);
+            control = io.bool(control);
+            linearCounterReloadFlag = io.bool(linearCounterReloadFlag);
+            linearCounter = io.u8(linearCounter);
+            period = io.u16(period);
+            timer = io.u16(timer);
+            sequencerStep = io.u8(sequencerStep);
+        }
+
         private void write(final int register, final int data) {
             switch (register) {
                 case 0 -> {
@@ -1300,6 +1410,23 @@ public class APU {
 
         private int period;
         private int timer;
+
+        private void serialize(final StateIO io) {
+            lengthCounter.serialize(io);
+            envelope.serialize(io);
+
+            shiftRegister = io.u16(shiftRegister);
+            shortMode = io.bool(shortMode);
+            period = io.u16(period);
+            timer = io.u16(timer);
+
+            // Zero is a fixed point of the feedback: a register that reaches it never leaves, and
+            // the channel is silent for the rest of the session. One line here is the difference
+            // between a damaged file costing a load and costing the sound.
+            if (shiftRegister == 0) {
+                shiftRegister = 1;
+            }
+        }
 
         private void write(final int register, final int data) {
             switch (register) {
@@ -1420,6 +1547,32 @@ public class APU {
          * sample that ends leaves the speaker where it was; dropping it to zero would click.
          */
         private boolean silence = true;
+
+        /**
+         * Including the read-ahead buffer and whether it is filled, because a DMA fetch in flight is
+         * the one piece of this channel the CPU can see the effect of: the cycle it steals is what
+         * makes a DMC sample shift a raster split.
+         */
+        private void serialize(final StateIO io) {
+            irqEnabled = io.bool(irqEnabled);
+            irqFlag = io.bool(irqFlag);
+            loop = io.bool(loop);
+
+            period = io.u16(period);
+            timer = io.u16(timer);
+            output = io.u8(output);
+
+            sampleAddress = io.u16(sampleAddress);
+            sampleLength = io.u16(sampleLength);
+            currentAddress = io.u16(currentAddress);
+            bytesRemaining = io.u16(bytesRemaining);
+
+            sampleBuffer = io.u8(sampleBuffer);
+            sampleBufferFilled = io.bool(sampleBufferFilled);
+            shiftRegister = io.u8(shiftRegister);
+            bitsRemaining = io.u8(bitsRemaining);
+            silence = io.bool(silence);
+        }
 
         private void write(final int register, final int data) {
             switch (register) {

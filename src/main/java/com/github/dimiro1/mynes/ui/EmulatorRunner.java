@@ -130,6 +130,21 @@ public class EmulatorRunner {
     }
 
     /**
+     * The same, for something that replaces the machine's state wholesale rather than nudging it.
+     * <p>
+     * The difference is the sound card, which is holding up to a tenth of a second of a game that,
+     * by the time it plays, will be a game the player is no longer in. Dropped rather than played
+     * out, for the reason a pause drops it: what comes out of the speaker should be what is on the
+     * screen.
+     */
+    public void postStateChange(final Runnable command) {
+        commands.add(() -> {
+            command.run();
+            audio.flush();
+        });
+    }
+
+    /**
      * Freezes the machine, or lets it run again. Takes effect within a frame. While paused the
      * last finished frame stays on screen and posted commands still run.
      */
@@ -185,6 +200,12 @@ public class EmulatorRunner {
 
             while (running) {
                 runPendingCommands();
+
+                // Normally a no-op -- nothing has been clocked since this was last assigned. It
+                // matters when a command has just loaded a save state, which can move the frame
+                // counter backwards: the loop below waits for the counter to *change*, so a stale
+                // value here would satisfy it after a single tick and present a torn frame.
+                lastFrame = ppu.getFrame();
 
                 if (paused) {
                     if (!wasPaused) {

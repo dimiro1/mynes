@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.mappers.IRQHandler;
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.mappers.Mapper0;
 import com.github.dimiro1.mynes.mappers.Mirroring;
+import com.github.dimiro1.mynes.state.StateIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -129,6 +130,11 @@ class BUSIRQTests {
         @Override
         public Mirroring mirroring() {
             return Mirroring.HORIZONTAL;
+        }
+
+        @Override
+        public void serialize(final StateIO io) {
+            // A board with no memory and no registers, which is the one case where this is empty.
         }
     }
 }

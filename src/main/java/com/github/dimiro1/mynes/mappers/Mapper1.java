@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.mappers;
 
+import com.github.dimiro1.mynes.state.StateIO;
+
 /**
  * Mapper 1, MMC1: Nintendo's first big mapper, and the one behind most of the early classics --
  * Zelda, Metroid, Mega Man 2, Final Fantasy, Castlevania II.
@@ -144,6 +146,11 @@ public class Mapper1 implements Mapper {
     }
 
     @Override
+    public byte[] prgRAM() {
+        return prgRAM;
+    }
+
+    @Override
     public int charRead(final int address) {
         return Byte.toUnsignedInt(chr[charIndex(address & 0x1FFF)]);
     }
@@ -199,6 +206,31 @@ public class Mapper1 implements Mapper {
                 : (address < CHR_BANK_SIZE ? chrBank0 : chrBank1);
 
         return (bank & chrBankMask) * CHR_BANK_SIZE + (address & 0x0FFF);
+    }
+
+    /**
+     * The four registers, and the serial port that loads them.
+     * <p>
+     * {@code shiftRegister} and {@code shiftCount} are half of a five-write sequence, and a frame
+     * boundary can fall in the middle of one. Neither the mirroring nor whether the RAM chip is
+     * enabled is saved separately: both are read out of {@code control} and {@code prgBank}, so they
+     * arrive with them.
+     */
+    @Override
+    public void serialize(final StateIO io) {
+        shiftRegister = io.u8(shiftRegister);
+        shiftCount = io.u8(shiftCount);
+
+        control = io.u8(control);
+        chrBank0 = io.u8(chrBank0);
+        chrBank1 = io.u8(chrBank1);
+        prgBank = io.u8(prgBank);
+
+        io.bytes(prgRAM);
+
+        if (chrIsRAM) {
+            io.bytes(chr);
+        }
     }
 
     private boolean isPRGRAMEnabled() {

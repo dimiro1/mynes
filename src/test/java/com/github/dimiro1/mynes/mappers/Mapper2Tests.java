@@ -131,6 +131,11 @@ class Mapper2Tests {
 
             assertEquals(0, mapper.prgRAMRead(0x6000), "nothing on the board answers there");
         }
+
+        @Test
+        void aBoardWithNoRamFittedHandsBackNothingToSave() {
+            assertEquals(0, uxrom(2).prgRAM().length, "an empty array is what says there is no chip");
+        }
     }
 
     /**

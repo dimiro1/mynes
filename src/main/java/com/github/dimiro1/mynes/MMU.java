@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
+import com.github.dimiro1.mynes.state.StateIO;
 
 /**
  * NES Memory Management Unit (MMU).
@@ -317,5 +318,26 @@ public class MMU {
      */
     public int[] getInternalRAM() {
         return internalRAM;
+    }
+
+    /**
+     * The work RAM, the expansion window, and a transfer that may be half done.
+     * <p>
+     * An OAM DMA takes 513 or 514 cycles and a frame boundary can fall inside one, so the transfer's
+     * own state is part of the machine: which page, how far through, whether it is still waiting for
+     * the halt cycle or the alignment cycle, and which half of the read-write pair comes next.
+     */
+    public void serialize(final StateIO io) {
+        io.bytes(internalRAM);
+        io.bytes(expansionROM);
+
+        dmaInProgress = io.bool(dmaInProgress);
+        dmaPage = io.u8(dmaPage);
+        dmaAddress = io.u16(dmaAddress);
+        dmaData = io.u8(dmaData);
+        dmaHaltPending = io.bool(dmaHaltPending);
+        dmaAlignPending = io.bool(dmaAlignPending);
+        dmaReadPhase = io.bool(dmaReadPhase);
+        dmcFetchCycles = io.u8(dmcFetchCycles);
     }
 }

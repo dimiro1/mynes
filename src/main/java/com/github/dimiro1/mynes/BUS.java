@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.Mapper;
+import com.github.dimiro1.mynes.state.StateIO;
 
 /**
  * The system bus that connects all NES components.
@@ -151,6 +152,28 @@ public class BUS implements CPUBus, PPUBus {
     private void updateIRQLine() {
         if (cpu != null) {
             cpu.setIRQLine(mapperIRQ || apuFrameIRQ || dmcIRQ);
+        }
+    }
+
+    /**
+     * The three bits that say who is pulling /IRQ low.
+     * <p>
+     * They have to be in the file rather than worked out again on the way in, because none of the
+     * three sources remembers whether it is currently asserting. MMC3 is the clearest case: a write
+     * to $E000 drops the line without emptying the counter, and one to $E001 arms the counter
+     * without raising the line, so no combination of the mapper's own registers says what the wire
+     * is doing.
+     * <p>
+     * The level itself is then recomputed rather than restored, which is the rule everywhere: a
+     * wire is a function of the things driving it, and only a latch comes out of the file.
+     */
+    public void serialize(final StateIO io) {
+        mapperIRQ = io.bool(mapperIRQ);
+        apuFrameIRQ = io.bool(apuFrameIRQ);
+        dmcIRQ = io.bool(dmcIRQ);
+
+        if (!io.saving()) {
+            updateIRQLine();
         }
     }
 

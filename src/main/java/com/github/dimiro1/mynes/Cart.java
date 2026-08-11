@@ -11,6 +11,8 @@ import com.github.dimiro1.mynes.mappers.Mirroring;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 /**
  * Represents a NES game cartridge (ROM).
@@ -26,6 +28,11 @@ import java.nio.ByteOrder;
  *                     itself because it is what a person names a cartridge's hardware by
  * @param mirror the mirroring mode (horizontal, vertical, four-screen)
  * @param hasBattery whether this cart has battery-backed save RAM
+ * @param sha256 the digest of the whole file, header included, as lowercase hex. What names this
+ *               particular dump of this particular game: a report records it so two runs can be
+ *               told apart, and a save state carries it so one cannot be loaded into the wrong
+ *               cartridge. The header is part of it on purpose, since the header is what decides
+ *               the mapper and the mirroring
  */
 public record Cart(
         String filename,
@@ -34,7 +41,8 @@ public record Cart(
         Mapper mapper,
         int mapperNumber,
         int mirror,
-        boolean hasBattery) {
+        boolean hasBattery,
+        String sha256) {
 
     /**
      * Magic number for iNES format files.
@@ -150,6 +158,23 @@ public record Cart(
             default -> throw new UnsupportedMapperException(mapperNumber, filename);
         };
 
-        return new Cart(filename, prgROM, chrROM, mapper, mapperNumber, mirror, hasBattery);
+        return new Cart(
+                filename, prgROM, chrROM, mapper, mapperNumber, mirror, hasBattery, sha256(bytes));
+    }
+
+    private static String sha256(final byte[] image) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256").digest(image);
+            var hex = new StringBuilder(digest.length * 2);
+
+            for (var b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // Every JRE has SHA-256; this is here because the API says it might not.
+            throw new IllegalStateException(e);
+        }
     }
 }

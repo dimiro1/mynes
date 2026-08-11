@@ -65,7 +65,6 @@ public final class Report {
      * @param stoppedBecause  why it stopped.
      * @param wallClockMillis how long that took in real time.
      * @param startedAt       when it started.
-     * @param sha256          the cartridge's hash, so a report names the exact ROM.
      * @param screenshots     the frames photographed.
      * @param dumps           the memories written out.
      * @param expectations    what was asked of the run, and whether it held.
@@ -76,7 +75,6 @@ public final class Report {
             StoppedBecause stoppedBecause,
             long wallClockMillis,
             Instant startedAt,
-            String sha256,
             List<Long> screenshots,
             List<Dump> dumps,
             List<Expectation> expectations,
@@ -117,10 +115,18 @@ public final class Report {
         run.put("completed", outcome.stoppedBecause() != StoppedBecause.TIMEOUT);
         run.put("stoppedBecause", outcome.stoppedBecause().name().toLowerCase());
 
+        // Where the run started, which decides whether it is comparable with another one at all. A
+        // run that began from a save state and one that began at power on are not two measurements
+        // of the same thing, and telling them apart is the whole job of this document.
+        var state = run.putObject("state");
+        state.put("startedFromPowerOn", options.loadState() == null);
+        put(state, "loadedFrom", options.loadState());
+        put(state, "savedTo", options.saveState());
+
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());
         cartridge.put("name", Path.of(cart.filename()).getFileName().toString());
-        cartridge.put("sha256", outcome.sha256());
+        cartridge.put("sha256", cart.sha256());
         cartridge.put("mapper", cart.mapperNumber());
         cartridge.put("prgROMBytes", cart.prgROM().length);
         cartridge.put("chrROMBytes", cart.chrROM().length);
@@ -129,6 +135,11 @@ public final class Report {
         // cartridge is doing now is more use than what it started as.
         cartridge.put("mirroring", cart.mapper().mirroring().name());
         cartridge.put("battery", cart.hasBattery());
+
+        var sram = cartridge.putObject("sram");
+        sram.put("bytes", cart.mapper().prgRAM().length);
+        put(sram, "in", options.sramIn());
+        put(sram, "out", options.sramOut());
 
         var cpu = report.putObject("cpu");
         cpu.put("a", cpuState.a());
@@ -312,6 +323,18 @@ public final class Report {
     /**
      * A convenience for the parts of a document that are the same wherever they are built.
      */
+    /**
+     * A path, or a null where there was no path. Explicitly null rather than absent, so that
+     * {@code jq} over two reports compares the same set of keys either way.
+     */
+    private static void put(final ObjectNode node, final String name, final Path path) {
+        if (path == null) {
+            node.putNull(name);
+        } else {
+            node.put(name, path.toString());
+        }
+    }
+
     static void putStateOf(final ObjectNode node, final Session session) {
         node.put("frame", session.frame());
         node.put("hash", hex(session.analyse().hash()));
