@@ -254,6 +254,10 @@ public final class Repl {
         var audioStats = session.audioStats();
 
         reply("state", node -> {
+            // First, because it is what the two numbers below mean: a scanline of 300 is a normal
+            // place for the beam to be on one machine and impossible on the other.
+            node.put("region", nes.getRegion().id());
+
             var cpu = node.putObject("cpu");
             cpu.put("a", cpuState.a());
             cpu.put("x", cpuState.x());

@@ -25,7 +25,8 @@ The JDK warns that the look and feel loads a native library. Add `--enable-nativ
 before `-jar` to silence it.
 
 Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own. Games run at
-60.0988 frames a second, with the overscan cropped and the picture scaled to the window.
+60.0988 frames a second, or 50.0070 on a PAL cartridge, with the overscan cropped and the picture
+scaled to the window.
 
 ## Controls
 
@@ -45,7 +46,9 @@ the palette, screen size and fast forward speed:
 
 ```properties
 video.palette=nesdev
+video.palette.pal=2c07
 video.scale=2
+emulation.region=auto
 emulation.fast-forward=4x
 audio.muted=false
 controller1.a=VK_X
@@ -72,10 +75,19 @@ the log.
 
 **Mappers 0 to 4:** NROM, MMC1, UxROM, CNROM and MMC3, the last one with its scanline IRQ.
 
-**Eleven NTSC palettes:** the NESdev set plus ten measured ones from firebrandx.com, among them NES
-Classic, PVM Style D93, Smooth and Wavebeam. **Settings > Palette...** lists them next to a swatch
-grid and applies each one as the selection moves, so you can compare them against the running game,
-or against a paused frame.
+**Both consoles.** The NTSC machine and the PAL one, which are not the same machine at a different
+speed: the PAL PPU draws 312 scanlines instead of 262 and takes 3.2 dots to a CPU cycle instead of
+3, and every table in its APU counted in CPU cycles is a different table. The cartridge header is
+believed where it says anything, which is not often — the field was an afterthought and most dumps
+leave it blank — so **Machine > Region** is there to insist. A game running 17% fast with the music
+too high is the symptom to reach for it over.
+
+**Twelve palettes:** the NESdev set, ten measured NTSC ones from firebrandx.com — among them NES
+Classic, PVM Style D93, Smooth and Wavebeam — and one for the PAL chip, whose colourburst sits
+fifteen degrees away from the NTSC one and which therefore needs a table of its own. PAL cartridges
+get that one by default. **Settings > Palette...** lists them next to a swatch grid and applies each
+one as the selection moves, so you can compare them against the running game, or against a paused
+frame; the choice is remembered separately for each kind of machine.
 
 **Screen size** at 1x, 2x, 3x or 4x of the 256x224 picture, from **Settings > Screen Size**, which
 packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
@@ -88,8 +100,9 @@ second, so you see the ones that fall due. Asking for more than the computer man
 error; you simply get whatever it manages. Sound cannot be handed to a sound card faster than real
 time, so audio comes out chopped rather than sped up.
 
-**The rest of the Machine menu:** Reset (the console button, memory survives), Power Cycle, Pause
-and Mute. Mute is remembered between runs; fast forward is not. Muting does not tell the machine
+**The rest of the Machine menu:** Reset (the console button, memory survives), Power Cycle, Region,
+Pause and Mute. Changing the region starts the game again from power on, since the chips are built
+around it and a running machine cannot be rewired. Mute is remembered between runs; fast forward is not. Muting does not tell the machine
 anything, so a silenced APU still runs and still raises its interrupts, and a game behaves the same
 either way.
 
@@ -100,7 +113,8 @@ change. There are also toggles to hide the background or the sprite layer withou
 **Save states and battery saves**, and a **headless mode** for running with no window at all. Both
 have a section of their own below.
 
-Not there yet: a second player, and PAL timing.
+Not there yet: a second player, and Dendy, the Russian famiclone, which a cartridge that asks for it
+gets run as PAL instead.
 
 ## Screenshots
 
@@ -199,6 +213,9 @@ seconds to start up, the jar about a third of one.
   ROM, input and frame count produce identical bytes on every run and every computer. Anything that
   legitimately varies lives under `host` in the report, so
   `diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)` compares two runs.
+- **`--region ntsc|pal`** overrides what the cartridge's header asks for. Two runs in different
+  regions are not two measurements of the same thing — a frame is 106392 dots on one machine and
+  89342 on the other — so `run.region` in the report is part of what to check before diffing them.
 - **`--save-state` and `--load-state`** cut the wait when the same two hundred frames of title
   screen are in the way of every run. `--sram-in` and `--sram-out` do the same for battery RAM, in
   the `.sav` format other emulators read.

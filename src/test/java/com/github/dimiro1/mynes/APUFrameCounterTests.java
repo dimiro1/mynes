@@ -429,4 +429,62 @@ class APUFrameCounterTests {
             assertEquals(15, apu.noiseVolume(), "and the write puts the decay back at the top");
         }
     }
+
+    /**
+     * The 2A07, whose sequence is the same five steps 11% further apart -- because a CPU cycle is
+     * 11% longer there and the sequence is meant to come to one video frame either way.
+     */
+    @Nested
+    @DisplayName("on a PAL machine")
+    class PALTiming {
+        private static final int PAL_FIRST_HALF_FRAME = 16627;
+        private static final int PAL_IRQ_CYCLE = 33252;
+
+        private APU pal;
+
+        @BeforeEach
+        void setUp() {
+            pal = new APU(level -> { }, level -> { }, Region.PAL);
+        }
+
+        @Test
+        void movesALengthCounterOnItsOwnHalfFrameAndNotOnNTSCs() {
+            pal.write(0x4015, 0x01);
+            pal.write(0x4000, 0x00);
+            pal.write(0x4003, 0x08);  // 254 half frames
+
+            for (var i = 0; i < FIRST_HALF_FRAME; i++) {
+                pal.tick();
+            }
+
+            assertEquals(254, pal.pulse1Length(), "an NTSC half frame is far too early here");
+
+            for (var i = FIRST_HALF_FRAME; i < PAL_FIRST_HALF_FRAME; i++) {
+                pal.tick();
+            }
+
+            assertEquals(253, pal.pulse1Length(), "and its own is not");
+        }
+
+        @Test
+        void raisesTheInterruptOnItsOwnLastCycle() {
+            for (var i = 0; i < PAL_IRQ_CYCLE - 1; i++) {
+                pal.tick();
+            }
+
+            assertFalse(pal.isFrameIRQRaised(), "one cycle early");
+
+            pal.tick();
+            assertTrue(pal.isFrameIRQRaised(), "and on the cycle itself");
+        }
+
+        @Test
+        void leavesTheNTSCSequenceAlone() {
+            // The same object, built the other way round, still keeps NTSC's numbers. Which is
+            // only worth saying because both sequences now come out of one field.
+            tick(IRQ_CYCLE);
+
+            assertTrue(apu.isFrameIRQRaised());
+        }
+    }
 }

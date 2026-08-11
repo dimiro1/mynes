@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
@@ -36,7 +37,9 @@ public final class Config {
             Path.of(System.getProperty("user.home"), ".mynes", "config.properties");
 
     private static final String PALETTE_KEY = "video.palette";
+    private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
+    private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
 
@@ -52,12 +55,22 @@ public final class Config {
     private static final String PALETTE_HEADER = """
             # The palette the picture is drawn with. Settings > Palette... has the list; the
             # value is the id shown there in lower case with dashes, such as nes-classic.
+            # One for each kind of machine, because the PAL PPU generates its colours from a
+            # different burst phase and an NTSC table is simply wrong for it. Picking a palette
+            # while a PAL game is running sets the second of these.
             """;
 
     private static final String SCALE_HEADER = """
             # How many screen pixels wide a picture pixel is drawn, and so how big the window
             # opens: 1, 2, 3 or 4. Settings > Screen Size is the same setting, and the window
             # can still be dragged to any size at all from there.
+            """;
+
+    private static final String REGION_HEADER = """
+            # Which machine to run cartridges on: auto, ntsc or pal. Auto believes the header,
+            # which nearly every dump leaves blank -- so a European game that comes out 17% fast
+            # with the music too high is one to set to pal by hand. Machine > Region is the same
+            # setting, and changing it there restarts the game.
             """;
 
     private static final String EMULATION_HEADER = """
@@ -73,19 +86,25 @@ public final class Config {
 
     private KeyBindings keyBindings;
     private NESPalette palette;
+    private NESPalette palPalette;
     private ScreenScale screenScale;
+    private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
 
     private Config(
             final KeyBindings keyBindings,
             final NESPalette palette,
+            final NESPalette palPalette,
             final ScreenScale screenScale,
+            final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted) {
         this.keyBindings = keyBindings;
         this.palette = palette;
+        this.palPalette = palPalette;
         this.screenScale = screenScale;
+        this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
     }
@@ -115,8 +134,10 @@ public final class Config {
         // same defaults every entry would have fallen back to one at a time.
         return new Config(
                 KeyBindings.from(properties),
-                paletteFrom(properties),
+                paletteFrom(properties, PALETTE_KEY, Region.NTSC),
+                paletteFrom(properties, PAL_PALETTE_KEY, Region.PAL),
                 screenScaleFrom(properties),
+                regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 mutedFrom(properties));
     }
@@ -130,14 +151,25 @@ public final class Config {
         return Boolean.parseBoolean(properties.getProperty(MUTED_KEY, "").trim());
     }
 
-    private static NESPalette paletteFrom(final Properties properties) {
-        var id = properties.getProperty(PALETTE_KEY);
+    private static NESPalette paletteFrom(
+            final Properties properties, final String key, final Region region) {
+        var id = properties.getProperty(key);
 
         if (id == null) {
-            return Palettes.defaultPalette();
+            return Palettes.defaultPalette(region);
         }
 
         return Palettes.byId(id.trim());
+    }
+
+    private static RegionSetting regionFrom(final Properties properties) {
+        var id = properties.getProperty(REGION_KEY);
+
+        if (id == null) {
+            return RegionSetting.defaultSetting();
+        }
+
+        return RegionSetting.byId(id.trim());
     }
 
     private static ScreenScale screenScaleFrom(final Properties properties) {
@@ -176,12 +208,22 @@ public final class Config {
                 .append(PALETTE_KEY)
                 .append('=')
                 .append(palette.id())
+                .append('\n')
+                .append(PAL_PALETTE_KEY)
+                .append('=')
+                .append(palPalette.id())
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
                 .append(SCALE_KEY)
                 .append('=')
                 .append(screenScale.id())
+                .append("\n\n");
+
+        text.append(REGION_HEADER)
+                .append(REGION_KEY)
+                .append('=')
+                .append(region.id())
                 .append("\n\n");
 
         text.append(EMULATION_HEADER)
@@ -218,12 +260,24 @@ public final class Config {
         this.keyBindings = keyBindings;
     }
 
-    public NESPalette palette() {
-        return palette;
+    /**
+     * The palette a machine of this kind is drawn with.
+     * <p>
+     * Two settings rather than one, because the two chips do not make the same colours: an NTSC
+     * table on a PAL game is not a matter of taste, it is the wrong hues. So a choice made while a
+     * PAL game is running is remembered as a choice about PAL games, and somebody's NTSC preference
+     * survives loading a European cartridge.
+     */
+    public NESPalette palette(final Region region) {
+        return region == Region.PAL ? palPalette : palette;
     }
 
-    public void setPalette(final NESPalette palette) {
-        this.palette = palette;
+    public void setPalette(final Region region, final NESPalette palette) {
+        if (region == Region.PAL) {
+            this.palPalette = palette;
+        } else {
+            this.palette = palette;
+        }
     }
 
     /**
@@ -236,6 +290,18 @@ public final class Config {
 
     public void setScreenScale(final ScreenScale screenScale) {
         this.screenScale = screenScale;
+    }
+
+    /**
+     * Which machine cartridges are run on. Remembered, because somebody whose collection is
+     * European has a collection that is still European tomorrow.
+     */
+    public RegionSetting region() {
+        return region;
+    }
+
+    public void setRegion(final RegionSetting region) {
+        this.region = region;
     }
 
     /**

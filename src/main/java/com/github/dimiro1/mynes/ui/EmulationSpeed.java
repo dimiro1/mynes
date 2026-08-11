@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.Region;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,15 +38,6 @@ public enum EmulationSpeed {
      */
     UNLIMITED("unlimited", "Unlimited", 0);
 
-    /**
-     * One NTSC frame. The 2C02 draws 60.0988 frames a second rather than 60, which is a third of
-     * a percent -- and it is the number the APU agrees with, since 60.0988 frames of 734 samples
-     * each is exactly the 44100 a second the sound card wants. Rounding it to 60 here would leave
-     * the two clocks disagreeing by a third of a percent, which is a card running dry every five
-     * minutes.
-     */
-    public static final long FRAME_NANOS = 16_639_267L;
-
     private static final Logger logger = LoggerFactory.getLogger("UI");
 
     /**
@@ -57,13 +49,12 @@ public enum EmulationSpeed {
 
     private final String id;
     private final String label;
-    private final long frameNanos;
+    private final int multiplier;
 
     EmulationSpeed(final String id, final String label, final int multiplier) {
         this.id = id;
         this.label = label;
-        // Unlimited has no frame to budget for: the loop recognises it and never waits at all.
-        this.frameNanos = multiplier == 0 ? 0 : FRAME_NANOS / multiplier;
+        this.multiplier = multiplier;
     }
 
     /**
@@ -84,9 +75,16 @@ public enum EmulationSpeed {
     /**
      * How long a frame is allowed to take at this speed, in nanoseconds, or zero for
      * {@link #UNLIMITED}, which is not paced and so has no answer to give.
+     * <p>
+     * The region is what says how long a frame is: 16.639ms on NTSC and 19.997ms on PAL, neither of
+     * them the round number they are usually called. The fraction matters because the APU agrees
+     * with it -- 60.0988 frames of 734 samples each is exactly the 44100 a second the sound card
+     * wants -- so rounding either to 60 or 50 would leave the two clocks disagreeing by a third of
+     * a percent, which is a card running dry every few minutes.
      */
-    public long frameNanos() {
-        return frameNanos;
+    public long frameNanos(final Region region) {
+        // Unlimited has no frame to budget for: the loop recognises it and never waits at all.
+        return multiplier == 0 ? 0 : region.frameNanos() / multiplier;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,21 +25,40 @@ class EmulationSpeedTests {
     class FrameBudget {
         @Test
         void normalIsOneNTSCFrame() {
-            assertEquals(EmulationSpeed.FRAME_NANOS, EmulationSpeed.NORMAL.frameNanos());
+            assertEquals(Region.NTSC.frameNanos(), EmulationSpeed.NORMAL.frameNanos(Region.NTSC));
+        }
+
+        @Test
+        void normalIsOnePALFrameOnAPALMachine() {
+            // Three and a third milliseconds longer, which is the difference between 60.0988
+            // frames a second and 50.0070 -- and a machine paced at the wrong one of them plays
+            // the game at the wrong speed however accurately it is emulated.
+            assertEquals(Region.PAL.frameNanos(), EmulationSpeed.NORMAL.frameNanos(Region.PAL));
+            assertTrue(EmulationSpeed.NORMAL.frameNanos(Region.PAL)
+                    > EmulationSpeed.NORMAL.frameNanos(Region.NTSC));
         }
 
         @Test
         void aMultipliedSpeedGetsThatMuchLessOfAFrame() {
-            assertEquals(EmulationSpeed.FRAME_NANOS / 2, EmulationSpeed.TWO_TIMES.frameNanos());
-            assertEquals(EmulationSpeed.FRAME_NANOS / 4, EmulationSpeed.FOUR_TIMES.frameNanos());
-            assertEquals(EmulationSpeed.FRAME_NANOS / 8, EmulationSpeed.EIGHT_TIMES.frameNanos());
+            var frame = Region.NTSC.frameNanos();
+
+            assertEquals(frame / 2, EmulationSpeed.TWO_TIMES.frameNanos(Region.NTSC));
+            assertEquals(frame / 4, EmulationSpeed.FOUR_TIMES.frameNanos(Region.NTSC));
+            assertEquals(frame / 8, EmulationSpeed.EIGHT_TIMES.frameNanos(Region.NTSC));
+        }
+
+        @Test
+        void aMultipliedSpeedDividesWhicheverFrameItIsGiven() {
+            assertEquals(Region.PAL.frameNanos() / 4,
+                    EmulationSpeed.FOUR_TIMES.frameNanos(Region.PAL));
         }
 
         @Test
         void unlimitedHasNoBudgetAtAll() {
             // Nothing divides by this. The loop recognises unlimited and never waits, so the zero
             // is here to say there is no answer rather than to be used as one.
-            assertEquals(0, EmulationSpeed.UNLIMITED.frameNanos());
+            assertEquals(0, EmulationSpeed.UNLIMITED.frameNanos(Region.NTSC));
+            assertEquals(0, EmulationSpeed.UNLIMITED.frameNanos(Region.PAL));
         }
     }
 

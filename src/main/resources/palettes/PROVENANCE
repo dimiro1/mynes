@@ -1,22 +1,30 @@
-NTSC palettes from firebrandx.com
+The palettes MyNES draws with: ten NTSC ones from firebrandx.com, and one PAL one from
+the NESdev wiki.
 
 Source:      https://www.firebrandx.com/nespalette.html
-Fetched:     2026-08-10
-Files:       10 palettes, 64 RGB triplets each, no emphasis variants
+             https://www.nesdev.org/wiki/File:2C07_wiki.pal
+Fetched:     2026-08-11
+Files:       11 palettes. The NTSC ones are 64 RGB triplets each with no emphasis
+             variants; the PAL one is all 512 entries, emphasis included.
 Regenerate:  scripts/download-palettes.sh
 
-License:     None stated. firebrandx.com publishes these with no licence, no copyright
-             notice and no request for credit, in either page or the descriptions
-             bundled with them. Mesen, Nestopia UE and puNES ship them on the same
-             footing. Credits are recorded below because they are owed, not required.
+License:     None stated for the NTSC ten. firebrandx.com publishes them with no licence,
+             no copyright notice and no request for credit, in either page or the
+             descriptions bundled with them. Mesen, Nestopia UE and puNES ship them on the
+             same footing. The NESdev wiki is public domain. Credits are recorded below
+             because they are owed, not required.
 
 Credits:     The (FBX) palettes are FirebrandX's work.
              Wavebeam is Nakedarthur's.
              PC-10 is read off the PlayChoice-10 arcade PPU.
              Sony CXA approximates certain consumer Sony sets; its author is unknown.
+             2c07 was generated with Pally v0.22.1 from the 2C07's own signal, and is the
+             palette table on the NESdev wiki's PPU palettes page.
 
-The NESdev palette MyNES defaults to is not here: it is a constant in Palettes.java, so
-that the list is never empty and the default never depends on a resource being present.
+The NESdev palette MyNES defaults to on NTSC is not here: it is a constant in
+Palettes.java, so that the list is never empty and the default never depends on a resource
+being present. The PAL default is 2c07, which is, so a build that lost it falls back to
+NESdev and looks wrong rather than refusing to start.
 
 Downloaded from:
   composite-direct.pal  https://www.firebrandx.com/graphics/nespalettes/nespalette-composite-direct.zip (Composite Direct (FBX).pal)
@@ -29,3 +37,5 @@ Downloaded from:
   pc-10.pal             https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (PC-10.pal)
   sony-cxa.pal          https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (Sony CXA.pal)
   wavebeam.pal          https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (Wavebeam.pal)
+  2c07.pal              https://www.nesdev.org/w/images/default/6/69/2C07_wiki.pal
+                        sha1 3955a5f2685e94bda1a539e39fd98d468fe0e56e

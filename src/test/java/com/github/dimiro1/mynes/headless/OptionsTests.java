@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.ui.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -50,7 +52,9 @@ class OptionsTests {
         assertEquals(Path.of("target", "headless", "report.json"), options.reportPath());
         assertEquals(1, options.scale());
         assertEquals(2, options.pressFrames());
-        assertEquals("nesdev", options.palette().id());
+        assertEquals("nesdev", options.paletteFor(Region.NTSC).id());
+        assertNull(options.palette(), "nobody named one, so the region decides");
+        assertNull(options.region(), "and nobody named that either, so the cartridge does");
         assertFalse(options.fullFrame());
         assertFalse(options.audio());
     }
@@ -111,7 +115,52 @@ class OptionsTests {
 
     @Test
     void aKnownPaletteIsTakenAsAsked() {
-        assertEquals("wavebeam", parse("--rom", "x.nes", "--palette", "wavebeam").palette().id());
+        assertEquals("wavebeam",
+                parse("--rom", "x.nes", "--palette", "wavebeam").paletteFor(Region.NTSC).id());
+    }
+
+    @Test
+    void aRegionIsTakenAsAskedAndOverridesTheCartridge() {
+        assertEquals(Region.PAL, parse("--rom", "x.nes", "--region", "pal").region());
+        assertEquals(Region.NTSC, parse("--rom", "x.nes", "--region", "ntsc").region());
+    }
+
+    /**
+     * Left off, there is nothing to override with, and the cartridge's header answers instead.
+     */
+    @Test
+    void noRegionAtAllLeavesItToTheCartridge() {
+        assertNull(parse("--rom", "x.nes").region());
+    }
+
+    /**
+     * Refused rather than defaulted, for the reason a misspelled palette is: a run that quietly
+     * happened on the other machine would look like it had worked, and every number in the report
+     * would be about a console nobody asked for.
+     */
+    @Test
+    void anUnknownRegionIsRefusedRatherThanFallenBackFrom() {
+        var message = refused("--rom", "x.nes", "--region", "secam").getMessage();
+
+        assertTrue(message.contains("secam"));
+        assertTrue(message.contains("pal"), "the message should offer the real ids");
+    }
+
+    @Test
+    void thePaletteFollowsTheRegionWhenNobodyNamedOne() {
+        // A PAL cartridge drawn with an NTSC table is the wrong picture rather than a differently
+        // measured one, so the default has to know which machine it is for.
+        var options = parse("--rom", "x.nes");
+
+        assertEquals("nesdev", options.paletteFor(Region.NTSC).id());
+        assertEquals(Palettes.PAL_ID, options.paletteFor(Region.PAL).id());
+    }
+
+    @Test
+    void anExplicitPaletteWinsOverTheRegion() {
+        var options = parse("--rom", "x.nes", "--palette", "wavebeam");
+
+        assertEquals("wavebeam", options.paletteFor(Region.PAL).id(), "somebody asked for it");
     }
 
     @Test

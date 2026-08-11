@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui.palette;
 
+import com.github.dimiro1.mynes.Region;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -9,7 +10,7 @@ import java.util.List;
 
 /**
  * Every palette the emulator can draw with: the built-in NESdev set, then the ten measured ones
- * bundled under {@code /palettes}, alphabetically.
+ * bundled under {@code /palettes}, alphabetically, and the one for the PAL chip.
  * <p>
  * A bundled palette that will not load is logged and left out of the list rather than being
  * allowed to stop the emulator: no config problem is worth refusing to start over, and the same
@@ -43,11 +44,18 @@ public final class Palettes {
     private record Bundled(String id, String name, String resource) {
     }
 
+    /**
+     * The id of the PAL palette, which is the one thing in {@link #BUNDLED} that is named
+     * elsewhere: it is what a PAL machine draws with unless somebody has said otherwise.
+     */
+    public static final String PAL_ID = "2c07";
+
     private static final List<Bundled> BUNDLED = List.of(
             new Bundled("composite-direct", "Composite Direct (FBX)", "composite-direct.pal"),
             new Bundled("digital-prime", "Digital Prime (FBX)", "digital-prime.pal"),
             new Bundled("magnum", "Magnum (FBX)", "magnum.pal"),
             new Bundled("nes-classic", "NES Classic (FBX)", "nes-classic.pal"),
+            new Bundled(PAL_ID, "PAL (2C07)", "2c07.pal"),
             new Bundled("pc-10", "PC-10", "pc-10.pal"),
             new Bundled("pvm-style-d93", "PVM Style D93 (FBX)", "pvm-style-d93.pal"),
             new Bundled("smooth", "Smooth (FBX)", "smooth.pal"),
@@ -95,6 +103,31 @@ public final class Palettes {
      * What the emulator draws with when nothing has said otherwise.
      */
     public static NESPalette defaultPalette() {
+        return NESDEV;
+    }
+
+    /**
+     * The same, for a machine of a particular kind.
+     * <p>
+     * The 2C07 is not a 2C02 with a different clock: its colourburst reference sits fifteen degrees
+     * away, so every hue a PAL game asks for comes out somewhere else. A PAL cartridge drawn with
+     * an NTSC table is the wrong picture, not a differently measured one, which is why this is a
+     * default rather than something to leave to the palette dialog.
+     * <p>
+     * Falls back to NESdev if the PAL file did not load, since the alternative is a front end with
+     * nothing to draw with.
+     */
+    public static NESPalette defaultPalette(final Region region) {
+        if (region != Region.PAL) {
+            return NESDEV;
+        }
+
+        for (var palette : ALL) {
+            if (palette.id().equals(PAL_ID)) {
+                return palette;
+            }
+        }
+
         return NESDEV;
     }
 

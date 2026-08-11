@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.state;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -172,6 +173,66 @@ class SaveStateFormatTests {
         assertTrue(refused.getMessage().contains("another cartridge"), refused.getMessage());
         assertEquals(frame, other.getPPU().getFrame(), "the machine kept running its own game");
         assertEquals(registers, other.getCPU().getState());
+    }
+
+    /**
+     * The one thing two machines can disagree about while holding the same cartridge, now that the
+     * region can be insisted on. The beam is at a scanline that does not exist on the other chip,
+     * the frame counter is partway through a sequence of a different length, and the divider is
+     * carrying master clocks a 2C02 never has.
+     */
+    @Test
+    void aStateFromTheOtherKindOfMachineIsRefusedAndChangesNothing() throws IOException {
+        var pal = load(ROM, Region.PAL);
+        run(pal, 10);
+
+        var state = save(pal);
+
+        var ntsc = load(ROM, Region.NTSC);
+        run(ntsc, 40);
+
+        var frame = ntsc.getPPU().getFrame();
+
+        var refused = assertThrows(
+                SaveStateException.class,
+                () -> SaveState.read(ntsc, new ByteArrayInputStream(state)));
+
+        assertTrue(refused.getMessage().contains("PAL"), refused.getMessage());
+        assertEquals(frame, ntsc.getPPU().getFrame(), "the machine kept running its own game");
+    }
+
+    @Test
+    void aStateSaysWhichMachineItCameFrom() throws IOException {
+        var pal = load(ROM, Region.PAL);
+        run(pal, 7);
+
+        var path = directory.resolve("pal.mn");
+        SaveState.write(pal, path);
+
+        assertEquals(Region.PAL, SaveState.header(path).region());
+
+        // And an NTSC one still says NTSC, which is also what every state written before there was
+        // a PAL machine to write one says: the bit was reserved and written zero.
+        var ntsc = load(ROM);
+        run(ntsc, 7);
+        SaveState.write(ntsc, path);
+
+        assertEquals(Region.NTSC, SaveState.header(path).region());
+    }
+
+    @Test
+    void aPALStateLoadsIntoAPALMachine() throws IOException {
+        var pal = load(ROM, Region.PAL);
+        run(pal, 12);
+
+        var state = save(pal);
+
+        var other = load(ROM, Region.PAL);
+        run(other, 3);
+
+        SaveState.read(other, new ByteArrayInputStream(state));
+
+        assertEquals(12, other.getPPU().getFrame());
     }
 
     @Test
@@ -428,6 +489,10 @@ class SaveStateFormatTests {
 
     private static NES load(final String rom) throws IOException {
         return new NES(Cart.load(Files.readAllBytes(Path.of(rom)), rom));
+    }
+
+    private static NES load(final String rom, final Region region) throws IOException {
+        return new NES(Cart.load(Files.readAllBytes(Path.of(rom)), rom), region);
     }
 
     private static byte[] save(final NES nes) throws IOException {

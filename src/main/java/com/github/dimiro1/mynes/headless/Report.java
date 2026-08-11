@@ -102,6 +102,7 @@ public final class Report {
         var nes = session.nes();
         var cpuState = nes.getCPU().getState();
         var ppu = nes.getPPU();
+        var region = nes.getRegion();
         var analysis = session.analyse();
         var audioStats = session.audioStats();
 
@@ -114,6 +115,12 @@ public final class Report {
         run.put("apuCycles", nes.getAPU().getCycles());
         run.put("completed", outcome.stoppedBecause() != StoppedBecause.TIMEOUT);
         run.put("stoppedBecause", outcome.stoppedBecause().name().toLowerCase());
+
+        // Which machine this actually was, which is the other thing besides the ROM and the input
+        // that decides whether two runs are comparable at all. A PAL frame is 106392 dots and an
+        // NTSC one 89342, so nothing below this line means the same on both.
+        run.put("region", region.id());
+        run.put("regionForced", options.region() != null);
 
         // Where the run started, which decides whether it is comparable with another one at all. A
         // run that began from a save state and one that began at power on are not two measurements
@@ -135,6 +142,11 @@ public final class Report {
         // cartridge is doing now is more use than what it started as.
         cartridge.put("mirroring", cart.mapper().mirroring().name());
         cartridge.put("battery", cart.hasBattery());
+
+        // What the header claimed, and what that came to. They differ for the two claims that are
+        // not machines: multi-region, which is run as NTSC, and Dendy, which is run as PAL.
+        cartridge.put("timing", cart.timing().id());
+        cartridge.put("region", cart.region().id());
 
         var sram = cartridge.putObject("sram");
         sram.put("bytes", cart.mapper().prgRAM().length);
@@ -168,7 +180,7 @@ public final class Report {
         }
 
         var video = report.putObject("video");
-        video.put("palette", options.palette().id());
+        video.put("palette", options.paletteFor(region).id());
         video.put("overscan", options.fullFrame() ? "full" : "cropped");
         video.put("scale", options.scale());
 

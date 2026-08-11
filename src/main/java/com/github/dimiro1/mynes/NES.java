@@ -10,16 +10,39 @@ public class NES {
      */
     private final Cart cart;
 
+    /**
+     * Which console this is. Handed to the chips at construction and never changed afterwards: a
+     * machine cannot be rewired while it runs, so switching regions means building a new one, which
+     * is what a front end's Region menu does.
+     */
+    private final Region region;
+
+    /**
+     * A machine for this cartridge, of whichever kind its header asks for.
+     */
     public NES(final Cart cart) {
+        this(cart, cart.region());
+    }
+
+    /**
+     * The same, for a region chosen by hand. Most cartridges do not say which machine they were
+     * made for -- see {@link Cart.Timing#UNSTATED} -- so somebody has to be able to.
+     */
+    public NES(final Cart cart, final Region region) {
         Controller controller1 = new StandardController();
         Controller controller2 = new StandardController();
         this.cart = cart;
-        bus = new BUS(cart.mapper(), controller1, controller2);
+        this.region = region;
+        bus = new BUS(cart.mapper(), controller1, controller2, region);
         bus.initialize();
     }
 
     public Cart getCart() {
         return cart;
+    }
+
+    public Region getRegion() {
+        return region;
     }
 
     public CPU getCPU() {
@@ -65,9 +88,15 @@ public class NES {
     /**
      * Advances the whole machine by one CPU cycle.
      * <p>
-     * On NTSC the PPU clock is exactly three times the CPU clock. The three dots happen before
-     * the CPU cycle rather than after it, so a flag the PPU raises on one of them is already
-     * visible to a register read in that cycle.
+     * On NTSC the PPU clock is exactly three times the CPU clock, so a cycle is three dots. On PAL
+     * it is 3.2 -- sixteen dots to five CPU cycles -- so a cycle is three dots four times out of
+     * five and four the fifth time. {@link PPU#beginCPUCycle()} is what counts that out, and the
+     * long cycle's extra dot goes on the <em>end</em>, after the /NMI sample, so that everything
+     * below is true of both machines. Where in the five it falls is a convention rather than a
+     * measurement: nothing documents the 2C07's phase relative to the 2A07, and no test ROM asks.
+     * <p>
+     * The dots happen before the CPU cycle rather than after it, so a flag the PPU raises on one of
+     * them is already visible to a register read in that cycle.
      * <p>
      * The odd looking part is the /NMI sample sitting one dot in. It belongs to the CPU cycle
      * that ran at the end of the <em>previous</em> call: the 6502 reads /NMI a little after it
@@ -89,10 +118,14 @@ public class NES {
         var cpu = bus.getCPU();
         var apu = bus.getAPU();
 
+        var dots = ppu.beginCPUCycle();
+
         ppu.tick();
         cpu.sampleNMI();
-        ppu.tick();
-        ppu.tick();
+
+        for (var dot = 1; dot < dots; dot++) {
+            ppu.tick();
+        }
 
         apu.tick();
         cpu.tick();
