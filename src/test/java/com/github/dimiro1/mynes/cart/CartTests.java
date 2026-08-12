@@ -9,6 +9,12 @@ import com.github.dimiro1.mynes.mappers.Mapper1;
 import com.github.dimiro1.mynes.mappers.Mapper2;
 import com.github.dimiro1.mynes.mappers.Mapper3;
 import com.github.dimiro1.mynes.mappers.Mapper4;
+import com.github.dimiro1.mynes.mappers.Mapper7;
+import com.github.dimiro1.mynes.mappers.Mapper9;
+import com.github.dimiro1.mynes.mappers.Mapper10;
+import com.github.dimiro1.mynes.mappers.Mapper11;
+import com.github.dimiro1.mynes.mappers.Mapper66;
+import com.github.dimiro1.mynes.mappers.Mapper71;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -73,7 +79,9 @@ public class CartTests {
     @ParameterizedTest(name = "mapper ${0} loads as ${1}")
     @MethodSource("supportedMappers")
     void loadBuildsTheMapperTheHeaderNames(final int number, final Class<?> expected) {
-        var rom = synthesizeRom(number << 4, 0x00);
+        // Split across the two flag bytes the way a header does it, because past mapper 15 there
+        // is no room for the number in flags 6 alone.
+        var rom = synthesizeRom((number & 0x0F) << 4, number & 0xF0);
 
         var cart = Cart.load(rom, "mapper" + number + ".nes");
 
@@ -86,21 +94,26 @@ public class CartTests {
                 arguments(1, Mapper1.class),
                 arguments(2, Mapper2.class),
                 arguments(3, Mapper3.class),
-                arguments(4, Mapper4.class)
+                arguments(4, Mapper4.class),
+                arguments(7, Mapper7.class),
+                arguments(9, Mapper9.class),
+                arguments(10, Mapper10.class),
+                arguments(11, Mapper11.class),
+                arguments(66, Mapper66.class),
+                arguments(71, Mapper71.class)
         );
     }
 
     @Test
     void loadReadsTheMapperNumberFromBothFlagBytes() {
-        // Mapper 66 = 0x42: low nibble from flags 6, high nibble from flags 7.
+        // Mapper 66 = 0x42: low nibble from flags 6, high nibble from flags 7. Reading only one
+        // of them gives 2 or 64, and both of those are somebody else's cartridge.
         var rom = synthesizeRom(0x20, 0x40);
 
-        var thrown = assertThrowsExactly(
-                UnsupportedMapperException.class,
-                () -> Cart.load(rom, "mapper66.nes")
-        );
+        var cart = Cart.load(rom, "mapper66.nes");
 
-        assertTrue(thrown.getMessage().contains("66"), "should name the mapper: " + thrown.getMessage());
+        assertEquals(66, cart.mapperNumber());
+        assertInstanceOf(Mapper66.class, cart.mapper());
     }
 
     /**
