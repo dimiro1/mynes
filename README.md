@@ -73,7 +73,11 @@ hardware's two nonlinear ladders, filtered the way the console's output stage is
 44.1 kHz through `javax.sound.sampled`. A computer with no sound device runs silently and says so in
 the log.
 
-**Mappers 0 to 4:** NROM, MMC1, UxROM, CNROM and MMC3, the last one with its scanline IRQ.
+**Eleven mappers:** NROM, MMC1, UxROM, CNROM and MMC3 (0 to 4), the last of those with its
+scanline IRQ; then AxROM (7), MMC2 and MMC4 (9 and 10), Color Dreams (11), GxROM (66) and the
+Camerica boards (71). MMC2 and MMC4 are the odd ones: their pattern tables switch themselves from
+whichever tile the PPU last fetched, with no code involved, which is how Punch-Out!! animates two
+boxers out of far more tiles than fit in the window.
 
 **Both consoles.** The NTSC machine and the PAL one, which are not the same machine at a different
 speed: the PAL PPU draws 312 scanlines instead of 262 and takes 3.2 dots to a CPU cycle instead of
