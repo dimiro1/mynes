@@ -1,13 +1,13 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.APU;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 
 /**
  * The sound card, as the emulation loop sees it: somewhere to put the samples the APU has
@@ -29,7 +29,7 @@ import javax.sound.sampled.SourceDataLine;
  * whole emulator without one.
  */
 public final class AudioOutput {
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     /**
      * How much sound the card is allowed to be holding, counted in frames' worth.
@@ -79,13 +79,13 @@ public final class AudioOutput {
             line.open(FORMAT, BUFFER_SAMPLES * BYTES_PER_SAMPLE);
             line.start();
 
-            logger.info("audio open at {}Hz with {}ms of buffer",
-                    APU.SAMPLE_RATE, 1000 * BUFFER_SAMPLES / APU.SAMPLE_RATE);
+            logger.log(Level.INFO, "audio open at " + APU.SAMPLE_RATE
+                    + "Hz with " + 1000 * BUFFER_SAMPLES / APU.SAMPLE_RATE + "ms of buffer");
         } catch (LineUnavailableException | IllegalArgumentException | SecurityException e) {
             // No device, no mixer, or no permission to reach one. None of those are a reason not
             // to run the machine.
             line = null;
-            logger.warn("no audio device available, running silently", e);
+            logger.log(Level.WARNING, "no audio device available, running silently", e);
         }
     }
 
@@ -165,6 +165,6 @@ public final class AudioOutput {
         line.close();
         line = null;
 
-        logger.info("audio closed");
+        logger.log(Level.INFO, "audio closed");
     }
 }

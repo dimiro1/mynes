@@ -2,15 +2,35 @@ package com.github.dimiro1.mynes.ui;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import com.github.dimiro1.mynes.headless.Headless;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.ArrayList;
 import java.util.Arrays;
 
 public class Main {
-    private static final Logger logger = LoggerFactory.getLogger(Main.class);
+    /**
+     * One line per message, rather than the two that {@code java.util.logging} writes by default.
+     * <p>
+     * {@link System.Logger} has no formatting of its own: with nothing else on the class path it
+     * hands everything to {@code java.util.logging}, whose {@code SimpleFormatter} prints a
+     * timestamp and the calling method on one line and the message on the next. That is a fine
+     * shape for a server's log file and the wrong one for a program whose output somebody is
+     * reading as it runs, and for a headless run whose last line is the one that matters.
+     * <p>
+     * Read once, when the formatter is constructed, so this has to be set before anything logs.
+     */
+    private static final String CONSOLE_FORMAT = "%4$s %3$s - %5$s%6$s%n";
+
+    // Above the logger, and not in main(), because both of those are load bearing: static
+    // initialisers run in the order they are written, and all of them run before main() is called.
+    // The first logger anybody asks for is what builds the formatter that reads this.
+    static {
+        System.setProperty("java.util.logging.SimpleFormatter.format", CONSOLE_FORMAT);
+    }
+
+    private static final Logger logger = System.getLogger(Main.class.getName());
 
     /**
      * The one way in, for both of the things this can be.
@@ -54,7 +74,7 @@ public class Main {
         // whole toolkit up, neither of which a headless run has any use for.
         FlatLightLaf.setup();
 
-        logger.info("MyNES");
+        logger.log(Level.INFO, "MyNES");
 
         SwingUtilities.invokeLater(() -> {
             var frame = new GameUIFrame();

@@ -128,8 +128,13 @@ The code has a strong voice. Match it rather than the language's defaults.
   standing.
 - **British spelling**: `colour`, `colourise`, `magnitude`. There is a `NESPalette.colours()`.
 - `var` for locals, `final` on parameters and fields.
-- **No new runtime dependencies without asking.** There are five and each one earns its place.
-- slf4j loggers are named with a short string -- `"UI"`, `"EMU"`, `"HEADLESS"` -- not with a class.
+- **No new runtime dependencies without asking.** There are two, FlatLaf and MigLayout, and each one
+  earns its place. Jackson is test scope, where it parses the Tom Harte fixtures; the headless mode
+  writes its reports through `headless/Json`, which is a writer and must not grow into a parser.
+- Loggers are `System.Logger`, named with a short string -- `"UI"`, `"EMU"`, `"HEADLESS"` -- not with
+  a class. Build the message with `+` rather than with `{0}` placeholders: `System.Logger` formats
+  through `MessageFormat`, which would print a cycle count as `8,934,159`, in whatever the machine's
+  locale thinks the separator is.
 - Tests are `class FooTests`, package-private, no `@DisplayName`, with method names that read as
   sentences: `aFrameIsColouredThroughTheChosenPalette`, `theCropTakesEightScanlinesFromEachEnd`.
 

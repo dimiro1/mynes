@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.headless;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.dimiro1.mynes.state.SaveStateException;
 
 import java.io.BufferedReader;
@@ -443,7 +442,7 @@ public final class Repl {
         return session.advanceFrame();
     }
 
-    private void buttons(final ObjectNode node, final int mask) {
+    private void buttons(final Json.Object node, final int mask) {
         var array = node.putArray("buttons");
         InputSchedule.describe(mask).forEach(array::add);
     }
@@ -510,6 +509,6 @@ public final class Repl {
      */
     @FunctionalInterface
     private interface Body {
-        void write(ObjectNode node);
+        void write(Json.Object node);
     }
 }

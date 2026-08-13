@@ -2,10 +2,10 @@ package com.github.dimiro1.mynes.ui.input;
 
 import com.github.dimiro1.mynes.Controller;
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.awt.event.KeyEvent;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.lang.reflect.Modifier;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -28,7 +28,7 @@ import java.util.Properties;
  * rather than a startup.
  */
 public final class KeyBindings {
-    private static final Logger logger = LoggerFactory.getLogger("INPUT");
+    private static final Logger logger = System.getLogger("INPUT");
 
     /**
      * The key code of a button nothing is bound to. {@link KeyEvent#VK_UNDEFINED} is zero and no
@@ -175,8 +175,8 @@ public final class KeyBindings {
 
         var code = CODES_BY_NAME.get(name);
         if (code == null) {
-            logger.warn("{} is not a key name, {} falls back to its default",
-                    name, button.propertyKey());
+            logger.log(Level.WARNING, name + " is not a key name, "
+                    + button.propertyKey() + " falls back to its default");
             return DEFAULTS.get(button);
         }
 
@@ -211,7 +211,7 @@ public final class KeyBindings {
             // AWT hands out VK_ constants or VK_UNDEFINED, so reaching this needs a key that the
             // toolkit knows and this JDK's KeyEvent does not name. Dropping the binding beats
             // writing a number that will not read back.
-            logger.warn("key code {} has no name, leaving it out of the file", code);
+            logger.log(Level.WARNING, "key code " + code + " has no name, leaving it out of the file");
             return "";
         }
 
