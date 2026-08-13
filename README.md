@@ -21,9 +21,6 @@ mvn -B package -DskipTests
 java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
 ```
 
-The JDK warns that the look and feel loads a native library. Add `--enable-native-access=ALL-UNNAMED`
-before `-jar` to silence it.
-
 Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own. Games run at
 60.0988 frames a second, or 50.0070 on a PAL cartridge, with the overscan cropped and the picture
 scaled to the window.

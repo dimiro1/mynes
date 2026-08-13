@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.headless;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Disassembler;
 import com.github.dimiro1.mynes.state.SaveStateException;
@@ -250,7 +249,7 @@ public final class Repl {
             node.put("sp", cpuState.sp());
             node.put("p", cpuState.p());
             node.put("cycles", cpuState.cycles());
-            node.set("next", line(next));
+            line(node.putObject("next"), next);
             describe(node, stepped.stop());
         });
     }
@@ -267,7 +266,7 @@ public final class Repl {
             node.put("count", lines.size());
 
             var array = node.putArray("lines");
-            lines.forEach(line -> array.add(line(line)));
+            lines.forEach(disassembled -> line(array.addObject(), disassembled));
         });
     }
 
@@ -576,7 +575,7 @@ public final class Repl {
      * happened rather than a field with no value: a caller watching a stream of these is asking
      * "did anything stop it?", and {@code jq 'select(.stopped)'} is the whole of the answer.
      */
-    private void describe(final ObjectNode node, final Debugger.Stop stop) {
+    private void describe(final Json.Object node, final Debugger.Stop stop) {
         if (stop == null) {
             return;
         }
@@ -594,26 +593,27 @@ public final class Repl {
         }
     }
 
-    private ObjectNode line(final Disassembler.Line disassembled) {
-        var node = Json.object();
-
+    /**
+     * Fills a node that has already been put somewhere, rather than making one to hand over.
+     * {@link Json.Array} takes objects by creating them, so this is the shape that works both for a
+     * line inside a listing and for the single line a step reports.
+     */
+    private void line(final Json.Object node, final Disassembler.Line disassembled) {
         node.put("address", disassembled.address());
         node.put("bytes", disassembled.hex());
         node.put("text", disassembled.text());
-
-        return node;
     }
 
-    private void putPoints(final ObjectNode node) {
+    private void putPoints(final Json.Object node) {
         var debugger = session.debugger();
         var breakpoints = node.putArray("breakpoints");
         var watchpoints = node.putArray("watchpoints");
 
-        debugger.breakpoints().forEach(breakpoints::add);
-        debugger.watchpoints().forEach(watchpoints::add);
+        debugger.breakpoints().forEach(address -> breakpoints.add((int) address));
+        debugger.watchpoints().forEach(address -> watchpoints.add((int) address));
     }
 
-    private void buttons(final ObjectNode node, final int mask) {
+    private void buttons(final Json.Object node, final int mask) {
         var array = node.putArray("buttons");
         InputSchedule.describe(mask).forEach(array::add);
     }
@@ -680,6 +680,6 @@ public final class Repl {
      */
     @FunctionalInterface
     private interface Body {
-        void write(ObjectNode node);
+        void write(Json.Object node);
     }
 }

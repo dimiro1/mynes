@@ -1,7 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 
 /**
  * How many screen pixels wide one of the picture's pixels is drawn.
@@ -23,7 +23,7 @@ public enum ScreenScale {
     THREE_TIMES(3),
     FOUR_TIMES(4);
 
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     private final int factor;
     private final String id;
@@ -80,7 +80,7 @@ public enum ScreenScale {
             }
         }
 
-        logger.warn("{} is not a screen size, falling back to {}", id, defaultScale().id());
+        logger.log(Level.WARNING, id + " is not a screen size, falling back to " + defaultScale().id());
 
         return defaultScale();
     }

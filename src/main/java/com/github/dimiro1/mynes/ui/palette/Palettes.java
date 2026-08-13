@@ -1,10 +1,10 @@
 package com.github.dimiro1.mynes.ui.palette;
 
 import com.github.dimiro1.mynes.Region;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,7 +17,7 @@ import java.util.List;
  * goes for a missing resource.
  */
 public final class Palettes {
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     /**
      * The NESdev set, and the one MyNES has always drawn with.
@@ -78,13 +78,15 @@ public final class Palettes {
 
             try (var in = Palettes.class.getResourceAsStream(resource)) {
                 if (in == null) {
-                    logger.warn("{} is not on the classpath, leaving {} out", resource, bundled.id());
+                    logger.log(Level.WARNING, resource
+                            + " is not on the classpath, leaving " + bundled.id() + " out");
                     continue;
                 }
 
                 palettes.add(NESPalette.fromRGB(bundled.id(), bundled.name(), in.readAllBytes()));
             } catch (IOException | IllegalArgumentException e) {
-                logger.warn("could not read {}, leaving {} out", resource, bundled.id(), e);
+                logger.log(Level.WARNING,
+                        "could not read " + resource + ", leaving " + bundled.id() + " out", e);
             }
         }
 
@@ -144,7 +146,7 @@ public final class Palettes {
             }
         }
 
-        logger.warn("{} is not a palette, falling back to {}", id, NESDEV.id());
+        logger.log(Level.WARNING, id + " is not a palette, falling back to " + NESDEV.id());
 
         return NESDEV;
     }
