@@ -283,6 +283,171 @@ class ReplTests {
         assertTrue(help.contains("load-state"));
     }
 
+    @Test
+    void theHelpListsTheDebuggingCommands() throws Exception {
+        var help = session("help", "quit").getFirst().get("commands").asText();
+
+        for (var command : List.of("step", "disasm", "break", "unbreak", "watch", "points")) {
+            assertTrue(help.contains(command), command + " should be listed");
+        }
+    }
+
+    // ================================================================================= debugging
+
+    /**
+     * nestest's reset vector lands on $C004 and the first four instructions are known, which makes
+     * them the one place a test can name an address and be sure the machine goes there.
+     */
+    private static final int SEI = 0xC004;
+    private static final int LDX_FF = 0xC006;
+    private static final int TXS = 0xC008;
+
+    /**
+     * $C015 is {@code STA $2000}, the first write nestest makes to anything.
+     */
+    private static final int STA_PPUCTRL = 0xC015;
+
+    /**
+     * The first step is the reset sequence, which is not an instruction and leaves the CPU standing
+     * on the first one rather than past it. Worth pinning: a debugger whose first step silently ran
+     * something would be lying about where the machine had got to.
+     */
+    @Test
+    void theFirstStepIsTheResetAndRunsNoInstruction() throws Exception {
+        var reply = session("step", "quit").getFirst();
+
+        assertEquals(SEI, reply.at("/pc").asInt(), "the reset vector");
+        assertEquals("SEI", reply.at("/next/text").asText(), "which has not run yet");
+    }
+
+    @Test
+    void stepAdvancesOneInstructionAndSaysWhatIsNext() throws Exception {
+        var replies = session("step", "step", "quit");
+
+        assertEquals(1, replies.get(1).at("/instructions").asInt());
+        assertEquals(0xC005, replies.get(1).at("/pc").asInt(), "SEI ran");
+        assertEquals("CLD", replies.get(1).at("/next/text").asText());
+    }
+
+    @Test
+    void stepTakesACount() throws Exception {
+        var reply = session("step 3", "quit").getFirst();
+
+        assertEquals(3, reply.at("/instructions").asInt());
+        assertEquals(LDX_FF, reply.at("/pc").asInt(), "the reset, then SEI and CLD");
+        assertEquals("LDX #$FF", reply.at("/next/text").asText());
+    }
+
+    @Test
+    void disasmStartsAtTheProgramCounterWhenItIsNotToldWhere() throws Exception {
+        var reply = session("step", "disasm", "quit").get(1);
+
+        assertEquals(SEI, reply.at("/address").asInt());
+        assertEquals("SEI", reply.at("/lines/0/text").asText());
+        assertEquals("CLD", reply.at("/lines/1/text").asText());
+        assertEquals("LDX #$FF", reply.at("/lines/2/text").asText());
+        assertEquals(LDX_FF, reply.at("/lines/2/address").asInt(),
+                "each one starts where the last ended");
+    }
+
+    @Test
+    void disasmTakesAnAddressInAnyOfTheThreeSpellings() throws Exception {
+        var replies = session("disasm $C004 1", "disasm 0xC004 1", "disasm 49156 1", "quit");
+
+        for (var i = 0; i < 3; i++) {
+            assertEquals("SEI", replies.get(i).at("/lines/0/text").asText());
+            assertEquals("78", replies.get(i).at("/lines/0/bytes").asText());
+        }
+    }
+
+    @Test
+    void aBreakpointStopsTheRunAndSaysWhere() throws Exception {
+        var reply = session("break $C008", "run 5", "quit").get(1);
+
+        assertEquals("breakpoint", reply.get("stopped").asText());
+        assertEquals(TXS, reply.get("stoppedAt").asInt());
+        assertEquals(0, reply.get("frames").asLong(), "it never got to the end of the first frame");
+    }
+
+    @Test
+    void aWatchpointSaysWhatWroteWhatAndWhere() throws Exception {
+        var reply = session("watch $2000", "run 5", "quit").get(1);
+
+        assertEquals("watchpoint", reply.get("stopped").asText());
+        assertEquals(0x2000, reply.get("address").asInt());
+        assertEquals(0x00, reply.get("value").asInt());
+        assertEquals(STA_PPUCTRL, reply.get("writtenBy").asInt(), "the STA, not where it stopped");
+        assertNotEquals(STA_PPUCTRL, reply.get("stoppedAt").asInt());
+    }
+
+    @Test
+    void aRunNothingStopsSaysNothingAboutStopping() throws Exception {
+        var reply = session("run 5", "quit").getFirst();
+
+        assertFalse(reply.has("stopped"), "absent, so that jq can select on it");
+        assertEquals(5, reply.get("frames").asLong());
+    }
+
+    @Test
+    void aPointCanBePickedUpAgain() throws Exception {
+        var replies = session("break $C008", "unbreak $C008", "run 5", "quit");
+
+        assertEquals(List.of(), addresses(replies.get(1), "breakpoints"));
+        assertFalse(replies.get(2).has("stopped"));
+    }
+
+    @Test
+    void thePointsAreListedInAddressOrder() throws Exception {
+        var reply = session("break $C010", "break $C008", "watch $2000", "points", "quit").get(3);
+
+        assertEquals(List.of(0xC008, 0xC010), addresses(reply, "breakpoints"));
+        assertEquals(List.of(0x2000), addresses(reply, "watchpoints"));
+    }
+
+    @Test
+    void clearingDropsEveryPoint() throws Exception {
+        var replies = session("break $C008", "watch $2000", "points clear", "run 5", "quit");
+
+        assertEquals(List.of(), addresses(replies.get(2), "breakpoints"));
+        assertEquals(List.of(), addresses(replies.get(2), "watchpoints"));
+        assertFalse(replies.get(3).has("stopped"), "and the machine runs freely again");
+    }
+
+    @Test
+    void aPointWithoutAnAddressIsAnsweredRatherThanFatal() throws Exception {
+        var replies = session("break", "watch", "points wibble", "run 5", "quit");
+
+        for (var i = 0; i < 3; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean());
+        }
+
+        assertTrue(replies.get(3).get("ok").asBoolean(), "the session carries on");
+    }
+
+    /**
+     * A breakpoint that stops a run part way through a frame must not cost the press a frame of its
+     * own, or a button would be let go of before the game had a whole frame to see it held.
+     */
+    @Test
+    void aBreakpointDoesNotEatAPress() throws Exception {
+        // Stopped part way through the first frame, so the press has not had its frame yet.
+        var stopped = session("press start 1", "break $C008", "run 1", "state", "quit").get(3);
+
+        assertEquals(List.of("start"), buttons(stopped));
+
+        // Left alone the frame finishes, the press is spent on it, and the next one lets go.
+        var finished = session("press start 1", "run 1", "run 1", "state", "quit").get(3);
+
+        assertEquals(List.of(), buttons(finished));
+    }
+
+    private static List<Integer> addresses(final JsonNode reply, final String field) {
+        var out = new ArrayList<Integer>();
+        reply.get(field).forEach(address -> out.add(address.asInt()));
+
+        return out;
+    }
+
     private static List<String> buttons(final JsonNode reply) {
         var names = new ArrayList<String>();
         reply.get("buttons").forEach(name -> names.add(name.asText()));

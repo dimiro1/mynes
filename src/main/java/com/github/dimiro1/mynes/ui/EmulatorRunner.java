@@ -1,11 +1,14 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Debugger;
 
+import javax.swing.SwingUtilities;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Consumer;
 
 /**
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
@@ -22,8 +25,16 @@ import java.util.concurrent.locks.LockSupport;
  * The one deliberate exception is the CHR viewer, which reads the mapper's character memory and
  * the PPU's palette RAM from the EDT while this thread runs. It is a debug window watching memory
  * whose reads cannot tear; a stale tile in it would not be worth a lock on every pattern fetch.
+ * <p>
+ * The debugger window is not a second exception, and reads the machine under a <em>stricter</em>
+ * rule rather than a looser one: only from inside {@link #setStopListener}'s callback, which
+ * {@link #halt} hands to the event dispatch thread after stopping the machine. That handoff is what
+ * makes everything this thread did visible to that one. A debugger shows a machine at a moment in
+ * its execution rather than a picture of memory, and values read at different instants would not be
+ * a slightly stale picture -- they would be a machine that never existed.
  *
  * @see com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame
+ * @see com.github.dimiro1.mynes.ui.debugger.DebuggerFrame
  */
 public class EmulatorRunner {
     private static final Logger logger = System.getLogger("EMU");
@@ -71,8 +82,28 @@ public class EmulatorRunner {
      */
     private final ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<>();
 
+    /**
+     * Where the breakpoints live. Owned by the window rather than by this, because it outlives every
+     * machine the window builds: a power cycle that forgot every breakpoint would be infuriating,
+     * since a power cycle is often exactly how you get back to one.
+     */
+    private final Debugger debugger;
+
     private volatile boolean running;
+
+    /**
+     * Written by the event dispatch thread when somebody uses the Pause item, and by this thread
+     * when {@link #halt} stops the machine at a breakpoint. Two writers, which is safe because it is
+     * {@code volatile} and because in every real sequence the two are ordered by the user's own
+     * actions -- but {@link #resume()} has to be one posted command rather than two calls for the
+     * same reason.
+     */
     private volatile boolean paused;
+
+    /**
+     * Told, on the event dispatch thread, whenever the machine stops somewhere it was asked to.
+     */
+    private volatile Consumer<Debugger.Stop> stopListener;
 
     /**
      * How fast to run. Written from the event dispatch thread and read here, so the loop picks a
@@ -82,9 +113,10 @@ public class EmulatorRunner {
 
     private Thread thread;
 
-    public EmulatorRunner(final NES nes, final ScreenComponent screen) {
+    public EmulatorRunner(final NES nes, final ScreenComponent screen, final Debugger debugger) {
         this.nes = nes;
         this.screen = screen;
+        this.debugger = debugger;
         this.frameNanos = nes.getRegion().frameNanos();
     }
 
@@ -165,6 +197,51 @@ public class EmulatorRunner {
     }
 
     /**
+     * Told whenever the machine stops at a breakpoint, a watchpoint, a step or a Break, on the event
+     * dispatch thread and with the machine already stopped.
+     */
+    public void setStopListener(final Consumer<Debugger.Stop> listener) {
+        this.stopListener = listener;
+    }
+
+    /**
+     * Runs exactly one instruction, whether the machine is paused or not.
+     */
+    public void stepInstruction() {
+        post(debugger::stepInstruction);
+    }
+
+    /**
+     * Runs to the end of the frame, stopping earlier for anything that would have stopped it anyway.
+     */
+    public void stepFrame() {
+        post(debugger::stepFrame);
+    }
+
+    /**
+     * Stops the machine at the next instruction boundary -- so within a frame, since a machine on
+     * the fast path finishes the frame it is in first.
+     */
+    public void breakNow() {
+        post(debugger::halt);
+    }
+
+    /**
+     * Lets the machine go, and forgets whatever the debugger was still waiting for.
+     * <p>
+     * One posted command rather than two calls, because the order matters and the two threads
+     * cannot be trusted to keep it: the queue is drained at the top of every time round, before the
+     * pause is looked at, so this can never leave a frame running against a halt that has not been
+     * cleared yet.
+     */
+    public void resume() {
+        post(() -> {
+            debugger.run();
+            paused = false;
+        });
+    }
+
+    /**
      * Runs the machine at {@code speed} from here on. Takes effect within a frame.
      * <p>
      * Only the wait between frames changes: the machine itself is clocked exactly as it is at
@@ -215,7 +292,11 @@ public class EmulatorRunner {
                 // value here would satisfy it after a single tick and present a torn frame.
                 lastFrame = ppu.getFrame();
 
-                if (paused) {
+                // Asked before the pause is looked at, because a step is the one thing that runs a
+                // machine that is not running.
+                var stepping = debugger.isStepping();
+
+                if (paused && !stepping) {
                     if (!wasPaused) {
                         // What the card is still holding is up to a tenth of a second of a game
                         // that has stopped. Dropped rather than played out, so that the sound
@@ -232,26 +313,60 @@ public class EmulatorRunner {
                     continue;
                 }
 
-                wasPaused = false;
+                // Skipped while stepping: the machine is still stopped, the card was emptied when
+                // it stopped, and a speed schedule belongs to a loop that is running.
+                if (!paused) {
+                    wasPaused = false;
 
-                if (this.speed != speed) {
-                    // Both schedules start again from here rather than carrying a deadline written
-                    // in the old speed's units -- which, coming off unlimited, is not a deadline
-                    // that was being kept at all.
-                    speed = this.speed;
-                    deadline = System.nanoTime();
-                    nextPresent = deadline + frameNanos;
+                    if (this.speed != speed) {
+                        // Both schedules start again from here rather than carrying a deadline
+                        // written in the old speed's units -- which, coming off unlimited, is not a
+                        // deadline that was being kept at all.
+                        speed = this.speed;
+                        deadline = System.nanoTime();
+                        nextPresent = deadline + frameNanos;
+                    }
                 }
 
-                // The PPU has no frame-complete callback; its frame counter is the signal. One
-                // tick is three dots, so this can overshoot the boundary by up to two of them --
-                // at most the first pixel of the next frame arrives early, on scanline 0, which
-                // the overscan crop hides anyway.
-                do {
-                    nes.tick();
-                } while (ppu.getFrame() == lastFrame);
+                Debugger.Stop stop = null;
+
+                if (debugger.isArmed()) {
+                    stop = runWatchedFrame(lastFrame);
+                } else {
+                    // The PPU has no frame-complete callback; its frame counter is the signal. One
+                    // tick is three dots, so this can overshoot the boundary by up to two of them --
+                    // at most the first pixel of the next frame arrives early, on scanline 0, which
+                    // the overscan crop hides anyway.
+                    do {
+                        nes.tick();
+                    } while (ppu.getFrame() == lastFrame);
+                }
+
+                var completed = ppu.getFrame() != lastFrame;
+
+                if (stop != null) {
+                    halt(stop);
+                }
+
+                if (!completed) {
+                    // Half a frame, stopped part way through. Nothing finished to put on the
+                    // screen -- the last whole frame is still up, which is what a paused machine
+                    // shows anyway -- and nothing to pace against. The deadline is left where it
+                    // was; the pause branch resets it on the next time round.
+                    continue;
+                }
 
                 lastFrame = ppu.getFrame();
+
+                if (stop != null) {
+                    // A stepped or halted frame still goes on the screen. Its sound does not: one
+                    // frame of it played on its own is a click, and a machine stepped a frame at a
+                    // time would be a metronome of them. Drained rather than left, so the ring does
+                    // not carry this frame across the stop and play it on the far side.
+                    apu.drainSamples(samples);
+                    screen.present(ppu.getFrameBuffer());
+                    continue;
+                }
 
                 // A frame's worth of sound, handed over before the picture is: at normal speed
                 // this blocks until the card has room, which is the other half of the pacing
@@ -309,6 +424,65 @@ public class EmulatorRunner {
         }
 
         logger.log(Level.INFO, "emulation stopped");
+    }
+
+    /**
+     * One frame, clocked an instruction at a time so that a breakpoint can stop the machine part
+     * way through one.
+     * <p>
+     * Only reached when the debugger has something to look for. The ordinary path above is left
+     * exactly as it was, because a check that belongs here -- one an instruction, about 1.8 million
+     * a second -- is one a machine nobody is debugging should not pay for.
+     * <p>
+     * {@link NES#step()} runs to the next instruction boundary, so the end of the frame is noticed
+     * up to one instruction late rather than up to two dots late: seven cycles usually, and around
+     * five hundred when the step swallows an OAM DMA transfer. That is under five scanlines of the
+     * next frame drawn into the buffer before it is shown, and all of them are inside the eight
+     * {@link com.github.dimiro1.mynes.video.FrameRenderer#OVERSCAN_TOP} takes off the top.
+     *
+     * @return why it stopped, or null if the frame simply finished.
+     */
+    private Debugger.Stop runWatchedFrame(final long lastFrame) {
+        var ppu = nes.getPPU();
+        var cpu = nes.getCPU();
+
+        while (ppu.getFrame() == lastFrame) {
+            var wasPC = cpu.getPC();
+
+            nes.step();
+
+            var stop = debugger.afterInstruction(cpu.getPC(), wasPC);
+
+            if (stop != null) {
+                return stop;
+            }
+        }
+
+        return debugger.afterFrame(cpu.getPC());
+    }
+
+    /**
+     * Stops the machine where it stands, and says why.
+     * <p>
+     * Sets the same flag the Pause item does, because it means the same thing: this loop must not
+     * clock the machine. Everything that follows from it -- the card emptied, the last whole frame
+     * left on the screen, posted commands still running -- is the pause branch's doing.
+     * <p>
+     * The listener is told on the event dispatch thread, and the hop is made here rather than left
+     * to whoever registered because this is the one place that can be sure of it. It is also what
+     * makes reading the machine from that thread legal afterwards: everything this thread did before
+     * the handoff is visible to the one that takes it.
+     */
+    private void halt(final Debugger.Stop stop) {
+        paused = true;
+
+        logger.log(Level.DEBUG, "stopped: " + stop);
+
+        var listener = stopListener;
+
+        if (listener != null) {
+            SwingUtilities.invokeLater(() -> listener.accept(stop));
+        }
     }
 
     private void runPendingCommands() {

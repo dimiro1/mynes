@@ -62,6 +62,10 @@ class SaveStateCompletenessTests {
                     "a debug switch belonging to whoever is watching, not to the machine"),
             Map.entry("PPU.spriteLayerVisible",
                     "the same, and restoring it would contradict the Debug menu's tick"),
+            Map.entry("MMU.writeListener",
+                    "where a debugger's watchpoints wire in -- whoever is watching the machine"
+                            + " rather than the machine, and a state that put one back would be"
+                            + " restoring the debugger"),
             Map.entry("APU.sampleRing",
                     "the queue between the chip and the sound card rather than the chip. Both real"
                             + " drivers drain it at the end of every frame, so a state taken through"
@@ -311,7 +315,7 @@ class SaveStateCompletenessTests {
      */
     private static boolean isCartridgeROM(final String name) {
         return name.endsWith(".prgROM") || name.endsWith(".chrROM")
-                || name.equals("CPU.lengthPerOpcode") || name.equals("Mapper0.chr");
+                || name.equals("Mapper0.chr");
     }
 
     private static boolean write(

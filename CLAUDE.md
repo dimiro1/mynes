@@ -70,6 +70,37 @@ printf 'run 60\nscreenshot /tmp/title.png\npress start\nrun-until-change 300\nst
 
 `run-until-change` answers "which frame does something happen on". `help` lists the rest.
 
+### Stopping somewhere in particular
+
+The same session takes breakpoints, watchpoints and single steps, which is how to answer questions a
+frame boundary is too coarse for:
+
+```
+step [N]                   advance N instructions rather than N frames
+disasm [ADDR] [COUNT]      disassemble, from the PC by default
+break ADDR / unbreak ADDR  stop before the instruction at ADDR
+watch ADDR / unwatch ADDR  stop after an instruction writes to ADDR
+points [clear]             list them, or drop them all
+```
+
+`run` and both `run-until` commands then come back with `stopped` and `stoppedAt` when one of these
+ended them early, and a watchpoint also reports `address`, `value` and **`writtenBy`** -- the
+instruction that did the store, which is the whole point of setting one. `stopped` is absent rather
+than null when nothing stopped the run, so `jq 'select(.stopped)'` is the whole of the filter.
+
+```sh
+printf 'watch $0300\nrun 600\nquit\n' | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+Two things to know. **The first `step` is the reset sequence** and runs no instruction: it leaves the
+CPU standing on the first one rather than past it. And **a watchpoint sees CPU writes only** -- a
+sprite DMA copies into OAM by calling the PPU directly, so a watch on $2004 sleeps through all 256 of
+the writes one makes.
+
+None of this costs anything when it is not used. `Debugger.isArmed()` is asked once a frame, and a
+session with nothing set runs the same loop it always did; only an armed one drops to clocking the
+machine an instruction at a time.
+
 ### Failing on purpose
 
 `--expect-not-blank`, `--expect-audio` and `--expect-motion N` make a run exit 4 when they do not
@@ -144,9 +175,10 @@ The code has a strong voice. Match it rather than the language's defaults.
 mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
 mynes/mappers/    mappers 0 to 4
 mynes/state/      save states and battery .sav files
+mynes/debug/      the disassembler and the breakpoints, shared by the window and the REPL
 mynes/video/      colour indices to pixels: the overscan crop and the frame renderer
 mynes/headless/   the command line mode
-mynes/ui/         the Swing window, the palettes, the key bindings, the CHR viewer
+mynes/ui/         the Swing window, the palettes, the key bindings, the CHR viewer, the debugger
 ```
 
 The core knows nothing about the front end. `Cart.load` takes a `byte[]`, `NES` has no UI

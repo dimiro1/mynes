@@ -64,6 +64,18 @@ public class MMU {
      */
     private int dmcFetchCycles;
 
+    /**
+     * Whoever is watching the bus, or null when nobody is -- which is nearly always, and is why this
+     * is a reference to check rather than a do-nothing listener always installed. A write happens a
+     * couple of hundred thousand times a second; a null check on a field that has been null since
+     * power on costs nothing a branch predictor cannot see coming, where a call through an
+     * interface would have to be made every time.
+     * <p>
+     * Not in {@link #serialize}, and named in {@code NOT_IN_THE_STATE}: it belongs to whoever is
+     * watching the machine rather than to the machine, the same as the PPU's layer switches.
+     */
+    private MemoryWriteListener writeListener;
+
     public MMU(
             final PPU ppu,
             final APU apu,
@@ -141,6 +153,10 @@ public class MMU {
     public void write(final int address, final int data) {
         int addr = address & 0xFFFF;
         int value = data & 0xFF;
+
+        if (writeListener != null) {
+            writeListener.onWrite(addr, value);
+        }
 
         // Internal RAM and mirrors ($0000-$1FFF)
         if (addr < 0x2000) {
@@ -318,6 +334,18 @@ public class MMU {
      */
     public int[] getInternalRAM() {
         return internalRAM;
+    }
+
+    /**
+     * Watches every byte the CPU writes, or stops watching when given null.
+     * <p>
+     * One listener rather than a list, because there is one thing that wants this and a list would
+     * mean iterating something on the hot path to find it empty.
+     *
+     * @see MemoryWriteListener
+     */
+    public void setWriteListener(final MemoryWriteListener listener) {
+        this.writeListener = listener;
     }
 
     /**

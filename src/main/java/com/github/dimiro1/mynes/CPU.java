@@ -95,7 +95,19 @@ public class CPU {
      */
     private boolean stalled;
 
-    private final int[] lengthPerOpcode = {
+    /**
+     * How many bytes each opcode takes, which is all this class needs to know about the shape of an
+     * instruction: enough to hand a tracer the operands that went with it.
+     * <p>
+     * Static, like {@link Region}'s tables and for the same reason: {@code SaveStateCompletenessTests}
+     * vandalises every primitive array it can reach through the console, and an instance field here
+     * would be one of them.
+     * <p>
+     * {@link com.github.dimiro1.mynes.debug.Disassembler} has a table of its own rather than reading
+     * this one. Two tables written from different sources and asserted to agree is a test; one table
+     * read twice is not.
+     */
+    private static final int[] LENGTH_PER_OPCODE = {
             /*      0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F */
             /* 0 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
             /* 1 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
@@ -152,17 +164,23 @@ public class CPU {
     }
 
     /**
-     * Overwrites the architectural state of the CPU.
+     * Where the CPU is standing.
      * <p>
-     * Besides the registers this drops any partially executed instruction, any interrupt
-     * sequence in flight and every pending interrupt request -- including the power-on RST
-     * that a freshly constructed CPU starts with. After this call the next {@link #tick()}
-     * fetches an opcode from the supplied program counter.
-     * <p>
-     * This method is primarily for testing purposes.
-     *
-     * @param state the state to load.
+     * Separate from {@link #getState()} because a debugger asks this once per instruction -- around
+     * 1.8 million times a second -- and does not want the seven component record allocated to answer
+     * it. Between instructions this is the address of the one about to run.
      */
+    public int getPC() {
+        return pc;
+    }
+
+    /**
+     * How many bytes the instruction beginning with this opcode takes.
+     */
+    public static int lengthOf(final int opcode) {
+        return LENGTH_PER_OPCODE[opcode & 0xFF];
+    }
+
     /**
      * Reads or writes the whole chip, depending on which way {@code io} is pointing.
      * <p>
@@ -216,6 +234,18 @@ public class CPU {
         stalled = io.bool(stalled);
     }
 
+    /**
+     * Overwrites the architectural state of the CPU.
+     * <p>
+     * Besides the registers this drops any partially executed instruction, any interrupt
+     * sequence in flight and every pending interrupt request -- including the power-on RST
+     * that a freshly constructed CPU starts with. After this call the next {@link #tick()}
+     * fetches an opcode from the supplied program counter.
+     * <p>
+     * This method is primarily for testing purposes.
+     *
+     * @param state the state to load.
+     */
     public void loadState(final State state) {
         setA(state.a());
         setX(state.x());
@@ -2353,7 +2383,7 @@ public class CPU {
             return;
         }
 
-        var length = lengthPerOpcode[opcode];
+        var length = LENGTH_PER_OPCODE[opcode];
         var operand1 = length > 1 ? bus.peek(ByteUtils.ensureWord(pc + 1)) : 0;
         var operand2 = length > 2 ? bus.peek(ByteUtils.ensureWord(pc + 2)) : 0;
 

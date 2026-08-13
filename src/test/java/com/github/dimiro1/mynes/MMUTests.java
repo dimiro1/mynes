@@ -8,6 +8,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -75,6 +78,99 @@ public class MMUTests {
             assertEquals(0x99, mmu.peek(0x0100), "plain memory reads back normally");
             assertEquals(0, mmu.peek(0x2002), "PPU registers must not be read for real");
             assertEquals(0, mmu.peek(0x4016), "controller ports must not be clocked");
+        }
+    }
+
+    /**
+     * The seam a debugger's watchpoints hang off. What matters is not only that it sees CPU writes
+     * but exactly which writes it does not see, since that is the difference between a watchpoint
+     * that misses something and one whose limits are known.
+     */
+    @Nested
+    class WriteListener {
+        private final List<String> seen = new ArrayList<>();
+
+        private void record() {
+            mmu.setWriteListener((address, value) ->
+                    seen.add(String.format("%04X=%02X", address, value)));
+        }
+
+        @Test
+        void seesEveryByteTheCpuWrites() {
+            record();
+
+            mmu.write(0x0123, 0x5A);
+            mmu.write(0x8000, 0x99);
+
+            assertEquals(List.of("0123=5A", "8000=99"), seen);
+        }
+
+        @Test
+        void seesTheMirrorItWasWrittenThroughRatherThanTheRamBehindIt() {
+            record();
+
+            mmu.write(0x1FFF, 0x42);
+
+            assertEquals(List.of("1FFF=42"), seen, "where the CPU put it is what a watch is set on");
+        }
+
+        @Test
+        void isToldTheValueBeforeItLands() {
+            mmu.write(0x0100, 0x11);
+
+            var wasThere = new int[1];
+            mmu.setWriteListener((address, value) -> wasThere[0] = mmu.peek(address));
+
+            mmu.write(0x0100, 0x22);
+
+            assertEquals(0x11, wasThere[0], "the byte is handed over because it cannot be read yet");
+            assertEquals(0x22, mmu.peek(0x0100), "and it lands afterwards");
+        }
+
+        @Test
+        void readingDoesNotFireIt() {
+            mmu.write(0x0100, 0x99);
+            record();
+
+            mmu.read(0x0100);
+            mmu.peek(0x0100);
+            mmu.read(0x2002);
+
+            assertEquals(List.of(), seen);
+        }
+
+        /**
+         * The documented hole, pinned so that closing it is a decision rather than an accident: a
+         * sprite DMA copies into OAM by calling the PPU directly, so a watch on $2004 sleeps
+         * through all 256 of the writes it makes.
+         */
+        @Test
+        void aSpriteDmaIsNotSeen() {
+            for (var i = 0; i < 0x100; i++) {
+                mmu.write(0x0200 + i, i);
+            }
+
+            record();
+            mmu.write(OAM_DMA, 0x02);
+
+            while (mmu.tickDMA(seen.size())) {
+                if (seen.size() > 1) {
+                    break;
+                }
+            }
+
+            assertEquals(List.of("4014=02"), seen, "the register write, and none of the transfer");
+        }
+
+        @Test
+        void clearingItStopsTheTelling() {
+            record();
+            mmu.write(0x0100, 0x11);
+
+            mmu.setWriteListener(null);
+            mmu.write(0x0100, 0x22);
+
+            assertEquals(List.of("0100=11"), seen);
         }
     }
 
