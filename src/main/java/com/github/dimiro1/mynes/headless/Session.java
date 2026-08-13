@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -38,8 +39,21 @@ public final class Session {
      * @param number  frames since power on, counting the one just finished.
      * @param hash    a hash of the visible picture, {@link FrameAnalysis#hash(int[])}.
      * @param changed whether that picture differs from the frame before it.
+     * @param stop    why the machine stopped part way through, or null if the frame simply
+     *                finished. A frame that was cut short is not counted or hashed: there is no
+     *                finished picture to hash.
      */
-    public record Frame(long number, long hash, boolean changed) {
+    public record Frame(long number, long hash, boolean changed, Debugger.Stop stop) {
+    }
+
+    /**
+     * What a run of instructions did.
+     *
+     * @param instructions how many actually ran, which is fewer than were asked for when something
+     *                     stopped it.
+     * @param stop         why it stopped, or null if it simply ran out of instructions.
+     */
+    public record Stepped(long instructions, Debugger.Stop stop) {
     }
 
     /**
@@ -57,6 +71,13 @@ public final class Session {
     private final NES nes;
     private final int[] palette;
     private final WavWriter wav;
+
+    /**
+     * Where breakpoints and watchpoints live. Constructed here rather than passed in because a
+     * session is the only thing that can drive one: it owns the loop that has to run an instruction
+     * at a time for a breakpoint to mean anything.
+     */
+    private final Debugger debugger = new Debugger();
 
     private final short[] samples = new short[AUDIO_BUFFER_SAMPLES];
 
@@ -88,10 +109,16 @@ public final class Session {
         this.palette = palette;
         this.wav = wav;
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
+
+        debugger.attach(nes);
     }
 
     public NES nes() {
         return nes;
+    }
+
+    public Debugger debugger() {
+        return debugger;
     }
 
     public long frame() {
@@ -128,9 +155,87 @@ public final class Session {
         var ppu = nes.getPPU();
         var completed = ppu.getFrame();
 
+        // Asked once a frame rather than once an instruction, which is the whole of why a session
+        // with nothing to look for runs exactly as fast as it did before any of this existed.
+        if (debugger.isArmed()) {
+            return watchedFrame(completed);
+        }
+
         do {
             nes.tick();
         } while (ppu.getFrame() == completed);
+
+        return endOfFrame(null);
+    }
+
+    /**
+     * The same frame, clocked an instruction at a time so that a breakpoint can stop part way
+     * through one.
+     * <p>
+     * {@link NES#step()} runs to the next instruction boundary rather than to the next dot, so the
+     * end of a frame is noticed up to one instruction late -- seven cycles usually, and around five
+     * hundred when the step swallows an OAM DMA transfer. That is a few scanlines of the next frame
+     * drawn into the buffer before it is hashed, and all of them are inside the eight
+     * {@link com.github.dimiro1.mynes.video.FrameRenderer#OVERSCAN_TOP} takes off the top.
+     */
+    private Frame watchedFrame(final long completed) throws IOException {
+        var ppu = nes.getPPU();
+        var cpu = nes.getCPU();
+        Debugger.Stop stop = null;
+
+        while (ppu.getFrame() == completed && stop == null) {
+            var wasPC = cpu.getPC();
+
+            nes.step();
+
+            stop = debugger.afterInstruction(cpu.getPC(), wasPC);
+        }
+
+        if (ppu.getFrame() == completed) {
+            // Stopped part way through. Nothing is counted and nothing is hashed, because there is
+            // no finished picture yet -- and the next call carries on with the same frame.
+            return new Frame(completed, previousHash, false, stop);
+        }
+
+        return endOfFrame(stop != null ? stop : debugger.afterFrame(cpu.getPC()));
+    }
+
+    /**
+     * Runs instructions rather than frames, stopping early if the debugger says to.
+     * <p>
+     * Frames still finish underneath -- the sound is collected and the picture counted whenever the
+     * PPU crosses a boundary -- because the APU's ring holds only a few frames of samples and a long
+     * step that never drained it would lose the end of them.
+     */
+    public Stepped stepInstructions(final long count) throws IOException {
+        var ppu = nes.getPPU();
+        var cpu = nes.getCPU();
+        Debugger.Stop stop = null;
+        var ran = 0L;
+
+        while (ran < count && stop == null) {
+            var completed = ppu.getFrame();
+            var wasPC = cpu.getPC();
+
+            nes.step();
+            ran++;
+
+            if (ppu.getFrame() != completed) {
+                endOfFrame(null);
+            }
+
+            stop = debugger.afterInstruction(cpu.getPC(), wasPC);
+        }
+
+        return new Stepped(ran, stop);
+    }
+
+    /**
+     * The bookkeeping a finished frame owes: its sound collected, its picture hashed, and whether
+     * it differs from the one before it written down.
+     */
+    private Frame endOfFrame(final Debugger.Stop stop) throws IOException {
+        var ppu = nes.getPPU();
 
         collectAudio();
 
@@ -143,7 +248,7 @@ public final class Session {
             lastChangeFrame = ppu.getFrame();
         }
 
-        return new Frame(ppu.getFrame(), hash, changed);
+        return new Frame(ppu.getFrame(), hash, changed, stop);
     }
 
     /**

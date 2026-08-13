@@ -27,6 +27,13 @@ public final class FrameRenderer {
      * partial tiles and scroll seams up there. Showing the whole 240 lines shows that mess -- along
      * with the pixel or two of the following frame that the emulation loop's three-dots-per-tick
      * granularity lets into scanline 0.
+     * <p>
+     * That last allowance is wider than a pixel or two while a debugger is watching, and this is the
+     * margin it is spent out of. A watched loop advances an instruction at a time rather than a tick
+     * at a time, so it can overshoot the frame boundary by a whole instruction: around 518 CPU
+     * cycles when the step swallows an OAM DMA transfer, which is 1554 dots, which is four and a
+     * half scanlines. Under eight, with about a third to spare -- but anybody thinking of shaving
+     * this number should know that is what they would be shaving into.
      */
     public static final int OVERSCAN_TOP = 8;
     public static final int OVERSCAN_BOTTOM = 8;

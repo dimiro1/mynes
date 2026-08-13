@@ -3,10 +3,12 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
+import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 import com.github.dimiro1.mynes.ui.palette.PaletteDialog;
@@ -80,7 +82,18 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem machineMenuQuickSave = new JMenuItem("Quick Save");
     private final JMenuItem machineMenuQuickLoad = new JMenuItem("Quick Load");
 
+    /**
+     * The breakpoints, which belong to the window rather than to any one machine.
+     * <p>
+     * A power cycle and a region change both build a new NES, and a power cycle that forgot every
+     * breakpoint would be infuriating -- you cycle the power precisely in order to hit them again.
+     * So this outlives the machines, the way the Debug menu's layer ticks do, and is re-attached to
+     * each one in {@link #startMachine}.
+     */
+    private final Debugger debugger = new Debugger();
+
     private CHRViewerFrame chrViewerFrame;
+    private DebuggerFrame debuggerFrame;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -193,6 +206,9 @@ public class GameUIFrame extends JFrame {
 
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
+
+        JMenuItem debugMenuDebugger = new JMenuItem("Debugger", KeyEvent.VK_D);
+        debugMenu.add(debugMenuDebugger);
 
         JMenuItem debugMenuCHRViewer = new JMenuItem("CHR Viewer", KeyEvent.VK_C);
         debugMenu.add(debugMenuCHRViewer);
@@ -311,12 +327,21 @@ public class GameUIFrame extends JFrame {
                 return;
             }
 
-            runner.setPaused(machineMenuPause.isSelected());
-
-            // A button held down when the game froze would otherwise still be held on resume,
-            // minutes later, whether or not the key is.
+            // Unticking is a resume rather than a plain unpause, because it also has to forget
+            // whatever the debugger was still waiting for. Without that, unticking Pause after a
+            // breakpoint would stop again one instruction later and look broken.
             if (machineMenuPause.isSelected()) {
+                runner.setPaused(true);
+
+                // A button held down when the game froze would otherwise still be held on resume,
+                // minutes later, whether or not the key is.
                 keyboardInput.releaseAll();
+            } else {
+                runner.resume();
+
+                if (debuggerFrame != null) {
+                    debuggerFrame.running();
+                }
             }
 
             updateTitle();
@@ -377,6 +402,25 @@ public class GameUIFrame extends JFrame {
                     chrViewerFrame.setVisible(true);
                 }
         );
+
+        debugMenuDebugger.addActionListener(e -> {
+            if (cart == null) {
+                logger.error("cartridge is not loaded");
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Cartridge is not loaded",
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                return;
+            }
+
+            if (debuggerFrame == null) {
+                debuggerFrame = new DebuggerFrame(this, nes, runner, debugger);
+            }
+
+            debuggerFrame.setVisible(true);
+        });
 
         helpMenuAbout.addActionListener(e -> JOptionPane.showMessageDialog(
                 this,
@@ -864,6 +908,16 @@ public class GameUIFrame extends JFrame {
         // them forever. Closed rather than repointed, since it is a debug window.
         destroyCHRViewerFrame();
 
+        // A new cartridge deserves a clean slate, but a power cycle does not: the breakpoints are
+        // the reason somebody cycles the power. Asked before the field is reassigned, since that is
+        // the whole of the difference between the two.
+        var sameCartridge = cart == this.cart;
+
+        if (!sameCartridge) {
+            debugger.clear();
+            destroyDebuggerFrame();
+        }
+
         this.cart = cart;
         nes = new NES(cart, config.region().resolve(cart));
 
@@ -877,6 +931,10 @@ public class GameUIFrame extends JFrame {
         // The runner has not started yet, so the machine is still this thread's to touch.
         nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
         nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
+
+        // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
+        // window as the two lines above: the runner does not exist yet, so this thread owns it.
+        debugger.attach(nes);
 
         // The cartridge finds its battery already charged, which is what a real one did. In the same
         // window as the two lines above: the runner does not exist yet, so this thread owns the
@@ -898,7 +956,12 @@ public class GameUIFrame extends JFrame {
         machineMenuPause.setSelected(false);
         machineMenuFastForward.setSelected(false);
 
-        runner = new EmulatorRunner(nes, screen);
+        runner = new EmulatorRunner(nes, screen, debugger);
+        runner.setStopListener(this::stopped);
+
+        if (debuggerFrame != null) {
+            debuggerFrame.setMachine(nes, runner);
+        }
 
         // Posted before the thread exists, so it is the first thing that runs on it: a machine
         // started with the sound off must not get a frame of it in first.
@@ -976,6 +1039,32 @@ public class GameUIFrame extends JFrame {
             logger.debug("closing chrViewerFrame");
             chrViewerFrame.dispose();
             chrViewerFrame = null;
+        }
+    }
+
+    private void destroyDebuggerFrame() {
+        if (debuggerFrame != null) {
+            logger.debug("closing debuggerFrame");
+            debuggerFrame.dispose();
+            debuggerFrame = null;
+        }
+    }
+
+    /**
+     * The machine has stopped somewhere it was asked to. Called on the event dispatch thread with
+     * the machine already halted, which is the one moment reading it is safe.
+     * <p>
+     * The Pause tick is brought into line here because a breakpoint pauses the machine just as
+     * surely as the menu item does, and a frozen emulator with an unticked Pause box would be a
+     * puzzle rather than a debugger.
+     */
+    private void stopped(final Debugger.Stop stop) {
+        machineMenuPause.setSelected(true);
+        keyboardInput.releaseAll();
+        updateTitle();
+
+        if (debuggerFrame != null) {
+            debuggerFrame.stopped(stop);
         }
     }
 }

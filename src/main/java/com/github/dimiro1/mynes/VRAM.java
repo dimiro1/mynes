@@ -95,15 +95,6 @@ public class VRAM {
     }
 
     /**
-     * Folds a nametable address onto the RAM that actually backs it.
-     * <p>
-     * The mapper is asked every time rather than cached, because a mapper with mirroring
-     * registers can change its answer between one access and the next.
-     *
-     * @param address an address in $2000-$3EFF.
-     * @return the index into {@link #ciram} that address names.
-     */
-    /**
      * The console's nametable RAM.
      * <p>
      * Package-private, and called only from {@link PPU#serialize}, because that mirrors how the
@@ -118,6 +109,15 @@ public class VRAM {
         io.bytes(ciram);
     }
 
+    /**
+     * Folds a nametable address onto the RAM that actually backs it.
+     * <p>
+     * The mapper is asked every time rather than cached, because a mapper with mirroring
+     * registers can change its answer between one access and the next.
+     *
+     * @param address an address in $2000-$3EFF.
+     * @return the index into {@link #ciram} that address names.
+     */
     private int ciramIndex(final int address) {
         // $3000-$3EFF is a mirror of $2000-$2EFF, so only the low twelve bits matter.
         var addr = address & 0x0FFF;

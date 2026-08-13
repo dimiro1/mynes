@@ -1,6 +1,8 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.Disassembler;
 import com.github.dimiro1.mynes.state.SaveStateException;
 
 import java.io.BufferedReader;
@@ -8,6 +10,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /**
  * The machine, driven a command at a time.
@@ -27,6 +30,13 @@ public final class Repl {
             run [N]                    advance N frames, default 1
             run-until-change [MAX]     advance until the picture differs, at most MAX frames
             run-until-still [N] [MAX]  advance until the picture has held for N frames
+            step [N]                   advance N instructions, default 1
+            disasm [ADDR] [COUNT]      disassemble, from the PC by default
+            break ADDR                 stop before the instruction at ADDR
+            unbreak ADDR               forget that one
+            watch ADDR                 stop after an instruction writes to ADDR
+            unwatch ADDR               forget that one
+            points [clear]             list every breakpoint and watchpoint, or drop them all
             press BUTTONS [N]          hold BUTTONS for the next N frames
             hold BUTTONS               hold BUTTONS until released
             release                    let go of everything
@@ -56,6 +66,12 @@ public final class Repl {
      * How long {@code run-until-still} wants the picture to hold before it calls it settled.
      */
     private static final long DEFAULT_STILL_FRAMES = 30;
+
+    /**
+     * How much {@code disasm} shows when it is not told. About a screenful, and enough to see the
+     * end of whatever routine the machine stopped in.
+     */
+    private static final int DEFAULT_DISASM_LINES = 16;
 
     private final Session session;
     private final Options options;
@@ -125,6 +141,10 @@ public final class Repl {
             case "run-until-still" -> runUntilStill(
                     words.length > 1 ? number(words[1], name) : DEFAULT_STILL_FRAMES,
                     words.length > 2 ? number(words[2], name) : DEFAULT_MAX_FRAMES);
+            case "step" -> stepInstructions(words.length > 1 ? number(words[1], name) : 1);
+            case "disasm" -> disasm(words);
+            case "break", "unbreak", "watch", "unwatch" -> point(name, words);
+            case "points" -> points(words);
             case "press" -> press(words);
             case "hold" -> hold(words);
             case "release" -> release();
@@ -145,51 +165,148 @@ public final class Repl {
     // ================================================================================== commands
 
     private void run(final long frames) throws IOException {
+        var start = session.frame();
         var changed = false;
+        Debugger.Stop stop = null;
 
-        for (var i = 0L; i < frames; i++) {
-            changed |= step().changed();
+        for (var i = 0L; i < frames && stop == null; i++) {
+            var frame = step();
+
+            changed |= frame.changed();
+            stop = frame.stop();
         }
 
         var didChange = changed;
+        var stopped = stop;
 
         reply("run", node -> {
-            node.put("frames", frames);
+            // How many finished, not how many were asked for. A breakpoint part way through one
+            // leaves it unfinished, and counting it would put every later frame number out by one.
+            node.put("frames", session.frame() - start);
             node.put("changed", didChange);
+            describe(node, stopped);
         });
     }
 
     private void runUntilChange(final long max) throws IOException {
         var start = session.frame();
         var found = false;
+        Debugger.Stop stop = null;
 
-        for (var i = 0L; i < max && !found; i++) {
-            found = step().changed();
+        for (var i = 0L; i < max && !found && stop == null; i++) {
+            var frame = step();
+
+            found = frame.changed();
+            stop = frame.stop();
         }
 
         var didChange = found;
+        var stopped = stop;
 
         reply("run-until-change", node -> {
             node.put("changed", didChange);
             node.put("framesRun", session.frame() - start);
+            describe(node, stopped);
         });
     }
 
     private void runUntilStill(final long still, final long max) throws IOException {
         var start = session.frame();
         var settled = false;
+        Debugger.Stop stop = null;
 
-        for (var i = 0L; i < max && !settled; i++) {
-            step();
+        for (var i = 0L; i < max && !settled && stop == null; i++) {
+            stop = step().stop();
             settled = session.framesSinceLastChange() >= still;
         }
 
         var didSettle = settled;
+        var stopped = stop;
 
         reply("run-until-still", node -> {
             node.put("still", didSettle);
             node.put("framesRun", session.frame() - start);
+            describe(node, stopped);
         });
+    }
+
+    /**
+     * Advances instructions rather than frames, and says what the machine is standing on afterwards.
+     * <p>
+     * The disassembly is of the instruction about to run rather than the one that just did, because
+     * the next question after a step is almost always "and now what?".
+     */
+    private void stepInstructions(final long instructions) throws IOException {
+        var stepped = session.stepInstructions(instructions);
+        var cpuState = session.nes().getCPU().getState();
+        var next = Disassembler.at(session.nes().getMemory()::peek, cpuState.pc());
+
+        reply("step", node -> {
+            node.put("instructions", stepped.instructions());
+            node.put("pc", cpuState.pc());
+            node.put("a", cpuState.a());
+            node.put("x", cpuState.x());
+            node.put("y", cpuState.y());
+            node.put("sp", cpuState.sp());
+            node.put("p", cpuState.p());
+            node.put("cycles", cpuState.cycles());
+            node.set("next", line(next));
+            describe(node, stepped.stop());
+        });
+    }
+
+    private void disasm(final String[] words) throws IOException {
+        var address = words.length > 1
+                ? (int) number(words[1], "disasm")
+                : session.nes().getCPU().getPC();
+        var count = words.length > 2 ? (int) number(words[2], "disasm") : DEFAULT_DISASM_LINES;
+        var lines = Disassembler.from(session.nes().getMemory()::peek, address, count);
+
+        reply("disasm", node -> {
+            node.put("address", address);
+            node.put("count", lines.size());
+
+            var array = node.putArray("lines");
+            lines.forEach(line -> array.add(line(line)));
+        });
+    }
+
+    /**
+     * The four commands that put a point down or pick one up, which differ only in which set they
+     * touch and are not worth four methods.
+     */
+    private void point(final String name, final String[] words) throws IOException {
+        if (words.length < 2) {
+            throw new UsageException(name + " wants an address, as in \"" + name + " $C000\".");
+        }
+
+        var address = (int) number(words[1], name) & 0xFFFF;
+        var debugger = session.debugger();
+
+        switch (name) {
+            case "break" -> debugger.addBreakpoint(address);
+            case "unbreak" -> debugger.removeBreakpoint(address);
+            case "watch" -> debugger.addWatchpoint(address);
+            default -> debugger.removeWatchpoint(address);
+        }
+
+        reply(name, node -> {
+            node.put("address", address);
+            putPoints(node);
+        });
+    }
+
+    private void points(final String[] words) throws IOException {
+        if (words.length > 1) {
+            if (!words[1].equals("clear")) {
+                throw new UsageException(
+                        "points takes \"clear\" or nothing, not \"" + words[1] + "\".");
+            }
+
+            session.debugger().clear();
+        }
+
+        reply("points", this::putPoints);
     }
 
     private void press(final String[] words) throws IOException {
@@ -435,12 +552,65 @@ public final class Repl {
 
         if (pressRemaining > 0) {
             buttons |= pressButtons;
-            pressRemaining--;
         }
 
         session.setButtons(buttons);
 
-        return session.advanceFrame();
+        var before = session.frame();
+        var frame = session.advanceFrame();
+
+        // Only a frame that actually finished uses one up. A run a breakpoint stopped part way
+        // through carries on into the same frame next time, and counting it twice would let go of
+        // the button before the game had a whole frame to notice it.
+        if (pressRemaining > 0 && session.frame() != before) {
+            pressRemaining--;
+        }
+
+        return frame;
+    }
+
+    /**
+     * Says why the machine stopped, and says nothing at all when it simply ran out of frames.
+     * <p>
+     * Absent rather than null, unlike the report's convention, because a stop is a thing that
+     * happened rather than a field with no value: a caller watching a stream of these is asking
+     * "did anything stop it?", and {@code jq 'select(.stopped)'} is the whole of the answer.
+     */
+    private void describe(final ObjectNode node, final Debugger.Stop stop) {
+        if (stop == null) {
+            return;
+        }
+
+        node.put("stopped", stop.reason().name().toLowerCase(Locale.ROOT));
+        node.put("stoppedAt", stop.pc());
+
+        if (stop.address() >= 0) {
+            node.put("address", stop.address());
+            node.put("value", stop.value());
+        }
+
+        if (stop.writtenBy() >= 0) {
+            node.put("writtenBy", stop.writtenBy());
+        }
+    }
+
+    private ObjectNode line(final Disassembler.Line disassembled) {
+        var node = Json.object();
+
+        node.put("address", disassembled.address());
+        node.put("bytes", disassembled.hex());
+        node.put("text", disassembled.text());
+
+        return node;
+    }
+
+    private void putPoints(final ObjectNode node) {
+        var debugger = session.debugger();
+        var breakpoints = node.putArray("breakpoints");
+        var watchpoints = node.putArray("watchpoints");
+
+        debugger.breakpoints().forEach(breakpoints::add);
+        debugger.watchpoints().forEach(watchpoints::add);
     }
 
     private void buttons(final ObjectNode node, final int mask) {
