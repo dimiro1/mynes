@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
@@ -10,13 +11,10 @@ import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 import com.github.dimiro1.mynes.ui.palette.PaletteDialog;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -25,6 +23,8 @@ import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
@@ -33,7 +33,7 @@ import java.util.Arrays;
 import java.util.function.IntConsumer;
 
 public class GameUIFrame extends JFrame {
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     /**
      * How many save state slots there are. Nine because that is how many fit on the number row, and
@@ -52,7 +52,21 @@ public class GameUIFrame extends JFrame {
      */
     private static final int BATTERY_AUTOSAVE_MILLIS = 60_000;
 
-    private final JFileChooser fileChooser;
+    /**
+     * The Open dialog, kept between openings so that the next one starts in the folder the last one
+     * ended in.
+     * <p>
+     * The system's own dialog rather than Swing's, which is the one part of this a player already
+     * knows how to use. FlatLaf falls back to a {@link JFileChooser} where there is no system dialog
+     * to ask for, so it is not a decision about platforms.
+     * <p>
+     * It also blocks the application's input events while it is up, which matters more here than in
+     * most programs: {@link KeyboardInput} sits on the keyboard focus manager and sees every
+     * keystroke in the process, so the alternative is a dialog that plays the game while somebody
+     * types a filename into it.
+     */
+    private final SystemFileChooser fileChooser;
+
     private final ScreenComponent screen = new ScreenComponent();
     private final KeyboardInput keyboardInput;
 
@@ -106,8 +120,8 @@ public class GameUIFrame extends JFrame {
     public GameUIFrame() {
         super("MyNES");
 
-        var filter = new FileNameExtensionFilter("iNES", "nes");
-        fileChooser = new JFileChooser();
+        var filter = new SystemFileChooser.FileNameExtensionFilter("iNES", "nes");
+        fileChooser = new SystemFileChooser();
         fileChooser.addChoosableFileFilter(filter);
         fileChooser.setFileFilter(filter);
 
@@ -261,11 +275,11 @@ public class GameUIFrame extends JFrame {
                 }).setVisible(true));
 
         fileMenuOpen.addActionListener(e -> {
-            if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
                 try {
                     loadRom(fileChooser.getSelectedFile());
                 } catch (IOException ex) {
-                    logger.error("failed to load rom", ex);
+                    logger.log(Level.ERROR, "failed to load rom", ex);
                 }
             }
         });
@@ -359,7 +373,7 @@ public class GameUIFrame extends JFrame {
         debugMenuCHRViewer.addActionListener(
                 e -> {
                     if (cart == null) {
-                        logger.error("cartridge is not loaded");
+                        logger.log(Level.ERROR, "cartridge is not loaded");
                         JOptionPane.showMessageDialog(
                                 this,
                                 "Cartridge is not loaded",
@@ -585,12 +599,12 @@ public class GameUIFrame extends JFrame {
             var read = BatteryRAM.read(nes, path);
 
             if (read >= 0) {
-                logger.info("restored {} bytes of save RAM from {}", read, path.getFileName());
+                logger.log(Level.INFO, "restored " + read + " bytes of save RAM from " + path.getFileName());
             }
         } catch (IOException e) {
             // Worth a dialog rather than a log line: carrying on means the game says the save file is
             // corrupt, and the player deserves to know it was the emulator that could not read it.
-            logger.error("could not read the save file", e);
+            logger.log(Level.ERROR, "could not read the save file", e);
             JOptionPane.showMessageDialog(
                     this,
                     "Could not read " + path.getFileName() + ": " + e.getMessage()
@@ -615,9 +629,9 @@ public class GameUIFrame extends JFrame {
 
         try {
             BatteryRAM.write(nes, path);
-            logger.info("wrote save RAM to {}", path.getFileName());
+            logger.log(Level.INFO, "wrote save RAM to " + path.getFileName());
         } catch (IOException e) {
-            logger.error("could not write the save file", e);
+            logger.log(Level.ERROR, "could not write the save file", e);
             JOptionPane.showMessageDialog(
                     this,
                     "Could not write " + path.getFileName() + ": " + e.getMessage()
@@ -650,7 +664,7 @@ public class GameUIFrame extends JFrame {
         try {
             BatteryRAM.write(nes, path);
             batteryShadow = ram.clone();
-            logger.info("the game saved, so {} was written", path.getFileName());
+            logger.log(Level.INFO, "the game saved, so " + path.getFileName() + " was written");
         } catch (IOException e) {
             report("Could not write " + path.getFileName(), e);
         }
@@ -706,7 +720,7 @@ public class GameUIFrame extends JFrame {
         runner.post(() -> {
             try {
                 SaveState.write(nes, path);
-                logger.info("saved slot {} at frame {}", slot, nes.getPPU().getFrame());
+                logger.log(Level.INFO, "saved slot " + slot + " at frame " + nes.getPPU().getFrame());
             } catch (IOException | SaveStateException ex) {
                 report("Could not save slot " + slot, ex);
             }
@@ -734,7 +748,7 @@ public class GameUIFrame extends JFrame {
         runner.postStateChange(() -> {
             try {
                 SaveState.read(nes, path);
-                logger.info("loaded slot {}, now at frame {}", slot, nes.getPPU().getFrame());
+                logger.log(Level.INFO, "loaded slot " + slot + ", now at frame " + nes.getPPU().getFrame());
             } catch (IOException | SaveStateException ex) {
                 report("Could not load slot " + slot, ex);
             }
@@ -800,7 +814,7 @@ public class GameUIFrame extends JFrame {
      * on the screen and {@link EmulatorRunner#post} has no way of handing an exception back.
      */
     private void report(final String what, final Exception cause) {
-        logger.error("{}", what, cause);
+        logger.log(Level.ERROR, what, cause);
 
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
                 this, what + ": " + cause.getMessage(), "Error", JOptionPane.ERROR_MESSAGE));
@@ -829,7 +843,7 @@ public class GameUIFrame extends JFrame {
      * to be a ROM leaves the current game playing.
      */
     private void loadRom(final File selectedFile) throws IOException {
-        logger.info("loading rom {}", selectedFile.getName());
+        logger.log(Level.INFO, "loading rom " + selectedFile.getName());
 
         Cart loaded;
         try (var rom = new FileInputStream(selectedFile)) {
@@ -842,7 +856,7 @@ public class GameUIFrame extends JFrame {
 
         startMachine(loaded);
 
-        logger.info("loaded rom {}", selectedFile.getName());
+        logger.log(Level.INFO, "loaded rom " + selectedFile.getName());
     }
 
     /**
@@ -867,7 +881,7 @@ public class GameUIFrame extends JFrame {
         this.cart = cart;
         nes = new NES(cart, config.region().resolve(cart));
 
-        logger.info("running {} as {}", cart.filename(), nes.getRegion().label());
+        logger.log(Level.INFO, "running " + cart.filename() + " as " + nes.getRegion().label());
 
         // Which television this machine is plugged into. Only here, rather than everywhere a
         // palette is chosen, because this is the one moment the kind of machine can change.
@@ -921,7 +935,7 @@ public class GameUIFrame extends JFrame {
         try {
             config.save(Config.DEFAULT_PATH);
         } catch (IOException e) {
-            logger.error("failed to save the settings", e);
+            logger.log(Level.ERROR, "failed to save the settings", e);
             JOptionPane.showMessageDialog(
                     this,
                     "Could not save the settings to " + Config.DEFAULT_PATH,
@@ -973,7 +987,7 @@ public class GameUIFrame extends JFrame {
 
     private void destroyCHRViewerFrame() {
         if (chrViewerFrame != null) {
-            logger.debug("closing chrViewerFrame");
+            logger.log(Level.DEBUG, "closing chrViewerFrame");
             chrViewerFrame.dispose();
             chrViewerFrame = null;
         }

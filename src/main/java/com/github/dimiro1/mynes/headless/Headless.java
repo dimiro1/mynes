@@ -5,12 +5,12 @@ import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Instant;
@@ -24,7 +24,7 @@ import java.util.List;
  * @see com.github.dimiro1.mynes.headless
  */
 public final class Headless {
-    private static final Logger logger = LoggerFactory.getLogger("HEADLESS");
+    private static final Logger logger = System.getLogger("HEADLESS");
 
     public static final int EXIT_OK = 0;
     public static final int EXIT_ERROR = 1;
@@ -76,7 +76,7 @@ public final class Headless {
             System.err.println("could not write what the run produced: " + e.getMessage());
             return EXIT_ERROR;
         } catch (RuntimeException e) {
-            logger.error("the run failed", e);
+            logger.log(Level.ERROR, "the run failed", e);
             return EXIT_ERROR;
         }
     }
@@ -107,12 +107,14 @@ public final class Headless {
         var palette = options.paletteFor(region);
 
         if (cart.timing() == Cart.Timing.DENDY && options.region() == null) {
-            logger.warn("{} says Dendy, which is not modelled; running it as PAL",
-                    options.rom().getFileName());
+            logger.log(Level.WARNING, options.rom().getFileName()
+                    + " says Dendy, which is not modelled; running it as PAL");
         }
 
-        logger.info("running {}, mapper {}, {}, {} frames",
-                options.rom().getFileName(), cart.mapperNumber(), region.label(), options.frames());
+        logger.log(Level.INFO, "running " + options.rom().getFileName()
+                + ", mapper " + cart.mapperNumber()
+                + ", " + region.label()
+                + ", " + options.frames() + " frames");
 
         Files.createDirectories(options.outDir());
 
@@ -136,12 +138,14 @@ public final class Headless {
                             + " cannot be loaded: this cartridge has no RAM at $6000 to put it in.");
                 }
 
-                logger.info("filled {} bytes of cartridge RAM from {}", read, options.sramIn());
+                logger.log(Level.INFO,
+                        "filled " + read + " bytes of cartridge RAM from " + options.sramIn());
             }
 
             if (options.loadState() != null) {
                 session.loadState(options.loadState());
-                logger.info("started from {}, at frame {}", options.loadState(), session.frame());
+                logger.log(Level.INFO,
+                        "started from " + options.loadState() + ", at frame " + session.frame());
             }
 
             var outcome = options.interactive()
@@ -152,7 +156,7 @@ public final class Headless {
 
             if (options.saveState() != null) {
                 session.saveState(options.saveState());
-                logger.info("wrote a save state to {}", options.saveState());
+                logger.log(Level.INFO, "wrote a save state to " + options.saveState());
             }
 
             if (options.sramOut() != null) {
@@ -166,7 +170,8 @@ public final class Headless {
                             "there is no cartridge RAM to write to " + options.sramOut() + ".");
                 }
 
-                logger.info("wrote {} bytes of cartridge RAM to {}", written, options.sramOut());
+                logger.log(Level.INFO,
+                        "wrote " + written + " bytes of cartridge RAM to " + options.sramOut());
             }
 
             var dumps = writeDumps(options, session);
@@ -189,10 +194,9 @@ public final class Headless {
 
             publish(options, report);
 
-            logger.info("stopped after {} frames because {}, exit {}",
-                    outcome.frames(),
-                    outcome.stoppedBecause().name().toLowerCase(),
-                    exitCode);
+            logger.log(Level.INFO, "stopped after " + outcome.frames()
+                    + " frames because " + outcome.stoppedBecause().name().toLowerCase()
+                    + ", exit " + exitCode);
 
             return exitCode;
         }
@@ -232,7 +236,7 @@ public final class Headless {
 
             if (System.nanoTime() - deadline >= 0) {
                 stoppedBecause = Report.StoppedBecause.TIMEOUT;
-                logger.warn("timed out at frame {} of {}", frame, options.frames());
+                logger.log(Level.WARNING, "timed out at frame " + frame + " of " + options.frames());
                 break;
             }
         }

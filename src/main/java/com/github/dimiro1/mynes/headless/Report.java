@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.headless;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.Cart;
 
@@ -339,7 +338,7 @@ public final class Report {
      * A path, or a null where there was no path. Explicitly null rather than absent, so that
      * {@code jq} over two reports compares the same set of keys either way.
      */
-    private static void put(final ObjectNode node, final String name, final Path path) {
+    private static void put(final Json.Object node, final String name, final Path path) {
         if (path == null) {
             node.putNull(name);
         } else {
@@ -347,7 +346,7 @@ public final class Report {
         }
     }
 
-    static void putStateOf(final ObjectNode node, final Session session) {
+    static void putStateOf(final Json.Object node, final Session session) {
         node.put("frame", session.frame());
         node.put("hash", hex(session.analyse().hash()));
     }

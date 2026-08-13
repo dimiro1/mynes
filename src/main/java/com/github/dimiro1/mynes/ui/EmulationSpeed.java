@@ -1,9 +1,9 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Region;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -38,7 +38,7 @@ public enum EmulationSpeed {
      */
     UNLIMITED("unlimited", "Unlimited", 0);
 
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     /**
      * Everything Fast Forward can be set to, in the order the menu lists it: every speed except
@@ -119,8 +119,8 @@ public enum EmulationSpeed {
             }
         }
 
-        logger.warn("{} is not a fast forward speed, falling back to {}",
-                id, defaultFastForward().id());
+        logger.log(Level.WARNING,
+                id + " is not a fast forward speed, falling back to " + defaultFastForward().id());
 
         return defaultFastForward();
     }

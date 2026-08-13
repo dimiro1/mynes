@@ -2,8 +2,9 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Region;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 
 /**
  * Which machine to build for a cartridge: whichever one it asks for, or one insisted on.
@@ -27,7 +28,7 @@ public enum RegionSetting {
     NTSC("ntsc", "NTSC", Region.NTSC),
     PAL("pal", "PAL", Region.PAL);
 
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     private final String id;
     private final String label;
@@ -94,7 +95,7 @@ public enum RegionSetting {
             }
         }
 
-        logger.warn("{} is not a region, falling back to {}", id, defaultSetting().id());
+        logger.log(Level.WARNING, id + " is not a region, falling back to " + defaultSetting().id());
 
         return defaultSetting();
     }

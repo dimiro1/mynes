@@ -4,10 +4,10 @@ import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,7 +28,7 @@ import java.util.Properties;
  * startup.
  */
 public final class Config {
-    private static final Logger logger = LoggerFactory.getLogger("UI");
+    private static final Logger logger = System.getLogger("UI");
 
     /**
      * Where the settings live.
@@ -119,14 +119,14 @@ public final class Config {
         var properties = new Properties();
 
         if (!Files.isRegularFile(path)) {
-            logger.info("no settings file at {}, using the defaults", path);
+            logger.log(Level.INFO, "no settings file at " + path + ", using the defaults");
         } else {
             try (var in = Files.newInputStream(path)) {
                 properties.load(in);
-                logger.info("loaded settings from {}", path);
+                logger.log(Level.INFO, "loaded settings from " + path);
             } catch (IOException | IllegalArgumentException e) {
                 // IllegalArgumentException is a malformed unicode escape somewhere in the file.
-                logger.warn("could not read {}, using the defaults", path, e);
+                logger.log(Level.WARNING, "could not read " + path + ", using the defaults", e);
             }
         }
 
@@ -249,7 +249,7 @@ public final class Config {
         // either way; this only keeps the two ends of the round trip agreeing on paper.
         Files.writeString(path, text, StandardCharsets.ISO_8859_1);
 
-        logger.info("saved settings to {}", path);
+        logger.log(Level.INFO, "saved settings to " + path);
     }
 
     public KeyBindings keyBindings() {

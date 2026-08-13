@@ -1,9 +1,9 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.NES;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 
@@ -26,7 +26,7 @@ import java.util.concurrent.locks.LockSupport;
  * @see com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame
  */
 public class EmulatorRunner {
-    private static final Logger logger = LoggerFactory.getLogger("EMU");
+    private static final Logger logger = System.getLogger("EMU");
 
     /**
      * How far behind schedule the loop tolerates before it gives up on catching up, counted in
@@ -192,7 +192,7 @@ public class EmulatorRunner {
     }
 
     private void run() {
-        logger.info("emulation started");
+        logger.log(Level.INFO, "emulation started");
 
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
@@ -303,12 +303,12 @@ public class EmulatorRunner {
                 }
             }
         } catch (Throwable t) {
-            logger.error("emulation failed at frame {}", ppu.getFrame(), t);
+            logger.log(Level.ERROR, "emulation failed at frame " + ppu.getFrame(), t);
         } finally {
             audio.close();
         }
 
-        logger.info("emulation stopped");
+        logger.log(Level.INFO, "emulation stopped");
     }
 
     private void runPendingCommands() {
