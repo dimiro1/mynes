@@ -1,0 +1,62 @@
+#!/usr/bin/env sh
+#
+# Runs MyNES out of the directory this was unpacked into.
+#
+# No arguments opens the window. Everything else goes straight through to the emulator, so the
+# headless mode is here too:
+#
+#     ./mynes --headless --help
+#
+# There is deliberately no --enable-native-access=ALL-UNNAMED below. The jar's manifest already
+# carries the grant FlatLaf's native library needs, which is what makes double clicking the jar work
+# as well as this does; passing it here again would be redundant rather than wrong.
+#
+set -eu
+
+# Through any symlinks first. Somebody will link this into /usr/local/bin, and dirname "$0" on its
+# own would then go looking for the jar next to the link. Not readlink -f, which BSD only grew
+# recently and which this has to keep running on.
+self="$0"
+while [ -L "$self" ]; do
+    link="$(readlink "$self")"
+    case "$link" in
+        /*) self="$link" ;;
+        *)  self="$(dirname "$self")/$link" ;;
+    esac
+done
+
+here="$(cd "$(dirname "$self")" && pwd)"
+jar="$here/mynes.jar"
+
+if [ ! -f "$jar" ]; then
+    echo "mynes.jar is not next to this script -- expected it at $jar." >&2
+    exit 1
+fi
+
+java="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+
+if ! command -v "$java" >/dev/null 2>&1; then
+    echo "MyNES needs Java 25, and there is no java to be found." >&2
+    echo "Get one from https://adoptium.net, or point JAVA_HOME at one already installed." >&2
+    exit 1
+fi
+
+# Checked before launching rather than after, because the alternative is an
+# UnsupportedClassVersionError and a stack trace, which tells somebody who wanted to play a game
+# nothing at all.
+#
+# -version and not --version: it is the spelling every JDK has ever had, and it prints to standard
+# error on all of them. The first line reads `openjdk version "25.0.2" 2025-10-21` or near enough.
+# A JDK 8 says "1.8.0_401", whose leading 1 falls below 25 on the way past, which is the right
+# answer for the wrong reason and the only version scheme this has to get wrong.
+version="$("$java" -version 2>&1 | head -n 1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p')"
+
+if [ -z "$version" ] || [ "$version" -lt 25 ]; then
+    echo "MyNES needs Java 25. This one says: $("$java" -version 2>&1 | head -n 1)" >&2
+    echo "Get one from https://adoptium.net, or point JAVA_HOME at one already installed." >&2
+    exit 1
+fi
+
+# exec, so the code this exits with is the emulator's own. The headless mode tells six of them apart
+# and a script on the other end is entitled to read them.
+exec "$java" -jar "$jar" "$@"

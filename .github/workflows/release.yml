@@ -1,0 +1,65 @@
+name: Release
+
+# A tag is what publishes. Nothing else here builds a release, so pushing v0.1.0 is the whole of
+# the ceremony.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# To create the release and hang the zip off it.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Before anything is built, because it is the only moment this can be caught: a release
+      # tagged v0.2.0 carrying jars that call themselves 0.1.0 is worse than no release.
+      - name: Check the tag against the pom
+        run: |
+          pom="$(mvn -B -q org.apache.maven.plugins:maven-help-plugin:3.5.2:evaluate \
+              -Dexpression=project.version -DforceStdout)"
+          tag="${GITHUB_REF_NAME#v}"
+
+          if [ "$pom" != "$tag" ]; then
+            echo "the tag says $tag and the pom says $pom; bump one of them." >&2
+            exit 1
+          fi
+
+      # Tests included, unlike the CI build, which runs them as a separate step. The Tom Harte
+      # fixtures are not fetched here and do not need to be: the committed subset covers every
+      # opcode, which is why that download is allowed to fail in test.yml too.
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+
+      - name: Smoke test the distribution
+        run: ./scripts/smoke-distribution.sh
+
+      # Named without a path so that `sha256sum -c SHA256SUMS` works next to the downloaded zip.
+      - name: Checksum
+        working-directory: target
+        run: |
+          sha256sum mynes-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      # gh rather than one of the release actions. It is already on the runner, it is three lines
+      # instead of six, and the alternative is trusting a moving third party tag with the write
+      # token this job is holding.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+              --generate-notes \
+              target/mynes-*.zip \
+              target/SHA256SUMS

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The zip on the releases page: the fat jar, a launcher for each kind of shell, and the licences.
+
+    Flat rather than the bin/ and lib/ a bigger program would want. Six files do not need a
+    hierarchy, and the jar being visible at the top is the point of it: on every desktop there is,
+    the way to run a Java program is to double click the jar.
+-->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>dist</id>
+
+    <formats>
+        <format>zip</format>
+    </formats>
+
+    <!-- Unpacks into a directory of its own rather than over whatever it was unzipped next to. -->
+    <includeBaseDirectory>true</includeBaseDirectory>
+    <baseDirectory>mynes-${project.version}</baseDirectory>
+
+    <files>
+        <!-- Built by the make-assembly execution, which the POM lists first for exactly this
+             reason. FlatLaf carries its native libraries for every operating system inside its own
+             jar, so this one file is the whole of the emulator on all of them. -->
+        <file>
+            <source>${project.build.directory}/mynes.jar</source>
+            <outputDirectory></outputDirectory>
+            <fileMode>0644</fileMode>
+        </file>
+    </files>
+
+    <fileSets>
+        <!-- Zip entries carry unix permissions and unzip restores them, so 0755 here is what makes
+             ./mynes work without a chmod first. -->
+        <fileSet>
+            <directory>src/dist</directory>
+            <outputDirectory></outputDirectory>
+            <includes>
+                <include>mynes</include>
+            </includes>
+            <fileMode>0755</fileMode>
+            <lineEnding>unix</lineEnding>
+        </fileSet>
+
+        <!-- Separately, for the line endings: cmd.exe reads a .bat a line at a time as it runs it,
+             and mis-parses one written with unix endings. -->
+        <fileSet>
+            <directory>src/dist</directory>
+            <outputDirectory></outputDirectory>
+            <includes>
+                <include>mynes.bat</include>
+            </includes>
+            <fileMode>0644</fileMode>
+            <lineEnding>dos</lineEnding>
+        </fileSet>
+
+        <!-- Left exactly as they are in the repository, endings included. -->
+        <fileSet>
+            <directory>${project.basedir}</directory>
+            <outputDirectory></outputDirectory>
+            <includes>
+                <include>README.md</include>
+                <include>LICENSE</include>
+                <include>THIRD-PARTY.md</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+    </fileSets>
+</assembly>

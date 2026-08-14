@@ -31,5 +31,10 @@ jobs:
       - name: Build with Maven
         run: mvn -B package -DskipTests --file pom.xml
 
+      # Here rather than only in the release workflow, so that a distribution somebody has broken
+      # fails on the pull request that broke it instead of at the moment a tag is pushed.
+      - name: Smoke test the distribution
+        run: ./scripts/smoke-distribution.sh
+
       - name: Run tests
         run: mvn -B test

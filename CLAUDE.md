@@ -12,7 +12,7 @@ Build the jar once, then run it as often as you like:
 
 ```sh
 mvn -B package -DskipTests
-JAR=target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
+JAR=target/mynes.jar
 
 java -jar $JAR --headless --rom ROM.nes --frames 900 \
     --input 60/40x3:start --screenshot 300,last --audio --dump ram
@@ -148,6 +148,22 @@ exit 2.
 **But it breaks the assumption above.** Two runs are only comparable when they started the same way,
 so `run.state.startedFromPowerOn` in the report is part of what to check before diffing two of them.
 `--sram-in`/`--sram-out` do the same for battery RAM, in the `.sav` format other emulators read.
+
+## What gets released
+
+`mvn package` also writes `target/mynes-<version>.zip` -- the jar, a launcher for each kind of shell,
+and the licences. `scripts/smoke-distribution.sh` unpacks it and runs a cartridge out of it, and both
+workflows call that, so a distribution somebody has broken fails on the pull request that broke it
+rather than at the moment a tag is pushed.
+
+Two things in there are counted rather than derived, and have to move when what they count does. The
+smoke test expects **12 palettes** -- `Palettes.NESDEV` plus the eleven under `/palettes` -- because a
+palette that will not load is dropped with a warning rather than an exception, so nothing else in the
+build would notice one going missing. And `THIRD-PARTY.md` names the two libraries the fat jar
+carries, which is the file to write in if a third ever earns its place.
+
+Releasing is a tag and nothing else. `.github/workflows/release.yml` refuses one whose name disagrees
+with the pom, so the version in `pom.xml` moves first and `git tag v<version>` follows it.
 
 ## House style
 

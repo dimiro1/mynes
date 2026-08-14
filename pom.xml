@@ -6,7 +6,7 @@
 
     <groupId>com.github.dimiro1</groupId>
     <artifactId>mynes</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <packaging>jar</packaging>
 
     <name>mynes</name>
@@ -17,6 +17,15 @@
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
         <main.class>com.github.dimiro1.mynes.ui.Main</main.class>
+
+        <!-- Stamped on every entry of the jar and the zip, in place of the moment the build ran, so
+             that two builds of the same source produce byte identical files and the SHA256 published
+             beside a release is one anybody can check by building it themselves. The emulator makes
+             the same promise about its frames; this is the build keeping it.
+
+             Moved by hand at each release. A stale one costs nothing but an old date on the entries,
+             so it is better forgotten than replaced with something that varies. -->
+        <project.build.outputTimestamp>2026-08-14T00:00:00Z</project.build.outputTimestamp>
 
         <!-- What `mvn compile exec:exec@headless` passes to the headless mode. Declared empty so
              that leaving it off is an empty argument list rather than an uninterpolated
@@ -157,29 +166,25 @@
                 </executions>
             </plugin>
 
-            <!-- Maven Assembly Plugin for creating distributions -->
+            <!-- Maven Assembly Plugin, building the two things that get handed out: the jar that
+                 runs wherever a JDK does, and the zip that goes on the releases page.
+
+                 The order these two executions are written in is load bearing. Maven runs several
+                 executions of one plugin in the order the POM lists them, and the zip is packed out
+                 of the jar the execution above it has just made. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.8.0</version>
                 <configuration>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                    <archive>
-                        <manifest>
-                            <mainClass>${main.class}</mainClass>
-                        </manifest>
-
-                        <!-- The grant exec:exec passes on its command line, for the jar that gets
-                             double clicked, where there is no command line to pass it on. Without
-                             it FlatLaf's native library loads behind four lines of warning, and
-                             stops loading at all once a future release blocks what it currently
-                             only warns about, taking the system file dialog with it. -->
-                        <manifestEntries>
-                            <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
-                        </manifestEntries>
-                    </archive>
+                    <!-- Both of these are named rather than classified, which is a decision with a
+                         sharp edge on it: with appendAssemblyId off and no classifier given, the
+                         plugin does not attach a second artifact at all. It replaces the file
+                         behind the main one. Two such executions and `mvn install` would install
+                         the zip as the jar. Nothing here is deployed to a repository, so the honest
+                         answer is to attach neither and let both simply land in target/. -->
+                    <attach>false</attach>
+                    <appendAssemblyId>false</appendAssemblyId>
                 </configuration>
                 <executions>
                     <execution>
@@ -188,6 +193,54 @@
                         <goals>
                             <goal>single</goal>
                         </goals>
+                        <configuration>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+
+                            <!-- target/mynes.jar, and not target/mynes-0.1.0-jar-with-dependencies.jar.
+                                 The README, CLAUDE.md and the headless mode's own usage text all
+                                 name this file; a name with the version in it would stale every one
+                                 of them the next time the version moves. -->
+                            <finalName>mynes</finalName>
+
+                            <archive>
+                                <manifest>
+                                    <mainClass>${main.class}</mainClass>
+                                </manifest>
+
+                                <!-- The grant exec:exec passes on its command line, for the jar that
+                                     gets double clicked, where there is no command line to pass it
+                                     on. Without it FlatLaf's native library loads behind four lines
+                                     of warning, and stops loading at all once a future release
+                                     blocks what it currently only warns about, taking the system
+                                     file dialog with it.
+
+                                     It is also why the launcher in the distribution does not pass
+                                     the flag: the jar it runs is this one. -->
+                                <manifestEntries>
+                                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
+
+                    <!-- target/mynes-<version>.zip: the jar above, a launcher for each kind of
+                         shell, and the licences. Built by every `mvn package` rather than behind a
+                         profile, which costs a fraction of a second and means the thing people
+                         download is exercised on every build instead of discovered broken at the
+                         moment somebody cuts a tag. -->
+                    <execution>
+                        <id>make-distribution</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/dist.xml</descriptor>
+                            </descriptors>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

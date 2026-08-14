@@ -4,7 +4,30 @@ A NES emulator written in Java. Still a work in progress, but it plays games.
 
 ![Super Mario Bros. 3](shots/game-smb3.png)
 
-## Running it
+## Downloading it
+
+There is a zip on the [releases page](https://github.com/dimiro1/mynes/releases). Unpack it and run
+the script inside:
+
+```sh
+unzip mynes-0.1.0.zip
+cd mynes-0.1.0
+./mynes
+```
+
+`mynes.bat` is the same thing for Windows, and `mynes.jar` is what both of them run, so
+`java -jar mynes.jar` works too, as does double clicking it. One zip covers macOS, Windows and
+Linux: the libraries the emulator uses carry their native code for all three, and the jar carries
+the libraries.
+
+You still need Java 25. The zip holds the emulator and nothing else, so if you have not got one,
+[Adoptium](https://adoptium.net) has one for every machine this runs on.
+
+Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own. Games run at
+60.0988 frames a second, or 50.0070 on a PAL cartridge, with the overscan cropped and the picture
+scaled to the window.
+
+## Building it
 
 You need Java 25 and Maven. Nothing else.
 
@@ -18,12 +41,11 @@ That opens the window. Or build a jar once and run that:
 
 ```sh
 mvn -B package -DskipTests
-java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar
+java -jar target/mynes.jar
 ```
 
-Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own. Games run at
-60.0988 frames a second, or 50.0070 on a PAL cartridge, with the overscan cropped and the picture
-scaled to the window.
+The same `mvn package` also writes the release zip into `target/`, so what the releases page carries
+is never anything a build here has not already made.
 
 ## Controls
 
@@ -193,7 +215,7 @@ on a machine with no display, or for a coding agent that cannot look at a window
 
 ```sh
 mvn -B package -DskipTests
-java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless \
+java -jar target/mynes.jar --headless \
     --rom smb.nes --frames 900 --input 60/40x3:start --screenshot 300,last --audio
 ```
 
