@@ -113,7 +113,7 @@ public record Options(
 
             Usage:
               mvn -q compile exec:exec@headless -Dmynes.args="--rom FILE [options]"
-              java -jar target/mynes-1.0-SNAPSHOT-jar-with-dependencies.jar --headless --rom FILE [options]
+              java -jar target/mynes.jar --headless --rom FILE [options]
 
             The second is worth building once (mvn -B package -DskipTests) for anything run more
             than a few times: Maven takes a couple of seconds to get going and the jar takes a third

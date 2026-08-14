@@ -201,7 +201,7 @@ class OptionsTests {
     @Test
     void theUsageMentionsBothWaysIn() {
         assertTrue(Options.usage().contains("exec:exec@headless"));
-        assertTrue(Options.usage().contains("jar-with-dependencies"));
+        assertTrue(Options.usage().contains("mynes.jar"));
     }
 
     @Test
