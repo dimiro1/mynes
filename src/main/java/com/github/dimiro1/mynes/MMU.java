@@ -118,6 +118,12 @@ public class MMU {
     private boolean dmcRequested;
 
     /**
+     * Cycles until an aborted DMA tries to halt the CPU, or 0 when none is owed. See
+     * {@link #scheduleAbortedDMA}.
+     */
+    private int dmcAbortDelay;
+
+    /**
      * Which controller port the previous bus cycle read, or 0 if it read anything else. What the
      * consecutive-read rule in {@link #readPort} is measured against.
      */
@@ -476,13 +482,13 @@ public class MMU {
             // The strobe is latched on the next get-to-put transition rather than now.
             case 0x4016 -> pendingStrobe = data & 1;
             case 0x4015 -> {
+                // Asked before the write, because the write is what takes the sample away.
+                var imminent = apu.isDMCReloadImminent();
+
                 apu.write(address, data);
 
-                // An explicit abort. Switching the DMC off takes the sample away from a fetch
-                // already in flight, and the fetch stops where it stands rather than finishing --
-                // however many of its cycles it had already spent.
-                if (!apu.isDMCSampleActive()) {
-                    abortDMCFetch();
+                if (!apu.isDMCSampleActive() && imminent) {
+                    scheduleAbortedDMA();
                 }
             }
             // Everything else in the window is the APU's, $4017 included: only its read side
@@ -530,6 +536,8 @@ public class MMU {
             pendingStrobe = -1;
         }
 
+        var aborting = dmcAbortDelay > 0 && --dmcAbortDelay == 0;
+
         if (dmcRequested && !dmcFetching) {
             dmcFetching = true;
             dmcRequested = false;
@@ -542,7 +550,10 @@ public class MMU {
 
         if (!dmcFetching && !dmaInProgress) {
             halted = false;
-            return CPUBus.DMACycle.NONE;
+
+            // An aborted DMA starts and then stops: it spends its halt cycle and nothing else,
+            // with no dummy, no alignment and no read. See scheduleAbortedDMA.
+            return aborting ? CPUBus.DMACycle.HALT : CPUBus.DMACycle.NONE;
         }
 
         // Nobody has the bus until the halt has landed, and the halt cannot land on a write.
@@ -555,9 +566,13 @@ public class MMU {
                 // Spent whatever else is going on: an OAM transfer underneath carries on using it.
                 dmcPrepared++;
             } else if (isGetCycle(cpuCycle)) {
-                apu.finishDMCFetch(transferRead(apu.dmcFetchAddress()));
+                var stopped = apu.finishDMCFetch(transferRead(apu.dmcFetchAddress()));
                 dmcFetching = false;
                 dmcPrepared = 0;
+
+                if (stopped) {
+                    scheduleAbortedDMA();
+                }
 
                 return CPUBus.DMACycle.TRANSFER;
             }
@@ -591,15 +606,36 @@ public class MMU {
     }
 
     /**
-     * Drops a sample fetch, wherever it had got to.
+     * Arranges the one cycle a fetch costs when it is called off before it can begin.
      * <p>
-     * The cycles it has already spent are spent -- the CPU does not get them back -- but nothing
-     * further happens: no read, and no byte handed to a channel that is no longer playing.
+     * Playback stopping in the APU cycle before the DMC would have asked for its next byte is too
+     * late to stop the transfer being scheduled and too early for it to happen: it starts, spends
+     * its halt cycle, and gives up -- no dummy cycle, no alignment, no read. AccuracyCoin's
+     * Explicit DMA Abort walks a $4015 write across that window a cycle at a time and records what
+     * each position costs the CPU: 4, 4, 4, 4, 4, 4, 3, 4, 1, 1, 0, 0, 0, 0, 0, 0. Reading it from
+     * the end backwards, which is the write landing later and later,
+     * <ul>
+     *   <li>too early, and nothing happens at all;</li>
+     *   <li>inside the window, and the fetch is called off for the price of one cycle -- the 1s;</li>
+     *   <li>too late, and the fetch runs in full -- the 4s. Once the DMC has asked, nothing stops
+     *       it, so the byte is read and thrown away.</li>
+     * </ul>
+     * The 3 in that list is not an abort. It is a write landing on the halt cycle of a fetch
+     * already under way, which a 6502 does not sample RDY on, so the halt is one cycle later and
+     * the transfer that follows no longer needs its alignment cycle.
+     * <p>
+     * The same aborted DMA is scheduled however the sample stopped -- by hand, or by a one byte
+     * sample running out, which is what Implicit DMA Abort measures.
+     * <p>
+     * A transfer the emptying buffer asks for halts on a put cycle, so the halt attempt is the
+     * first put two or more cycles after the stop: three cycles when the stop was on a get, two
+     * when it was on a put. If the CPU turns out to be writing then, the abort does not happen at
+     * all -- the halt is not retried, because there is nothing left to halt for.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/DMA#Bugs">DMC DMA bugs</a>
      */
-    private void abortDMCFetch() {
-        dmcFetching = false;
-        dmcPrepared = 0;
-        dmcRequested = false;
+    private void scheduleAbortedDMA() {
+        dmcAbortDelay = apu.isGetCycleNow() ? 3 : 2;
     }
 
     /**
@@ -682,6 +718,7 @@ public class MMU {
         dmcFetching = io.bool(dmcFetching);
         dmcPrepared = io.u8(dmcPrepared);
         dmcRequested = io.bool(dmcRequested);
+        dmcAbortDelay = io.u8(dmcAbortDelay);
         lastPortRead = io.u16(lastPortRead);
         pendingStrobe = io.u8(pendingStrobe + 1) - 1;
         cpuAddress = io.u16(cpuAddress);
