@@ -716,11 +716,11 @@ public class CPU {
                 push((p & 0xEF) | 0x20);
                 decSP();
                 setFlagI(true);
+                interruptVector = takeVector();
                 incIntTick();
             }
             case 6 -> {
-                // Cycle 6: Choose and fetch low byte of interrupt vector
-                interruptVector = takeVector();
+                // Cycle 6: Fetch low byte of the vector chosen on the cycle before
                 tickLow = read(interruptVector);
                 incIntTick();
             }
@@ -2008,12 +2008,13 @@ public class CPU {
             case 5 -> {
                 push(p | 0x30);
                 decSP();
-                incTick();
-            }
-            case 6 -> {
+
                 // BRK picks its vector the same way an interrupt sequence does, so an NMI that
                 // arrived while the status byte was being pushed hijacks it.
                 interruptVector = takeVector();
+                incTick();
+            }
+            case 6 -> {
                 setLowPC(read(interruptVector));
                 setFlagI(true);
                 incTick();

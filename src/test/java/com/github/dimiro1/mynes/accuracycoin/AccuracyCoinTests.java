@@ -103,9 +103,6 @@ final class AccuracyCoinTests {
             entry("$9F   SHA absolute,Y", "PASS 1"),
             entry("$9B   SHS absolute,Y", "PASS 1"),
 
-            entry("NMI Overlap BRK", "FAIL 2"),
-            entry("NMI Overlap IRQ", "FAIL 1"),
-
             entry("DMA + $2002 Read", "FAIL 2"),
             entry("DMA + $4016 Read", "PASS 1"),
             entry("DMC DMA Bus Conflicts", "FAIL 2"),
