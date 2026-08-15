@@ -166,6 +166,40 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the screenshot size")
+    class LoadingScreenshotScale {
+        @Test
+        void aMissingEntryGivesThePictureTheMachineDrew() throws IOException {
+            // 1x rather than the window's 2x, and the two settings are read separately: somebody who
+            // plays at 4x has said nothing about what a file should be.
+            var config = Config.load(write("video.scale=4\n"));
+
+            assertSame(ScreenScale.defaultScreenshotScale(), config.screenshotScale());
+            assertSame(ScreenScale.FOUR_TIMES, config.screenScale());
+        }
+
+        @Test
+        void anIdNamesItsSize() throws IOException {
+            assertSame(ScreenScale.THREE_TIMES,
+                    Config.load(write("video.screenshot.scale=3\n")).screenshotScale());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertSame(ScreenScale.TWO_TIMES,
+                    Config.load(write("video.screenshot.scale= 2 \n")).screenshotScale());
+        }
+
+        @Test
+        void anUnknownIdFallsBackToTheSameSizeAMissingOneDoes() throws IOException {
+            // Not to the window's default, which is what makes this its own fallback rather than
+            // byId's: a botched entry and no entry have to mean the same thing.
+            assertSame(ScreenScale.defaultScreenshotScale(),
+                    Config.load(write("video.screenshot.scale=12\n")).screenshotScale());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the region")
     class LoadingRegion {
         @Test
@@ -301,6 +335,15 @@ class ConfigTests {
         }
 
         @Test
+        void theScreenshotSizeSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setScreenshotScale(ScreenScale.THREE_TIMES);
+            config.save(config());
+
+            assertSame(ScreenScale.THREE_TIMES, Config.load(config()).screenshotScale());
+        }
+
+        @Test
         void theRegionSurvivesTheRoundTrip() throws IOException {
             var config = Config.load(config());
             config.setRegion(RegionSetting.PAL);
@@ -358,6 +401,7 @@ class ConfigTests {
             config.setKeyBindings(KeyBindings.defaults().with(Button.A, KeyEvent.VK_L));
             config.setPalette(Region.NTSC, OTHER);
             config.setScreenScale(ScreenScale.THREE_TIMES);
+            config.setScreenshotScale(ScreenScale.FOUR_TIMES);
             config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
@@ -368,6 +412,7 @@ class ConfigTests {
             assertTrue(text.contains("video.palette=" + OTHER.id()), text);
             assertTrue(text.contains("video.palette.pal=" + Palettes.PAL_ID), text);
             assertTrue(text.contains("video.scale=3"), text);
+            assertTrue(text.contains("video.screenshot.scale=4"), text);
             assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);

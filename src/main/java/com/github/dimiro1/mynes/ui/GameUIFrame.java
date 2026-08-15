@@ -14,6 +14,7 @@ import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 import com.github.dimiro1.mynes.ui.palette.PaletteDialog;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
@@ -29,6 +30,7 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
@@ -97,6 +99,13 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem machineMenuQuickLoad = new JMenuItem("Quick Load");
 
     /**
+     * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
+     * There is nothing to photograph until one is running, and a File menu greyed out as a whole
+     * would take Open with it.
+     */
+    private final JMenuItem fileMenuScreenshot = new JMenuItem("Screenshot", KeyEvent.VK_S);
+
+    /**
      * The breakpoints, which belong to the window rather than to any one machine.
      * <p>
      * A power cycle and a region change both build a new NES, and a power cycle that forgot every
@@ -162,6 +171,16 @@ public class GameUIFrame extends JFrame {
         JMenuItem fileMenuOpen = new JMenuItem("Open...", KeyEvent.VK_O);
         fileMenuOpen.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, command));
         fileMenu.add(fileMenuOpen);
+
+        // A function key, for the reasons the two quick state items are on function keys: it is in
+        // the same physical place on every keyboard layout, it is the key every emulator since ZSNES
+        // has taken a picture with, and it needs no modifier -- Shift being Select, a shortcut
+        // carrying one is a hazard here.
+        fileMenuScreenshot.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F12, 0));
+        fileMenuScreenshot.setEnabled(false);
+        fileMenu.add(fileMenuScreenshot);
+
+        fileMenu.addSeparator();
 
         JMenuItem fileMenuQuit = new JMenuItem("Quit", KeyEvent.VK_Q);
         fileMenuQuit.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, command));
@@ -245,6 +264,7 @@ public class GameUIFrame extends JFrame {
         settingsMenu.add(settingsMenuPalette);
 
         settingsMenu.add(screenSizeMenu());
+        settingsMenu.add(screenshotSizeMenu());
 
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
@@ -289,6 +309,8 @@ public class GameUIFrame extends JFrame {
 
                     saveConfig();
                 }).setVisible(true));
+
+        fileMenuScreenshot.addActionListener(e -> takeScreenshot());
 
         fileMenuOpen.addActionListener(e -> {
             if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
@@ -604,6 +626,78 @@ public class GameUIFrame extends JFrame {
         }
 
         return menu;
+    }
+
+    /**
+     * Builds the Screenshot Size submenu: how many times File &gt; Screenshot magnifies the picture
+     * on its way into the file.
+     * <p>
+     * The same four multiples the window offers, asked separately because they are asked for
+     * different reasons -- the window is as big as the display allows, and a file is as big as
+     * whatever is going to look at it. Picking one changes nothing on screen, so unlike the window's
+     * sizes there is nothing to apply: the next picture is simply written at it.
+     */
+    private JMenu screenshotSizeMenu() {
+        // H rather than the S in "Screenshot", which Screen Size above it already has.
+        var menu = new JMenu("Screenshot Size");
+        menu.setMnemonic(KeyEvent.VK_H);
+
+        var group = new ButtonGroup();
+
+        for (var scale : ScreenScale.values()) {
+            var item = new JRadioButtonMenuItem(scale.label(), scale == config.screenshotScale());
+
+            item.addActionListener(e -> {
+                config.setScreenshotScale(scale);
+                saveConfig();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Writes the picture on screen to a PNG beside the ROM.
+     * <p>
+     * The emulation thread is not asked for anything, which is what separates this from a save
+     * state: {@link ScreenComponent} is already holding the last frame it was handed, in colour
+     * indices, along with the palette it draws them with -- so the whole picture is on this thread
+     * already. Which is also why it works on a machine that is paused or stopped at a breakpoint,
+     * when there is no running thread to post to and the picture is exactly what somebody stopped
+     * the machine to look at.
+     * <p>
+     * The file is written from the event dispatch thread. Encoding 1024x896 pixels is a few
+     * milliseconds, on a key the player has just pressed, and the game is on another thread and
+     * carries on regardless.
+     */
+    private void takeScreenshot() {
+        var image = screen.snapshot(config.screenshotScale());
+
+        if (image == null || romPath == null) {
+            // The item is greyed out until a machine starts, which leaves the moment between the
+            // machine starting and its first finished frame: about a sixtieth of a second of
+            // nothing to photograph.
+            return;
+        }
+
+        var path = Screenshots.pathFor(romPath, LocalDateTime.now());
+
+        try {
+            ImageIO.write(image, "png", path.toFile());
+            // Not "at frame N": the machine is the emulation thread's, and a log line is nowhere
+            // near reason enough to read it from this one.
+            logger.log(Level.INFO, "wrote " + path.getFileName());
+        } catch (IOException e) {
+            logger.log(Level.ERROR, "could not write the screenshot", e);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not write " + path.getFileName() + ": " + e.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     /**
@@ -984,6 +1078,7 @@ public class GameUIFrame extends JFrame {
 
         machineMenu.setEnabled(true);
         debugMenu.setEnabled(true);
+        fileMenuScreenshot.setEnabled(true);
         updateTitle();
     }
 

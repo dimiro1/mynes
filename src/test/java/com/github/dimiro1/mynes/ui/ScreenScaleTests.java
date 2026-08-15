@@ -46,6 +46,21 @@ class ScreenScaleTests {
     }
 
     @Test
+    void aScreenshotStartsOutAtThePictureTheMachineDrew() {
+        // A file is not a window: 1x is the 256x224 the PPU made, and whatever opens it can
+        // magnify. The window's own default is 2x, which is a different question.
+        assertSame(ScreenScale.ONE_TIMES, ScreenScale.defaultScreenshotScale());
+    }
+
+    @Test
+    void aCallerCanSayWhatToFallBackTo() {
+        // Which is what the screenshot size needs: an entry this version does not understand has to
+        // land where a missing one does, and that is not the window's size.
+        assertSame(ScreenScale.ONE_TIMES, ScreenScale.byId("12", ScreenScale.ONE_TIMES));
+        assertSame(ScreenScale.THREE_TIMES, ScreenScale.byId("3", ScreenScale.ONE_TIMES));
+    }
+
+    @Test
     void aSizeOutsideTheFourFallsBackToTheDefault() {
         // Somebody who wants a full screen, and a fraction, both of which this setting cannot give
         // them. Neither is worth refusing to start over.

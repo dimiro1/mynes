@@ -10,6 +10,7 @@ import java.awt.image.BufferedImage;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Tests for the half of the picture that used to be the PPU's job: turning the colour indices in
@@ -131,6 +132,72 @@ class ScreenComponentTests {
 
         assertEquals(colour, target.getRGB(0, 0) & 0xFFFFFF, "top left");
         assertEquals(colour, target.getRGB(size.width - 1, size.height - 1) & 0xFFFFFF, "bottom right");
+    }
+
+    @Test
+    void aSnapshotIsTheVisiblePictureAtTheSizeAskedFor() {
+        var screen = new ScreenComponent();
+        screen.present(frameOf(0x21));
+
+        var image = screen.snapshot(ScreenScale.TWO_TIMES);
+
+        assertEquals(PPU.SCREEN_WIDTH * 2, image.getWidth());
+        assertEquals(VISIBLE_HEIGHT * 2, image.getHeight());
+        assertEquals(
+                Palettes.defaultPalette().colour(0x21) & 0xFFFFFF,
+                image.getRGB(0, 0) & 0xFFFFFF);
+    }
+
+    @Test
+    void aSnapshotStartsAtTheFirstLineATelevisionWouldHaveShown() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        // The eight scanlines the crop hides, in a colour nothing else in the frame is.
+        Arrays.fill(frame, 0, OVERSCAN_TOP * PPU.SCREEN_WIDTH, 0x11);
+        screen.present(frame);
+
+        var image = screen.snapshot(ScreenScale.ONE_TIMES);
+
+        assertEquals(
+                Palettes.defaultPalette().colour(0x21) & 0xFFFFFF,
+                image.getRGB(0, 0) & 0xFFFFFF);
+    }
+
+    @Test
+    void aSnapshotIgnoresWhatSizeTheWindowHasBeenDraggedTo() {
+        var screen = new ScreenComponent();
+        screen.present(frameOf(0x21));
+
+        // A corner dragged by hand, which is what the picture on screen is fitted to: a fractional
+        // magnification, letterboxed. A screenshot is of the machine rather than of the window, so
+        // none of that may reach it.
+        screen.setSize(517, 300);
+
+        var image = screen.snapshot(ScreenScale.ONE_TIMES);
+
+        assertEquals(PPU.SCREEN_WIDTH, image.getWidth());
+        assertEquals(VISIBLE_HEIGHT, image.getHeight());
+    }
+
+    @Test
+    void aSnapshotIsTakenThroughTheChosenPalette() {
+        var screen = new ScreenComponent();
+        var classic = Palettes.byId("nes-classic");
+
+        screen.present(frameOf(0x21));
+        screen.setPalette(classic);
+
+        assertEquals(
+                classic.colour(0x21) & 0xFFFFFF,
+                screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0) & 0xFFFFFF);
+    }
+
+    @Test
+    void thereIsNothingToPhotographBeforeTheFirstFrame() {
+        // The menu item is greyed out until a machine starts, which still leaves the sixtieth of a
+        // second between it starting and finishing a frame.
+        assertNull(new ScreenComponent().snapshot(ScreenScale.ONE_TIMES));
     }
 
     @Test
