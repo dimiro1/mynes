@@ -82,11 +82,22 @@ public class MMU {
     private boolean halted;
 
     /**
-     * The DMC's dummy cycle: one halted cycle it always spends before it starts looking for a get
-     * to fetch on. Together with the halt cycle and an alignment cycle when the phase is wrong,
-     * this is what makes a sample fetch cost four cycles rather than one.
+     * How many of its own two cycles the DMC has spent before it starts looking for a get to fetch
+     * on: its halt cycle and its dummy cycle. With an alignment cycle when the phase is wrong,
+     * that is what makes a sample fetch cost four cycles rather than one.
+     * <p>
+     * A count rather than the single flag it was, because <em>both</em> have to be spent even when
+     * an OAM transfer already has the bus. The halt looks like nothing then -- RDY is low already,
+     * and the transfer underneath carries on using the cycle -- but the DMC is still counting it,
+     * and collapsing the two put its fetch a cycle early against the answer key AccuracyCoin
+     * measures the two transfers' interleaving with.
      */
-    private boolean dmcDummyDone;
+    private int dmcPrepared;
+
+    /**
+     * How many cycles that is.
+     */
+    private static final int DMC_PREPARATION_CYCLES = 2;
 
     /**
      * True while the DMC is waiting for its byte and this engine has taken responsibility for
@@ -540,13 +551,13 @@ public class MMU {
         }
 
         if (dmcFetching) {
-            if (!dmcDummyDone) {
+            if (dmcPrepared < DMC_PREPARATION_CYCLES) {
                 // Spent whatever else is going on: an OAM transfer underneath carries on using it.
-                dmcDummyDone = true;
+                dmcPrepared++;
             } else if (isGetCycle(cpuCycle)) {
                 apu.finishDMCFetch(transferRead(apu.dmcFetchAddress()));
                 dmcFetching = false;
-                dmcDummyDone = false;
+                dmcPrepared = 0;
 
                 return CPUBus.DMACycle.TRANSFER;
             }
@@ -587,7 +598,7 @@ public class MMU {
      */
     private void abortDMCFetch() {
         dmcFetching = false;
-        dmcDummyDone = false;
+        dmcPrepared = 0;
         dmcRequested = false;
     }
 
@@ -597,9 +608,18 @@ public class MMU {
      * @param cpuWrote true if the CPU spent the cycle writing, which delays the halt by one cycle.
      */
     public void endHaltCycle(final boolean cpuWrote) {
-        if (!cpuWrote) {
-            halted = true;
+        if (cpuWrote) {
+            return;
         }
+
+        // The cycle RDY goes low is the first of the DMC's own two, when the DMC is what pulled it
+        // down. It is the same cycle for both units if they halt together, which is what a sample
+        // fetch requested on an OAM transfer's halt cycle does.
+        if (!halted && dmcFetching && dmcPrepared < DMC_PREPARATION_CYCLES) {
+            dmcPrepared++;
+        }
+
+        halted = true;
     }
 
     /**
@@ -660,7 +680,7 @@ public class MMU {
         dataBus = io.u8(dataBus);
         halted = io.bool(halted);
         dmcFetching = io.bool(dmcFetching);
-        dmcDummyDone = io.bool(dmcDummyDone);
+        dmcPrepared = io.u8(dmcPrepared);
         dmcRequested = io.bool(dmcRequested);
         lastPortRead = io.u16(lastPortRead);
         pendingStrobe = io.u8(pendingStrobe + 1) - 1;

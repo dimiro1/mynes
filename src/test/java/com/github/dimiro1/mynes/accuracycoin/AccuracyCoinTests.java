@@ -105,7 +105,6 @@ final class AccuracyCoinTests {
 
             entry("DMA + $2002 Read", "PASS 1"),
             entry("DMA + $4016 Read", "PASS 1"),
-            entry("DMC DMA + OAM DMA", "FAIL 2"),
             entry("Explicit DMA Abort", "FAIL 2"),
             entry("Implicit DMA Abort", "FAIL 2"),
 
