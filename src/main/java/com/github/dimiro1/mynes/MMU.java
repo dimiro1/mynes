@@ -106,6 +106,23 @@ public class MMU {
      */
     private boolean dmcRequested;
 
+    /**
+     * Which controller port the previous bus cycle read, or 0 if it read anything else. What the
+     * consecutive-read rule in {@link #readPort} is measured against.
+     */
+    private int lastPortRead;
+
+    /**
+     * A strobe level written to $4016 and not yet handed to the controllers, or -1 when there is
+     * none waiting.
+     * <p>
+     * The port latches the value on the transition from a get cycle to a put one rather than at the
+     * moment of the write, so a write lands either one cycle later or two depending on which half
+     * of the clock it happened in. Nothing a game does can tell the difference; a test ROM counting
+     * cycles can.
+     */
+    private int pendingStrobe = -1;
+
     // OAM transfer state
     private boolean dmaInProgress = false;
     private int dmaPage = 0;
@@ -147,6 +164,10 @@ public class MMU {
      */
     public int read(final int address) {
         int addr = address & 0xFFFF;
+
+        if (addr < 0x4016 || addr > 0x4017) {
+            lastPortRead = 0;
+        }
 
         // Internal RAM and mirrors ($0000-$1FFF)
         if (addr < 0x2000) {
@@ -222,6 +243,7 @@ public class MMU {
         int value = data & 0xFF;
 
         dataBus = value;
+        lastPortRead = 0;
 
         if (writeListener != null) {
             writeListener.onWrite(addr, value);
@@ -280,10 +302,32 @@ public class MMU {
     private int readIORegister(int address) {
         return switch (address) {
             case 0x4015 -> (apu.readStatus() & 0xDF) | (dataBus & 0x20);
-            case 0x4016 -> dataBus = openBusHighBits() | (controller1 != null ? controller1.read() : 0);
-            case 0x4017 -> dataBus = openBusHighBits() | (controller2 != null ? controller2.read() : 0);
+            case 0x4016 -> dataBus = openBusHighBits() | readPort(controller1, 0x4016);
+            case 0x4017 -> dataBus = openBusHighBits() | readPort(controller2, 0x4017);
             default -> dataBus;
         };
+    }
+
+    /**
+     * One bit out of a controller port, clocking its shift register on the way -- but only if the
+     * cycle before this one was not a read of the same port.
+     * <p>
+     * The port latches on the falling edge of the read strobe, and two reads back to back leave it
+     * low throughout, so the second one finds no edge to clock on and sees the bit the first did.
+     * Nothing a program writes by hand does that, but a transfer does: a halted CPU re-issues its
+     * read every cycle, and a {@code LDA $4016} caught by one would otherwise clock the controller
+     * three or four times over for a single instruction.
+     */
+    private int readPort(final Controller controller, final int address) {
+        var again = lastPortRead == address;
+
+        lastPortRead = address;
+
+        if (controller == null) {
+            return 0;
+        }
+
+        return again ? controller.peek() : controller.read();
     }
 
     /**
@@ -306,15 +350,8 @@ public class MMU {
                 dmaReadPhase = true;
                 dmaInProgress = true;
             }
-            case 0x4016 -> {
-                // Controller strobe
-                if (controller1 != null) {
-                    controller1.setStrobe(data & 1);
-                }
-                if (controller2 != null) {
-                    controller2.setStrobe(data & 1);
-                }
-            }
+            // The strobe is latched on the next get-to-put transition rather than now.
+            case 0x4016 -> pendingStrobe = data & 1;
             // Everything else in the window is the APU's, $4017 included: only its read side
             // belongs to controller 2, and the two share nothing but the address.
             default -> apu.write(address, data);
@@ -349,6 +386,17 @@ public class MMU {
      * @return what the CPU should do with this cycle.
      */
     public CPUBus.DMACycle beginDMACycle(final long cpuCycle) {
+        if (pendingStrobe >= 0 && !isGetCycle(cpuCycle)) {
+            if (controller1 != null) {
+                controller1.setStrobe(pendingStrobe);
+            }
+            if (controller2 != null) {
+                controller2.setStrobe(pendingStrobe);
+            }
+
+            pendingStrobe = -1;
+        }
+
         if (dmcRequested && !dmcFetching) {
             dmcFetching = true;
             dmcRequested = false;
@@ -480,5 +528,7 @@ public class MMU {
         dmcFetching = io.bool(dmcFetching);
         dmcDummyDone = io.bool(dmcDummyDone);
         dmcRequested = io.bool(dmcRequested);
+        lastPortRead = io.u16(lastPortRead);
+        pendingStrobe = io.u8(pendingStrobe + 1) - 1;
     }
 }

@@ -36,6 +36,16 @@ public interface Controller {
     int read();
 
     /**
+     * The bit {@link #read()} would return, without clocking the shift register on.
+     * <p>
+     * For the second and later of a run of reads of the same port: the port clocks on the falling
+     * edge of the read strobe, and back to back reads never let it rise.
+     *
+     * @return the current button state (0 or 1)
+     */
+    int peek();
+
+    /**
      * Sets the state of the controller buttons.
      *
      * @param buttons bitmask of pressed buttons

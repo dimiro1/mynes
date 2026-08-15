@@ -40,8 +40,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * java -jar target/mynes.jar --headless --rom src/test/resources/accuracycoin/AccuracyCoin.nes \
  *     --frames 4000 --input 120/10x3:start --dump ram
  * }</pre>
- * then decode {@code ram.bin} at offsets $0400-$0492. The machine is deterministic, so those bytes
- * are the same ones this test reads.
+ * then decode {@code ram.bin} at offsets $0400-$0492. The machine is deterministic, but that command
+ * is not quite this run: a handful of tests are sensitive to which cycle Start was pressed on, and
+ * this presses until the ROM says the run has started rather than on a fixed frame. Expect one or
+ * two error codes to differ.
  *
  * @see <a href="https://github.com/100thCoin/AccuracyCoin">AccuracyCoin</a>
  */
@@ -97,21 +99,15 @@ final class AccuracyCoinTests {
      * acceptable answers.
      */
     private static final Map<String, String> EXPECTED = Map.ofEntries(
-            entry("$93   SHA indirect,Y", "FAIL 7"),
-            entry("$9F   SHA absolute,Y", "FAIL 7"),
-            entry("$9B   SHS absolute,Y", "FAIL 7"),
-            entry("$9C   SHY absolute,X", "FAIL 7"),
-            entry("$9E   SHX absolute,Y", "FAIL 7"),
+            entry("$93   SHA indirect,Y", "PASS 1"),
+            entry("$9F   SHA absolute,Y", "PASS 1"),
+            entry("$9B   SHS absolute,Y", "PASS 1"),
 
             entry("NMI Overlap BRK", "FAIL 2"),
             entry("NMI Overlap IRQ", "FAIL 1"),
 
             entry("DMA + $2002 Read", "FAIL 2"),
-
-            // Passing, but on the wrong one of the two acceptable answers: 2 is a console whose
-            // controller port drives more bits than a front-loader's does. Canonically 1.
-            entry("DMA + $4016 Read", "PASS 2"),
-
+            entry("DMA + $4016 Read", "PASS 1"),
             entry("DMC DMA Bus Conflicts", "FAIL 2"),
             entry("DMC DMA + OAM DMA", "FAIL 2"),
             entry("Explicit DMA Abort", "FAIL 2"),
@@ -122,8 +118,7 @@ final class AccuracyCoinTests {
             entry("Frame Counter 5-step", "FAIL 2"),
             entry("Delta Modulation Channel", "FAIL L"),
             entry("APU Register Activation", "FAIL 4"),
-            entry("Controller Strobing", "FAIL 1"),
-            entry("Controller Clocking", "FAIL 5"),
+            entry("Controller Clocking", "FAIL 7"),
 
             entry("PPU Read Buffer", "PASS G"),
 
@@ -144,7 +139,6 @@ final class AccuracyCoinTests {
             entry("Hybrid Addresses", "FAIL 2"),
 
             entry("Internal Data Bus", "FAIL 2")
-
     );
 
     /**

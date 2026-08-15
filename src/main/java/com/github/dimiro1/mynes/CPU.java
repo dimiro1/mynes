@@ -111,6 +111,17 @@ public class CPU {
     private boolean wroteThisCycle;
 
     /**
+     * The last three cycles of the RDY line, newest in bit 0.
+     * <p>
+     * Only {@link #storeHigh} looks, and only at bit 2. The unstable stores work by ANDing the
+     * register with the high byte of the address while that byte is still on its way to the address
+     * pins, and a transfer that pulled RDY low two cycles before the write holds the byte still for
+     * long enough that the AND never happens -- so the store lands where the program asked, with
+     * the register uncorrupted.
+     */
+    private int rdyHistory;
+
+    /**
      * Everything a cycle can change that a halted CPU must not have changed.
      * <p>
      * Allocated per halted cycle rather than kept in a field, which costs a short lived object a
@@ -268,6 +279,7 @@ public class CPU {
         sequence = io.enumeration(sequence, Sequence.class);
         interruptVector = io.u16(interruptVector);
         stalled = io.bool(stalled);
+        rdyHistory = io.u8(rdyHistory);
     }
 
     /**
@@ -300,6 +312,7 @@ public class CPU {
         interruptPending = false;
         sequence = Sequence.NONE;
         stalled = false;
+        rdyHistory = 0;
     }
 
     private void setLowPC(final int low) {
@@ -437,6 +450,10 @@ public class CPU {
      */
     public void tick() {
         var kind = bus.beginDMACycle(cycles);
+
+        // Anything but NONE means a transfer is holding RDY low, whether or not this cycle ends up
+        // being one the CPU keeps.
+        rdyHistory = ((rdyHistory << 1) | (kind == CPUBus.DMACycle.NONE ? 0 : 1)) & 0x07;
 
         if (kind == CPUBus.DMACycle.TRANSFER) {
             // Somebody else has both the address and the data pins. There is nothing for the CPU
@@ -2117,10 +2134,22 @@ public class CPU {
      * operands that never cross a page.
      * <p>
      * Verified against all 10,000 Tom Harte cases of each of the five opcodes.
+     * <p>
+     * The exception is a DMA transfer. If RDY went low two cycles before this one, the high byte
+     * has had an extra cycle to settle onto the address pins, the AND never reaches it, and the
+     * instruction behaves like the plain store it looks like: the register goes out whole and it
+     * goes to the address the operand names. The Harte set has no way to express that, so this is
+     * the one line of the instruction it does not cover.
      *
      * @param register the register (or combination of registers) being stored.
      */
     private void storeHigh(final int register) {
+        if ((rdyHistory & 0x04) != 0) {
+            write(tickAddress, ByteUtils.ensureByte(register));
+
+            return;
+        }
+
         var value = ByteUtils.ensureByte(register & ByteUtils.ensureByte(tickHigh + 1));
 
         var address = ByteUtils.isDifferentPage(tickAddress, tickUnfixedAddress)
