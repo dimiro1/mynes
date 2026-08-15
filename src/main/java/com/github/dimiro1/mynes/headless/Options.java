@@ -47,6 +47,8 @@ import java.util.TreeSet;
  * @param expectMotion     at least this many frames must have differed from the one before, or -1.
  * @param interactive      whether to take commands instead of running a schedule.
  * @param scriptPath       where the interactive mode reads commands from, or null for stdin.
+ * @param format           how the interactive mode spells its replies: readable text, compact
+ *                         JSON, or {@code AUTO} to decide by whether a person is at the terminal.
  * @param help             whether to print the usage and stop.
  * @param listPalettes     whether to print the palettes and stop.
  */
@@ -78,8 +80,19 @@ public record Options(
         long expectMotion,
         boolean interactive,
         Path scriptPath,
+        Format format,
         boolean help,
         boolean listPalettes) {
+
+    /**
+     * How the interactive REPL spells each reply.
+     * <p>
+     * {@code AUTO} is resolved once, at startup, to {@code TEXT} for a person at a terminal and
+     * {@code JSON} for anything piped or scripted; the other two are a person overruling that.
+     */
+    public enum Format {
+        AUTO, JSON, TEXT
+    }
 
     /**
      * Ten seconds of emulated time, which is about a second of real time and long enough for most
@@ -218,6 +231,10 @@ public record Options(
                                     and answer each one with a line of JSON. "help" lists them.
                                     A whole session can be piped in at once.
               --script FILE         Read those commands from a file instead of standard input.
+              --format auto|json|text
+                                    How to spell each reply. auto (the default) is readable text at
+                                    a terminal and compact JSON when piped or scripted; text and
+                                    json force one regardless.
 
             Exit codes
               0  the run finished           3  --timeout ran out
@@ -265,6 +282,7 @@ public record Options(
         var expectMotion = -1L;
         var interactive = false;
         Path scriptPath = null;
+        var format = Format.AUTO;
         var help = false;
         var listPalettes = false;
 
@@ -308,6 +326,7 @@ public record Options(
                     scriptPath = Path.of(value(args, ++i, flag));
                     interactive = true;
                 }
+                case "--format" -> format = parseFormat(value(args, ++i, flag));
                 default -> throw new UsageException(
                         "\"" + flag + "\" is not an option. --help lists them.");
             }
@@ -351,6 +370,7 @@ public record Options(
                 expectMotion,
                 interactive,
                 scriptPath,
+                format,
                 help,
                 listPalettes);
     }
@@ -430,6 +450,16 @@ public record Options(
         } catch (NumberFormatException e) {
             throw new UsageException(flag + " wants a number, not \"" + text + "\".");
         }
+    }
+
+    private static Format parseFormat(final String text) {
+        return switch (text.toLowerCase()) {
+            case "auto" -> Format.AUTO;
+            case "json" -> Format.JSON;
+            case "text" -> Format.TEXT;
+            default -> throw new UsageException(
+                    "--format is auto, json or text, not \"" + text + "\".");
+        };
     }
 
     private static int parseScale(final String text) {
