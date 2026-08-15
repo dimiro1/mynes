@@ -377,9 +377,14 @@ public class CPUInterruptTests {
             program(NMI_HANDLER, NOP);
             begin(PROGRAM, IRQ_ENABLED);
 
-            tick(5);                 // BRK has pushed everything but not yet chosen a vector
+            // The vector is chosen on the cycle that pushes the status byte, not on the one that
+            // fetches it, so this is the last cycle an NMI can arrive on and still take it.
+            // AccuracyCoin's NMI Overlap BRK walks the whole window a PPU dot at a time and its
+            // answer key is fifteen dots wide, which is what puts the edge here rather than a
+            // cycle later.
+            tick(4);
             cpu.requestNMI();
-            tick(2);                 // the vector fetch takes $FFFA instead
+            tick(3);                 // the vector fetch takes $FFFA instead
 
             var state = cpu.getState();
             assertEquals(NMI_HANDLER, state.pc(), "the NMI hijacks the vector fetch");

@@ -82,11 +82,22 @@ public class MMU {
     private boolean halted;
 
     /**
-     * The DMC's dummy cycle: one halted cycle it always spends before it starts looking for a get
-     * to fetch on. Together with the halt cycle and an alignment cycle when the phase is wrong,
-     * this is what makes a sample fetch cost four cycles rather than one.
+     * How many of its own two cycles the DMC has spent before it starts looking for a get to fetch
+     * on: its halt cycle and its dummy cycle. With an alignment cycle when the phase is wrong,
+     * that is what makes a sample fetch cost four cycles rather than one.
+     * <p>
+     * A count rather than the single flag it was, because <em>both</em> have to be spent even when
+     * an OAM transfer already has the bus. The halt looks like nothing then -- RDY is low already,
+     * and the transfer underneath carries on using the cycle -- but the DMC is still counting it,
+     * and collapsing the two put its fetch a cycle early against the answer key AccuracyCoin
+     * measures the two transfers' interleaving with.
      */
-    private boolean dmcDummyDone;
+    private int dmcPrepared;
+
+    /**
+     * How many cycles that is.
+     */
+    private static final int DMC_PREPARATION_CYCLES = 2;
 
     /**
      * True while the DMC is waiting for its byte and this engine has taken responsibility for
@@ -163,6 +174,17 @@ public class MMU {
      * stays on them.
      */
     public int read(final int address) {
+        cpuAddress = address & 0xFFFF;
+        return busRead(cpuAddress);
+    }
+
+    /**
+     * The decode itself, without the note of where the processor's address bus is. Everything the
+     * CPU reads comes through {@link #read}; a transfer's read comes through
+     * {@link #transferRead}, which needs the decode without the note because it is not the
+     * processor doing the reading.
+     */
+    private int busRead(final int address) {
         int addr = address & 0xFFFF;
 
         if (addr < 0x4016 || addr > 0x4017) {
@@ -242,6 +264,7 @@ public class MMU {
         int addr = address & 0xFFFF;
         int value = data & 0xFF;
 
+        cpuAddress = addr;
         dataBus = value;
         lastPortRead = 0;
 
@@ -337,6 +360,106 @@ public class MMU {
         return dataBus & 0xE0;
     }
 
+    // ------------------------------------------------------------------ whose address bus it is
+    //
+    // There are three address buses inside the 2A03 -- the processor's, the DMC's and the OAM
+    // transfer's -- and only one of them reaches the pins on any given cycle. The APU's registers
+    // are not decoded from the pins, though. They are decoded from *the processor's* bus, and they
+    // answer only while it is somewhere in $4000-$401F.
+    //
+    // Two things follow, and AccuracyCoin measures both. An OAM transfer copying page $40 reads
+    // open bus rather than the registers, because the processor that asked for it is off fetching
+    // in the cartridge. And when the processor *is* in the window -- halted on a read of one of
+    // them, say -- the registers answer at every address, because the decode is only five bits
+    // wide: they are mirrored every $20 bytes across the whole map, on top of whatever memory the
+    // full address selects.
+
+    /**
+     * The address the 6502 last put on its own address bus, which is where it still is: a halted
+     * processor holds its address until RDY comes back.
+     */
+    private int cpuAddress;
+
+    private boolean apuRegistersActive() {
+        return cpuAddress >= 0x4000 && cpuAddress < 0x4020;
+    }
+
+    /**
+     * A read made by one of the transfer units rather than by the processor.
+     *
+     * @param address what the unit put on the pins.
+     * @return the byte that came back, which is not always the byte at that address.
+     */
+    private int transferRead(final int address) {
+        final var addr = address & 0xFFFF;
+        final var inWindow = addr >= 0x4000 && addr < 0x4020;
+
+        if (!apuRegistersActive()) {
+            // The registers are switched off, so the window has nothing behind it at all and the
+            // pins keep what they had.
+            return inWindow ? dataBus : busRead(addr);
+        }
+
+        if (inWindow) {
+            return busRead(addr);
+        }
+
+        final var register = 0x4000 | (addr & 0x1F);
+
+        // Whether a port is selected is settled by this address's bottom five bits, not by the
+        // whole of it -- so a fetch whose mirror lands on the same port a halted CPU is already
+        // reading does not break the run of reads, and the port is clocked once for the whole
+        // instruction rather than twice. One whose mirror lands anywhere else deselects it, and
+        // the instruction's own read afterwards is a fresh one. The read of the memory underneath
+        // knows nothing about either and must not be allowed to decide.
+        final var selected = lastPortRead;
+        final var memory = busRead(addr);
+        lastPortRead = register == 0x4016 || register == 0x4017 ? selected : 0;
+
+        return conflict(addr, memory, register);
+    }
+
+    /**
+     * Whether anything at this address drives the data lines at all. The window between the
+     * registers and the cartridge is the one stretch of the map where nothing does, which is what
+     * makes it read back as open bus.
+     */
+    private static boolean drivesTheBus(final int addr) {
+        return addr < 0x4020 || addr >= 0x6000;
+    }
+
+    /**
+     * What comes back when a mirrored register and the memory at the full address drive the pins
+     * at the same time.
+     * <p>
+     * Not a collision so much as a sharing out, because none of the three readable registers
+     * drives all eight lines. A controller port drives the bottom five and leaves the top three to
+     * whatever else is on the bus, and it wins them outright -- a sample byte of $FF read from a
+     * $4016 mirror comes back as $E1: the cartridge's top three bits, the port's four low zeroes,
+     * and the button.
+     * <p>
+     * $4015 is the opposite. It reports over the chip's own internal bus, and a cartridge holding
+     * the lines against it wins, so a sample byte comes back untouched. Where nothing else is
+     * driving -- the open stretch between the registers and the cartridge -- it does reach the
+     * pins, minus the one bit it has nothing to say about. Either way the read happens, and
+     * acknowledges the frame counter's interrupt on the way past.
+     *
+     * @param addr     what the unit put on the pins.
+     * @param memory   what that address selected.
+     * @param register which of $4000-$401F its bottom five bits also selected.
+     */
+    private int conflict(final int addr, final int memory, final int register) {
+        return switch (register) {
+            case 0x4015 -> {
+                final var status = (apu.readStatus() & 0xDF) | (memory & 0x20);
+                yield drivesTheBus(addr) ? memory : (dataBus = status);
+            }
+            case 0x4016 -> dataBus = (memory & 0xE0) | readPort(controller1, 0x4016);
+            case 0x4017 -> dataBus = (memory & 0xE0) | readPort(controller2, 0x4017);
+            default -> memory;
+        };
+    }
+
     /**
      * Writes to I/O registers ($4000-$4017).
      */
@@ -352,6 +475,16 @@ public class MMU {
             }
             // The strobe is latched on the next get-to-put transition rather than now.
             case 0x4016 -> pendingStrobe = data & 1;
+            case 0x4015 -> {
+                apu.write(address, data);
+
+                // An explicit abort. Switching the DMC off takes the sample away from a fetch
+                // already in flight, and the fetch stops where it stands rather than finishing --
+                // however many of its cycles it had already spent.
+                if (!apu.isDMCSampleActive()) {
+                    abortDMCFetch();
+                }
+            }
             // Everything else in the window is the APU's, $4017 included: only its read side
             // belongs to controller 2, and the two share nothing but the address.
             default -> apu.write(address, data);
@@ -418,13 +551,13 @@ public class MMU {
         }
 
         if (dmcFetching) {
-            if (!dmcDummyDone) {
+            if (dmcPrepared < DMC_PREPARATION_CYCLES) {
                 // Spent whatever else is going on: an OAM transfer underneath carries on using it.
-                dmcDummyDone = true;
+                dmcPrepared++;
             } else if (isGetCycle(cpuCycle)) {
-                apu.finishDMCFetch(read(apu.dmcFetchAddress()));
+                apu.finishDMCFetch(transferRead(apu.dmcFetchAddress()));
                 dmcFetching = false;
-                dmcDummyDone = false;
+                dmcPrepared = 0;
 
                 return CPUBus.DMACycle.TRANSFER;
             }
@@ -432,7 +565,7 @@ public class MMU {
 
         if (dmaInProgress) {
             if (dmaReadPhase && isGetCycle(cpuCycle)) {
-                dmaData = read((dmaPage << 8) | dmaAddress);
+                dmaData = transferRead((dmaPage << 8) | dmaAddress);
                 dmaReadPhase = false;
 
                 return CPUBus.DMACycle.TRANSFER;
@@ -458,14 +591,35 @@ public class MMU {
     }
 
     /**
+     * Drops a sample fetch, wherever it had got to.
+     * <p>
+     * The cycles it has already spent are spent -- the CPU does not get them back -- but nothing
+     * further happens: no read, and no byte handed to a channel that is no longer playing.
+     */
+    private void abortDMCFetch() {
+        dmcFetching = false;
+        dmcPrepared = 0;
+        dmcRequested = false;
+    }
+
+    /**
      * Takes the answer to the question {@link CPUBus.DMACycle#HALT} asked.
      *
      * @param cpuWrote true if the CPU spent the cycle writing, which delays the halt by one cycle.
      */
     public void endHaltCycle(final boolean cpuWrote) {
-        if (!cpuWrote) {
-            halted = true;
+        if (cpuWrote) {
+            return;
         }
+
+        // The cycle RDY goes low is the first of the DMC's own two, when the DMC is what pulled it
+        // down. It is the same cycle for both units if they halt together, which is what a sample
+        // fetch requested on an OAM transfer's halt cycle does.
+        if (!halted && dmcFetching && dmcPrepared < DMC_PREPARATION_CYCLES) {
+            dmcPrepared++;
+        }
+
+        halted = true;
     }
 
     /**
@@ -526,9 +680,10 @@ public class MMU {
         dataBus = io.u8(dataBus);
         halted = io.bool(halted);
         dmcFetching = io.bool(dmcFetching);
-        dmcDummyDone = io.bool(dmcDummyDone);
+        dmcPrepared = io.u8(dmcPrepared);
         dmcRequested = io.bool(dmcRequested);
         lastPortRead = io.u16(lastPortRead);
         pendingStrobe = io.u8(pendingStrobe + 1) - 1;
+        cpuAddress = io.u16(cpuAddress);
     }
 }

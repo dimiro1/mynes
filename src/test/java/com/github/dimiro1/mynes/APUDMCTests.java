@@ -103,13 +103,29 @@ class APUDMCTests {
     }
 
     /**
-     * Arms a one byte sample at $C000 with the fastest rate, and starts it.
+     * How long a sample started by a $4015 write takes to ask for its first byte.
+     *
+     * @see Fetch#doesNotAskForTheFirstByteUntilTheChannelHasLoaded
+     */
+    private static final int LOAD_CYCLES = 3;
+
+    /**
+     * Arms a one byte sample at $C000 with the fastest rate, starts it, and waits out the load.
+     * <p>
+     * The wait is here rather than in every caller because what they are all about to measure is
+     * the fetch, and it cannot begin until the channel has loaded. Clocking the chip is enough on
+     * its own -- {@link #stallCycle} takes the cycle number it is asking about as an argument, so
+     * these cycles do not move the get/put phase the callers count in.
      */
     private void armOneByteSample(final int flags) {
         apu.write(0x4010, flags | 0x0F);
         apu.write(0x4012, 0x00);
         apu.write(0x4013, 0x00);
         apu.write(0x4015, 0x10);
+
+        for (var i = 0; i < LOAD_CYCLES; i++) {
+            apu.tick();
+        }
     }
 
     @Nested
@@ -144,6 +160,29 @@ class APUDMCTests {
             assertTrue(stallCycle(mmu, requestedOn + cost));
             assertFalse(apu.isDMCFetchPending(), "the last cycle is the read");
             assertFalse(stallCycle(mmu, requestedOn + cost + 1), "and the bus goes back");
+        }
+
+        /**
+         * A sample already playing feeds itself, and the fetch that keeps it going is asked for on
+         * the cycle after the buffer empties. One <em>started</em> by a write to $4015 is not
+         * that: the channel has to be loaded first, and the transfer does not begin until four
+         * cycles after the write -- two APU cycles, which is what AccuracyCoin prints when it
+         * measures this by landing the transfer on a {@code LDA $2002}.
+         */
+        @Test
+        void doesNotAskForTheFirstByteUntilTheChannelHasLoaded() {
+            apu.write(0x4010, 0x0F);
+            apu.write(0x4012, 0x00);
+            apu.write(0x4013, 0x00);
+            apu.write(0x4015, 0x10);
+
+            for (var i = 0; i < LOAD_CYCLES; i++) {
+                assertFalse(apu.isDMCFetchPending(), "still loading at cycle " + i);
+                assertFalse(stallCycle(mmu, i), "so nothing has asked for the bus");
+                apu.tick();
+            }
+
+            assertTrue(apu.isDMCFetchPending(), "and now it wants its first byte");
         }
 
         @Test

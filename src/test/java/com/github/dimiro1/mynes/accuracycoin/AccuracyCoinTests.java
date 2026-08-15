@@ -103,22 +103,14 @@ final class AccuracyCoinTests {
             entry("$9F   SHA absolute,Y", "PASS 1"),
             entry("$9B   SHS absolute,Y", "PASS 1"),
 
-            entry("NMI Overlap BRK", "FAIL 2"),
-            entry("NMI Overlap IRQ", "FAIL 1"),
-
-            entry("DMA + $2002 Read", "FAIL 2"),
+            entry("DMA + $2002 Read", "PASS 1"),
             entry("DMA + $4016 Read", "PASS 1"),
-            entry("DMC DMA Bus Conflicts", "FAIL 2"),
-            entry("DMC DMA + OAM DMA", "FAIL 2"),
             entry("Explicit DMA Abort", "FAIL 2"),
             entry("Implicit DMA Abort", "FAIL 2"),
 
-            entry("Frame Counter IRQ", "FAIL 7"),
-            entry("Frame Counter 4-step", "FAIL 2"),
-            entry("Frame Counter 5-step", "FAIL 2"),
             entry("Delta Modulation Channel", "FAIL L"),
-            entry("APU Register Activation", "FAIL 4"),
-            entry("Controller Clocking", "FAIL 7"),
+            entry("APU Register Activation", "FAIL 7"),
+            entry("Controller Clocking", "PASS 1"),
 
             entry("PPU Read Buffer", "PASS G"),
 
@@ -126,7 +118,7 @@ final class AccuracyCoinTests {
             entry("Arbitrary Sprite zero", "FAIL 3"),
             entry("Misaligned OAM behavior", "FAIL 1"),
             entry("Address $2004 behavior", "FAIL 8"),
-            entry("OAM Corruption", "FAIL 3"),
+            entry("OAM Corruption", "FAIL 4"),
             entry("INC $4014", "FAIL 2"),
 
             entry("Stale BG Shift Registers", "FAIL 3"),

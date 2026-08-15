@@ -24,9 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class PPUOAMDecayTests extends PPUFixture {
     /**
-     * How many dots a row of OAM holds its charge for.
+     * How many dots a row of OAM holds its charge for. Taken from the region rather than written
+     * out, because it is one figure calibrated against several things at once and a copy of it
+     * here would only ever be a second place to have to change.
      */
-    private static final int DECAY_DOTS = 9000;
+    private static final int DECAY_DOTS = Region.NTSC.oamDecayDots();
 
     /**
      * Two bytes of OAM in different eight byte rows, and one more sharing a row with the first.

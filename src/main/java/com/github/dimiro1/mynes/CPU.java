@@ -716,11 +716,11 @@ public class CPU {
                 push((p & 0xEF) | 0x20);
                 decSP();
                 setFlagI(true);
+                interruptVector = takeVector();
                 incIntTick();
             }
             case 6 -> {
-                // Cycle 6: Choose and fetch low byte of interrupt vector
-                interruptVector = takeVector();
+                // Cycle 6: Fetch low byte of the vector chosen on the cycle before
                 tickLow = read(interruptVector);
                 incIntTick();
             }
@@ -2008,12 +2008,13 @@ public class CPU {
             case 5 -> {
                 push(p | 0x30);
                 decSP();
-                incTick();
-            }
-            case 6 -> {
+
                 // BRK picks its vector the same way an interrupt sequence does, so an NMI that
                 // arrived while the status byte was being pushed hijacks it.
                 interruptVector = takeVector();
+                incTick();
+            }
+            case 6 -> {
                 setLowPC(read(interruptVector));
                 setFlagI(true);
                 incTick();
@@ -2238,7 +2239,22 @@ public class CPU {
         setZeroNegFlags(this.a);
     }
 
+    /**
+     * One of the twelve opcodes that jam the processor. Nothing recovers it but a reset, and no
+     * cartridge worth running executes one, so this is treated as a bug in the emulator rather than
+     * as a machine that has to be modelled.
+     * <p>
+     * Except while speculating. A halted CPU re-reads the address it had reached on every cycle, so
+     * a program stopped on an opcode fetch decodes whatever is on the bus over and over -- and if
+     * the bus happens to be floating, one of those bytes can be any of the twelve. It has not
+     * executed anything: the cycle is about to be taken back, and the fetch will happen again once
+     * RDY comes up. Throwing there would kill a run over a byte the machine never used.
+     */
     private void kil() {
+        if (speculating) {
+            return;
+        }
+
         throw new RuntimeException("kil is an illegal opcode");
     }
 
