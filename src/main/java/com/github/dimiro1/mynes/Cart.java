@@ -168,7 +168,7 @@ public record Cart(
         var chrBankCount = Byte.toUnsignedInt(buffer.get());
         var flags6 = Byte.toUnsignedInt(buffer.get());
         var flags7 = Byte.toUnsignedInt(buffer.get());
-        var prgRAMSize = Byte.toUnsignedInt(buffer.get()); // PRG-RAM size in 8KB units (rarely used)
+        buffer.get(); // PRG-RAM size in 8KB units (rarely used); read to advance past byte 8
         var flags9 = Byte.toUnsignedInt(buffer.get());
         var flags10 = Byte.toUnsignedInt(buffer.get());
 

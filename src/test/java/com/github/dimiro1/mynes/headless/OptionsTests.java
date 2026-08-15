@@ -61,7 +61,7 @@ class OptionsTests {
 
     @Test
     void aReportOfMinusIsPrintedRatherThanFiled() {
-        assertEquals(null, parse("--rom", "x.nes", "--report", "-").reportPath());
+        assertNull(parse("--rom", "x.nes", "--report", "-").reportPath());
     }
 
     @Test

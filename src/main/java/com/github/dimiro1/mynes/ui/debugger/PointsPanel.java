@@ -48,8 +48,8 @@ final class PointsPanel extends JPanel {
 
         // Double-clicking a listed point picks it up again, which is the same gesture the
         // disassembly uses to put one down.
-        var breakList = list(breakpoints, address -> onBreak.accept(address));
-        var watchList = list(watchpoints, address -> onWatch.accept(address));
+        var breakList = list(breakpoints, onBreak);
+        var watchList = list(watchpoints, onWatch);
 
         add(new JLabel("Breakpoints"));
         add(new JLabel("Watchpoints"), "wrap");

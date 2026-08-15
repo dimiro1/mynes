@@ -70,6 +70,7 @@ public enum RegionSetting {
      * Whether this setting names a machine on its own, without being shown a cartridge. What the
      * menu uses to decide whether the region it is displaying was chosen or inferred.
      */
+    @SuppressWarnings("unused")
     public boolean isAutomatic() {
         return region == null;
     }
@@ -77,6 +78,7 @@ public enum RegionSetting {
     /**
      * What the emulator does when nothing has said otherwise: believe the cartridge.
      */
+    @SuppressWarnings("SameReturnValue")
     public static RegionSetting defaultSetting() {
         return AUTOMATIC;
     }

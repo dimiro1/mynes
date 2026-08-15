@@ -63,6 +63,7 @@ public enum ScreenScale {
      * 256x224 is a postage stamp on a modern display, and 2x is 512x448, which fits on every display
      * anybody still has.
      */
+    @SuppressWarnings("SameReturnValue")
     public static ScreenScale defaultScale() {
         return TWO_TIMES;
     }

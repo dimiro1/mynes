@@ -308,6 +308,7 @@ public class MMU {
      *
      * @return true, always: every one of the four cycles is one the CPU is held off the bus.
      */
+    @SuppressWarnings("SameReturnValue")
     private boolean tickDMCFetch() {
         if (dmcFetchCycles == 0) {
             dmcFetchCycles = DMC_FETCH_CYCLES;

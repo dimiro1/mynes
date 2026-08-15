@@ -35,7 +35,6 @@ final class MemoryPanel extends JPanel {
     private static final int REGISTERS_TO = 0x4020;
 
     private final Model model = new Model();
-    private final JTable table = new JTable(model);
     private final JTextField address = new JTextField("0000", 6);
 
     private MachineSnapshot snapshot;
@@ -46,6 +45,7 @@ final class MemoryPanel extends JPanel {
 
         setBorder(BorderFactory.createTitledBorder("Memory"));
 
+        var table = new JTable(model);
         table.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         table.setRowSelectionAllowed(false);
         table.setDefaultRenderer(Object.class, new Renderer());
@@ -92,7 +92,7 @@ final class MemoryPanel extends JPanel {
                     ? Integer.parseInt(trimmed.substring(2), 16)
                     : Integer.parseInt(trimmed, 16);
 
-            base = (parsed & 0xFFFF) & ~(COLUMNS - 1);
+            base = (parsed & 0xFFFF) & -COLUMNS;
             model.fireTableDataChanged();
         } catch (NumberFormatException e) {
             address.setText(String.format("%04X", base));

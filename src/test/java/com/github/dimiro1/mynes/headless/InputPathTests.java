@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>
  * Everything else about the input is checked a piece at a time -- the grammar in
  * {@link InputScheduleTests}, the controller's shift register in
- * {@link com.github.dimiro1.mynes.StandardControllerTests} -- and none of it would notice if the
+ * {@code StandardControllerTests} -- and none of it would notice if the
  * schedule were never handed to the machine at all. This is the one test that follows a press the
  * whole way: from a spec, through {@link Session#setButtons}, out of $4016 a bit at a time, and
  * into the memory of a program that read it.

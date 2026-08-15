@@ -32,23 +32,17 @@ public final class WavWriter implements Closeable {
     private static final int RIFF_SIZE_OFFSET = 4;
     private static final int DATA_SIZE_OFFSET = 40;
 
-    private final Path path;
     private final RandomAccessFile file;
 
     private byte[] bytes = new byte[0];
     private long samples;
 
     public WavWriter(final Path path) throws IOException {
-        this.path = path;
         this.file = new RandomAccessFile(path.toFile(), "rw");
 
         // A file being written over may be longer than the one replacing it.
         file.setLength(0);
         writeHeader(0);
-    }
-
-    public Path path() {
-        return path;
     }
 
     public long samples() {

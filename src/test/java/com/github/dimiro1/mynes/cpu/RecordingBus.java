@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.cpu;
 
 import com.github.dimiro1.mynes.CPUBus;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -28,7 +29,7 @@ final class RecordingBus implements CPUBus {
      */
     record Activity(int address, int value, boolean read) {
         @Override
-        public String toString() {
+        public @NotNull String toString() {
             return String.format("[%04X, %02X, %s]", address, value, read ? "read" : "write");
         }
     }

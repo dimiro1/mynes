@@ -356,8 +356,6 @@ public class EmulatorRunner {
                     continue;
                 }
 
-                lastFrame = ppu.getFrame();
-
                 if (stop != null) {
                     // A stepped or halted frame still goes on the screen. Its sound does not: one
                     // frame of it played on its own is a click, and a machine stepped a frame at a
