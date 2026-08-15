@@ -22,6 +22,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * so the DMA engine has never actually run.
  */
 public class MMUTests {
+    /**
+     * One cycle of whatever the transfer engine wants, standing in for the CPU.
+     * <p>
+     * A halt cycle is answered as though the CPU had spent it reading, which is what it does
+     * except in the handful of cycles an instruction spends writing.
+     *
+     * @return true if the CPU would have been held off the bus.
+     */
+    private static boolean stallCycle(final MMU mmu, final long cpuCycle) {
+        var kind = mmu.beginDMACycle(cpuCycle);
+
+        if (kind == CPUBus.DMACycle.HALT) {
+            mmu.endHaltCycle(false);
+        }
+
+        return kind != CPUBus.DMACycle.NONE;
+    }
+
     private static final int OAM_DMA = 0x4014;
     private static final int OAM_DATA_REGISTER = 0x04;
 
@@ -153,10 +171,8 @@ public class MMUTests {
             record();
             mmu.write(OAM_DMA, 0x02);
 
-            while (mmu.tickDMA(seen.size())) {
-                if (seen.size() > 1) {
-                    break;
-                }
+            for (var cycle = 0; cycle < 600 && stallCycle(mmu, cycle); cycle++) {
+                // Every one of the 256 copies, so that a listener that saw any of them would have.
             }
 
             assertEquals(List.of("4014=02"), seen, "the register write, and none of the transfer");
@@ -217,7 +233,7 @@ public class MMUTests {
 
         @Test
         void doesNotStallWhenIdle() {
-            assertFalse(mmu.tickDMA(0), "no transfer requested");
+            assertFalse(stallCycle(mmu, 0), "no transfer requested");
             assertFalse(mmu.isDMAInProgress());
         }
 
@@ -247,7 +263,7 @@ public class MMUTests {
         private int runToCompletion(final long firstCycle) {
             var stalled = 0;
 
-            while (mmu.tickDMA(firstCycle + stalled)) {
+            while (stallCycle(mmu, firstCycle + stalled)) {
                 stalled++;
 
                 if (stalled > 1000) {

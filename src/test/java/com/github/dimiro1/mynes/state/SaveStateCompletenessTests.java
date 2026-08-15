@@ -73,7 +73,13 @@ class SaveStateCompletenessTests {
                             + " either of them is taken when it is empty anyway"),
             Map.entry("APU.sampleRead", "an index into that queue"),
             Map.entry("APU.sampleWrite", "an index into that queue"),
-            Map.entry("APU.sampleCount", "how full that queue is"));
+            Map.entry("APU.sampleCount", "how full that queue is"),
+            Map.entry("CPU.speculating",
+                    "true only in the middle of a halted cycle, which is run and then taken back."
+                            + " A state is taken between cycles, where it is always false"),
+            Map.entry("CPU.wroteThisCycle",
+                    "the same scratch: what the cycle now running put on the bus, read once by the"
+                            + " halt that armed it and meaningless to anybody else"));
 
     @Test
     void everyMutableFieldInTheConsoleTravelsWithTheState() throws IOException {

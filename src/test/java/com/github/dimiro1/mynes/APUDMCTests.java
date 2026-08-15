@@ -18,11 +18,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>
  * The DMC is the only part of the APU that touches memory, and it does it by taking the bus off
  * the CPU for four cycles at a time -- the same stall OAM DMA uses, which is why this drives
- * {@link MMU#tickDMA} directly the way {@code MMUTests.OamDma} does, over a real
+ * {@link MMU#beginDMACycle} directly the way {@code MMUTests.OamDma} does, over a real
  * {@link Mapper0} with known bytes in it. What comes back out is a seven bit level walked two
  * units at a time, one bit of the sample per step.
  */
 class APUDMCTests {
+    /**
+     * One cycle of whatever the transfer engine wants, standing in for the CPU.
+     * <p>
+     * A halt cycle is answered as though the CPU had spent it reading, which is what it does
+     * except in the handful of cycles an instruction spends writing.
+     *
+     * @return true if the CPU would have been held off the bus.
+     */
+    private static boolean stallCycle(final MMU mmu, final long cpuCycle) {
+        var kind = mmu.beginDMACycle(cpuCycle);
+
+        if (kind == CPUBus.DMACycle.HALT) {
+            mmu.endHaltCycle(false);
+        }
+
+        return kind != CPUBus.DMACycle.NONE;
+    }
+
     /**
      * A full 32KB of PRG, so that a CPU address maps straight onto an offset in it and a sample
      * can be put at whatever address a test wants to name.
@@ -79,7 +97,7 @@ class APUDMCTests {
      */
     private void run(final int cycles) {
         for (var i = 0; i < cycles; i++) {
-            mmu.tickDMA(i);
+            stallCycle(mmu, i);
             apu.tick();
         }
     }
@@ -97,26 +115,41 @@ class APUDMCTests {
     @Nested
     @DisplayName("the sample fetch")
     class Fetch {
-        @Test
-        void holdsTheCpuOffTheBusForFourCycles() {
-            armOneByteSample(0x00);
+        /**
+         * The fetch is a halt cycle, a dummy cycle, an alignment cycle when the phase calls for
+         * one, and the read -- so three cycles or four depending on which half of the clock the
+         * request landed in. The cycle it lands in is not one of them: by then that cycle's fate is
+         * settled, and the halt is the one after.
+         */
+        @ParameterizedTest
+        @CsvSource({
+                "0, 3",  // halt on 1, dummy on 2, and 3 is a get: no alignment needed
+                "1, 4",  // halt on 2, dummy on 3, and 4 is a put: one cycle spent waiting
+        })
+        void holdsTheCpuOffTheBusForThreeCyclesOrFour(final int requestedOn, final int cost) {
+            for (var i = 0; i < requestedOn; i++) {
+                assertFalse(stallCycle(mmu, i), "nothing is asking for the bus yet");
+            }
 
+            armOneByteSample(0x00);
             assertTrue(apu.isDMCFetchPending(), "there is a sample and no byte in hand");
 
-            for (var i = 0; i < FETCH_CYCLES - 1; i++) {
-                assertTrue(mmu.tickDMA(i), "cycle " + i);
+            assertFalse(stallCycle(mmu, requestedOn), "the request arrives too late for this one");
+
+            for (var i = 1; i < cost; i++) {
+                assertTrue(stallCycle(mmu, requestedOn + i), "cycle " + i);
                 assertTrue(apu.isDMCFetchPending(), "still waiting at cycle " + i);
             }
 
-            assertTrue(mmu.tickDMA(FETCH_CYCLES - 1));
+            assertTrue(stallCycle(mmu, requestedOn + cost));
             assertFalse(apu.isDMCFetchPending(), "the last cycle is the read");
-            assertFalse(mmu.tickDMA(FETCH_CYCLES), "and the bus goes back to the CPU");
+            assertFalse(stallCycle(mmu, requestedOn + cost + 1), "and the bus goes back");
         }
 
         @Test
         void doesNotAskForAnythingWithNoSampleToPlay() {
             assertFalse(apu.isDMCFetchPending());
-            assertFalse(mmu.tickDMA(0));
+            assertFalse(stallCycle(mmu, 0));
         }
 
         @Test
@@ -182,34 +215,47 @@ class APUDMCTests {
     @Nested
     @DisplayName("sharing the bus with OAM DMA")
     class Arbitration {
+        /**
+         * What a sample fetch costs a page transfer it collides with.
+         * <p>
+         * Two cycles rather than the four a fetch costs on its own, because the two transfers
+         * interleave rather than take turns. The fetch's halt and dummy cycles are spent while the
+         * page transfer carries on underneath them -- the CPU is already off the bus, so there is
+         * nothing for them to wait for -- and then the DMC takes one get cycle the page wanted and
+         * the page pays one idle cycle getting back into phase.
+         *
+         * @see <a href="https://www.nesdev.org/wiki/DMA#DMC_DMA_during_OAM_DMA">DMC DMA during OAM DMA</a>
+         */
+        private static final int COLLISION_CYCLES = 2;
+
         @Test
-        void takesTheFirstFourCyclesOfATransferThatStartsAtTheSameTime() {
+        void costsATransferThatStartsAtTheSameTimeTwoCycles() {
             armOneByteSample(0x00);
             mmu.write(0x4014, 0x02);
 
-            assertEquals(ALIGNED_OAM_CYCLES + FETCH_CYCLES, runDMAToCompletion());
+            assertEquals(ALIGNED_OAM_CYCLES + COLLISION_CYCLES, runDMAToCompletion());
         }
 
         @Test
-        void freezesATransferAlreadyUnderWay() {
+        void stealsOneGetCycleFromATransferAlreadyUnderWay() {
             mmu.write(0x4014, 0x02);
 
             var stalled = 0;
             while (stalled < 100) {
-                assertTrue(mmu.tickDMA(stalled));
+                assertTrue(stallCycle(mmu, stalled));
                 stalled++;
             }
 
             armOneByteSample(0x00);
 
             for (var i = 0; i < FETCH_CYCLES; i++) {
-                assertTrue(mmu.tickDMA(stalled + i));
+                assertTrue(stallCycle(mmu, stalled + i));
             }
 
             assertFalse(apu.isDMCFetchPending(), "the fetch went first");
 
             stalled += FETCH_CYCLES;
-            while (mmu.tickDMA(stalled)) {
+            while (stallCycle(mmu, stalled)) {
                 stalled++;
 
                 if (stalled > 2000) {
@@ -217,8 +263,8 @@ class APUDMCTests {
                 }
             }
 
-            assertEquals(ALIGNED_OAM_CYCLES + FETCH_CYCLES, stalled,
-                    "the page still went across, four cycles later than it would have");
+            assertEquals(ALIGNED_OAM_CYCLES + COLLISION_CYCLES, stalled,
+                    "the page still went across, two cycles later than it would have");
         }
 
         /**
@@ -227,7 +273,7 @@ class APUDMCTests {
         private int runDMAToCompletion() {
             var stalled = 0;
 
-            while (mmu.tickDMA(stalled)) {
+            while (stallCycle(mmu, stalled)) {
                 stalled++;
 
                 if (stalled > 2000) {
@@ -278,7 +324,7 @@ class APUDMCTests {
             var previous = apu.dmcOutput();
 
             for (var i = 0; i < 10 * cpuCycles; i++) {
-                mmu.tickDMA(i);
+                stallCycle(mmu, i);
                 apu.tick();
 
                 if (apu.dmcOutput() != previous) {

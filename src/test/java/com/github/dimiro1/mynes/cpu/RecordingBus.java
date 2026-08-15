@@ -63,11 +63,6 @@ final class RecordingBus implements CPUBus {
     }
 
     @Override
-    public boolean tickDMA(final long cpuCycle) {
-        return false;
-    }
-
-    @Override
     public int peek(final int address) {
         return memory[address & 0xFFFF];
     }

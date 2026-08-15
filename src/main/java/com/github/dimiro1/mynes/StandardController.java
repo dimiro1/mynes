@@ -22,6 +22,12 @@ public class StandardController implements Controller {
     private int shiftRegister;
     private int strobe;
 
+    /**
+     * The bit the port is holding on its data line, which is what a read that does not clock the
+     * register sees. Not the same as the bottom of the shift register: that has already moved on.
+     */
+    private int output;
+
     public StandardController() {
         this.buttons = 0;
         this.shiftRegister = 0;
@@ -30,10 +36,17 @@ public class StandardController implements Controller {
 
     @Override
     public void setStrobe(int strobe) {
-        this.strobe = strobe & 1;
-        // Both edges: high starts the register following the buttons, and the falling edge is
-        // what latches them for the eight reads that follow.
-        reloadShiftRegister();
+        var level = strobe & 1;
+
+        // While the strobe is high the register simply follows the buttons, and the falling edge
+        // is what latches them for the eight reads that follow. A write that leaves it low does
+        // neither: $4016 carries three output lines and a game writing $02 to work an expansion
+        // port must not find its controller reading back from the top again.
+        if (level == 1 || this.strobe == 1) {
+            reloadShiftRegister();
+        }
+
+        this.strobe = level;
     }
 
     @Override
@@ -44,12 +57,17 @@ public class StandardController implements Controller {
         }
 
         // Read current bit and shift
-        int result = shiftRegister & 1;
+        int result = output = shiftRegister & 1;
         shiftRegister >>= 1;
         // Set bit 7 to 1 (open bus behavior after all 8 buttons are read)
         shiftRegister |= 0x80;
 
         return result;
+    }
+
+    @Override
+    public int peek() {
+        return strobe == 1 ? buttons & BUTTON_A : output;
     }
 
     @Override
@@ -61,6 +79,7 @@ public class StandardController implements Controller {
     public void serialize(final StateIO io) {
         shiftRegister = io.u8(shiftRegister);
         strobe = io.u8(strobe);
+        output = io.u8(output);
     }
 
     private void reloadShiftRegister() {

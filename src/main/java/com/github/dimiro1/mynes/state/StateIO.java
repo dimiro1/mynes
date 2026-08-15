@@ -247,6 +247,29 @@ public final class StateIO {
     }
 
     /**
+     * A hole where a field used to be.
+     * <p>
+     * Deleting a field from the middle of a chunk would shift every field after it, and a state
+     * written by an older build would then be read one field out of step -- silently, because the
+     * bytes are all still there and all still the right length. Writing the hole back as zeroes
+     * keeps both directions byte-aligned, at the cost of carrying the corpse.
+     * <p>
+     * Only for fields removed from the <em>middle</em>. A field removed from the end needs nothing:
+     * the reading side already leaves what it never reaches alone.
+     */
+    public void skip(final int count) {
+        if (saving()) {
+            for (var i = 0; i < count; i++) {
+                buffer.write(0);
+            }
+
+            return;
+        }
+
+        position += Math.min(count, remaining());
+    }
+
+    /**
      * A {@code long[]}: the two decay tables, which count in dots and in frames.
      */
     public void longs(final long[] array) {
