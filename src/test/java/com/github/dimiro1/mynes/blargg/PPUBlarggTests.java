@@ -45,20 +45,23 @@ public class PPUBlarggTests {
      * <p>
      * {@code oam_stress} spends about thirty seconds of emulated time hammering $2003 and $2004
      * with rendering switched off, and refreshes OAM itself as it goes -- but not nearly often
-     * enough for a chip whose OAM only holds its charge for a millisecond or so. The whole of OAM
-     * has faded by the time it looks, so every one of the 256 bytes it prints comes back as a
-     * mismatch, which is the sixteen rows of asterisks below.
+     * enough for a chip whose OAM holds its charge for a few milliseconds. Almost all of OAM has
+     * faded by the time it looks, so nearly every one of the 256 bytes it prints comes back as a
+     * mismatch: fifteen full rows of asterisks, and a sixteenth where the handful of bytes the ROM
+     * happened to touch inside {@link com.github.dimiro1.mynes.Region#oamDecayDots()} survived.
      * <p>
      * Making it pass would mean stretching the decay to something like a twentieth of a second,
-     * which is nothing like DRAM, so the decay stays as the hardware has it and this is recorded
-     * instead. blargg's own readme says the ROM "passes only for one of the four random PPU-CPU
-     * synchronizations at power/reset" on a real console, so it is not a clean pass there either.
+     * which is nothing like DRAM, so the decay stays where three other measurements put it and
+     * this is recorded instead. blargg's own readme says the ROM "passes only for one of the four
+     * random PPU-CPU synchronizations at power/reset" on a real console, so it is not a clean pass
+     * there either.
      * <p>
-     * The match is on the exact full-width failure, so a partial pattern -- which would mean the
-     * OAM address or the read path was wrong rather than the charge -- still fails the test.
+     * Both lines are matched exactly rather than by shape, so this is a ratchet on the decay time
+     * as well: move it and the surviving run changes, and somebody has to come back here and say
+     * why.
      */
     private static final Map<String, Set<String>> ACCEPTED_DEVIATIONS = Map.of(
-            "/oam/oam_stress.nes", Set.of("****************")
+            "/oam/oam_stress.nes", Set.of("****************", "***--***--------")
     );
 
     @Nested

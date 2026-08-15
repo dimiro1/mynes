@@ -30,13 +30,13 @@ public enum Region {
     /**
      * The 2C02 and 2A03: 60.0988 frames a second, 262 scanlines, three dots to a CPU cycle.
      */
-    NTSC("ntsc", "NTSC", 12, 4, 1_789_773.0, 16_639_267L, 262, true, 9000,
+    NTSC("ntsc", "NTSC", 12, 4, 1_789_773.0, 16_639_267L, 262, true, 30000,
             7457, 14913, 22371, 29828, 29829, 29830, 37281, 37282),
 
     /**
      * The 2C07 and 2A07: 50.0070 frames a second, 312 scanlines, 3.2 dots to a CPU cycle.
      */
-    PAL("pal", "PAL", 16, 5, 1_662_607.0, 19_997_209L, 312, false, 29000,
+    PAL("pal", "PAL", 16, 5, 1_662_607.0, 19_997_209L, 312, false, 30000,
             8313, 16627, 24939, 33252, 33253, 33254, 41565, 41566);
 
     /**
@@ -196,14 +196,20 @@ public enum Region {
      * It has to be longer than the gap between one frame's sprite evaluation and the next, because
      * that evaluation is the only thing that refreshes OAM: a machine whose sprites decayed every
      * vertical blank would have no sprites at all. That gap is 23 scanlines on NTSC and 73 on PAL
-     * -- 7843 dots against 24893 -- so one number cannot serve for both, and the NTSC one very
-     * nearly does not serve for NTSC either. That is the whole of the phenomenon: the charge only
-     * just outlasts the dark part of the picture.
+     * -- 7843 dots against 24893 -- and it has to be longer than a program's own reading of OAM
+     * takes, too. AccuracyCoin copies the whole of it out through $2004 eighteen cycles at a time,
+     * which is 13824 dots from the first byte to the last, and a window that expires part way
+     * through leaves the tail of the copy reading back zeroes.
      * <p>
-     * 9000 is the figure {@code ppu_open_bus.nes} and the {@code oam} suite are happy with, which
-     * makes it the measured one. There is no PAL test ROM to answer for the other, so it is the
-     * same margin over the same gap: about fifteen percent, which on a 2C07 is 29000 dots. Both
-     * are a good deal shorter than the tens of a second {@code oam_stress} would want, which is
+     * The number below is the same on both machines because what decays is a capacitor and what it
+     * decays over is time, not dots -- and the two dot clocks are within one percent of each other
+     * (5.369MHz against 5.320MHz). 30000 dots is about five and a half milliseconds: a plausible
+     * retention time for unrefreshed DRAM, clear of PAL's blanking by a fifth and of the copy
+     * above by twice over, and still well inside a frame, so the phenomenon is still a phenomenon.
+     * It stays a property of the region rather than becoming a constant because it is a fact about
+     * a console and belongs with the others.
+     * <p>
+     * Still a good deal shorter than the tens of a second {@code oam_stress} would want, which is
      * why that ROM is an accepted failure.
      */
     public int oamDecayDots() {

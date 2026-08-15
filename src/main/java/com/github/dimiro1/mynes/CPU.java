@@ -2239,7 +2239,22 @@ public class CPU {
         setZeroNegFlags(this.a);
     }
 
+    /**
+     * One of the twelve opcodes that jam the processor. Nothing recovers it but a reset, and no
+     * cartridge worth running executes one, so this is treated as a bug in the emulator rather than
+     * as a machine that has to be modelled.
+     * <p>
+     * Except while speculating. A halted CPU re-reads the address it had reached on every cycle, so
+     * a program stopped on an opcode fetch decodes whatever is on the bus over and over -- and if
+     * the bus happens to be floating, one of those bytes can be any of the twelve. It has not
+     * executed anything: the cycle is about to be taken back, and the fetch will happen again once
+     * RDY comes up. Throwing there would kill a run over a byte the machine never used.
+     */
     private void kil() {
+        if (speculating) {
+            return;
+        }
+
         throw new RuntimeException("kil is an illegal opcode");
     }
 

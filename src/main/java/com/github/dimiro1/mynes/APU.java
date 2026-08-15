@@ -582,6 +582,18 @@ public class APU {
     }
 
     /**
+     * Whether the sample a fetch is being made for still exists.
+     * <p>
+     * A write to $4015 that switches the channel off does not politely wait for a transfer already
+     * under way. The sample is gone, so the fetch is abandoned where it stands -- and abandoning
+     * it matters twice over, because a fetch allowed to finish would take a byte off a sample that
+     * no longer has any, and the channel would then be neither playing nor stopped.
+     */
+    public boolean isDMCSampleActive() {
+        return dmc.bytesRemaining > 0;
+    }
+
+    /**
      * Where the next byte of the sample is.
      *
      * @return an address in $8000-$FFFF.
@@ -1560,6 +1572,13 @@ public class APU {
          */
         private static final int MAXIMUM_STEP_FROM = 125;
 
+        /**
+         * How long a sample started by a $4015 write takes to ask for its first byte, in CPU
+         * cycles. Four of them separate the write from the halt, which is the two APU cycles the
+         * ROM prints, and the last of the four is the request latch every fetch goes through.
+         */
+        private static final int LOAD_DELAY = 3;
+
         private boolean irqEnabled;
         private boolean irqFlag;
         private boolean loop;
@@ -1600,6 +1619,18 @@ public class APU {
         private boolean silence = true;
 
         /**
+         * How many CPU cycles are left before a sample that $4015 has just started asks for its
+         * first byte.
+         * <p>
+         * A sample already playing feeds itself: the timer empties the buffer and the fetch is
+         * asked for on the cycle after. One started by a write to $4015 is not that -- the
+         * channel has to be loaded first -- and AccuracyCoin measures how long that takes by
+         * arranging for the transfer to land on a {@code LDA $2002} and seeing whether the halted
+         * CPU's re-read cleared the VBlank flag before the instruction's own read of it.
+         */
+        private int loadDelay;
+
+        /**
          * Including the read-ahead buffer and whether it is filled, because a DMA fetch in flight is
          * the one piece of this channel the CPU can see the effect of: the cycle it steals is what
          * makes a DMC sample shift a raster split.
@@ -1623,6 +1654,7 @@ public class APU {
             shiftRegister = io.u8(shiftRegister);
             bitsRemaining = io.u8(bitsRemaining);
             silence = io.bool(silence);
+            loadDelay = io.u8(loadDelay);
         }
 
         private void write(final int register, final int data) {
@@ -1651,6 +1683,10 @@ public class APU {
          * One CPU cycle of the divider.
          */
         private void tickTimer() {
+            if (loadDelay > 0) {
+                loadDelay--;
+            }
+
             if (timer > 0) {
                 timer--;
                 return;
@@ -1704,11 +1740,12 @@ public class APU {
             } else if (bytesRemaining == 0) {
                 currentAddress = sampleAddress;
                 bytesRemaining = sampleLength;
+                loadDelay = LOAD_DELAY;
             }
         }
 
         private boolean isFetchPending() {
-            return !sampleBufferFilled && bytesRemaining > 0;
+            return loadDelay == 0 && !sampleBufferFilled && bytesRemaining > 0;
         }
 
         private void finishFetch(final int data) {
