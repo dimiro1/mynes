@@ -96,6 +96,42 @@ public class CPU {
     private boolean stalled;
 
     /**
+     * True while a cycle is being run only to find out what it does.
+     * <p>
+     * A halted CPU keeps driving the address it had reached and reads it again every cycle, so the
+     * simplest way to model the halt is to let the cycle run and then take back everything but the
+     * read. See {@link #haltedCycle()}.
+     */
+    private boolean speculating;
+
+    /**
+     * Whether the cycle now running has written to the bus. Read by {@link #haltedCycle()}, which
+     * is the only thing that cares.
+     */
+    private boolean wroteThisCycle;
+
+    /**
+     * Everything a cycle can change that a halted CPU must not have changed.
+     * <p>
+     * Allocated per halted cycle rather than kept in a field, which costs a short lived object a
+     * few times per transfer and buys two things: nothing can leak from one cycle into the next,
+     * and {@code SaveStateCompletenessTests} does not have to be told about twenty-one fields that
+     * are only meaningful in the middle of a call.
+     * <p>
+     * Deliberately <em>not</em> the three interrupt lines: those are driven from outside
+     * {@link #tick()}, and {@link #sampleNMI()} keeps watching /NMI while the CPU is held off the
+     * bus -- which is the whole reason an NMI can arrive during a transfer at all.
+     */
+    private static final class Registers {
+        private int a, x, y, sp, pc, p, opcode, tick, intTick;
+        private int tickValue, tickBaseAddress, tickUnfixedAddress, tickAddress, tickLow, tickHigh;
+        private long cycles;
+        private boolean rstPending, nmiPending, interruptPending;
+        private Sequence sequence;
+        private int interruptVector;
+    }
+
+    /**
      * How many bytes each opcode takes, which is all this class needs to know about the shape of an
      * instruction: enough to hand a tracer the operands that went with it.
      * <p>
@@ -400,15 +436,64 @@ public class CPU {
      * happens slightly later in the cycle than the bus access does.
      */
     public void tick() {
-        // DMA has priority over everything except interrupts already in progress
-        if (!isServingInterrupt() && bus.tickDMA(cycles)) {
+        var kind = bus.beginDMACycle(cycles);
+
+        if (kind == CPUBus.DMACycle.TRANSFER) {
+            // Somebody else has both the address and the data pins. There is nothing for the CPU
+            // to do, and no interrupt sequence in flight makes any difference: the hardware halts
+            // through those too.
             stalled = true;
             cycles++;
             return;
         }
 
-        stalled = false;
+        if (kind == CPUBus.DMACycle.HALT) {
+            haltedCycle();
+            return;
+        }
 
+        stalled = false;
+        runCycle();
+    }
+
+    /**
+     * A cycle spent held off the bus, by running it and then taking it back.
+     * <p>
+     * A halted 6502 does not stop dead: it holds the address it had reached and reads it again on
+     * every cycle until RDY comes back. That is not a detail -- it is why a transfer that lands on
+     * an {@code LDA $2002} clears the VBlank flag more than once, why one on {@code LDA $2007}
+     * walks the PPU's address further than the program asked, and why one on {@code LDA $4016}
+     * clocks a controller nobody read.
+     * <p>
+     * Rather than work out in advance what the cycle was going to do, this lets it happen and then
+     * puts every register back. The read stays -- it is <em>meant</em> to happen again -- and the
+     * CPU is left standing exactly where it was, so the next cycle re-issues the same read.
+     * <p>
+     * A cycle that turns out to be a write is kept instead. The 6502 does not sample RDY while it
+     * is writing, so the write goes through and the halt is simply one cycle later.
+     */
+    private void haltedCycle() {
+        var before = save();
+        speculating = true;
+        wroteThisCycle = false;
+
+        runCycle();
+
+        speculating = false;
+
+        if (wroteThisCycle) {
+            bus.endHaltCycle(true);
+            return;
+        }
+
+        restore(before);
+        bus.endHaltCycle(false);
+
+        stalled = true;
+        cycles++;
+    }
+
+    private void runCycle() {
         if (canServeInterrupts()) {
             servePendingInterrupt();
             return;
@@ -416,7 +501,14 @@ public class CPU {
 
         if (isFirstTickOfInstruction()) {
             opcode = fetchPC();
-            notifyStep();
+
+            // Suppressed while speculating, so a tracer sees one line per instruction rather than
+            // one per halted cycle. Safe to skip outright: an opcode fetch is a read, and every
+            // speculative read is taken back, so a cycle that survives was never a fetch.
+            if (!speculating) {
+                notifyStep();
+            }
+
             incPC();
         }
 
@@ -531,10 +623,6 @@ public class CPU {
     private boolean canServeInterrupts() {
         return isFirstTickOfInstruction()
                 && (sequence != Sequence.NONE || rstPending || interruptPending);
-    }
-
-    private boolean isServingInterrupt() {
-        return intTick != 1;
     }
 
     private boolean isFirstTickOfInstruction() {
@@ -680,7 +768,60 @@ public class CPU {
     }
 
     private void write(final int address, final int data) {
+        wroteThisCycle = true;
         bus.write(ByteUtils.ensureWord(address), ByteUtils.ensureByte(data));
+    }
+
+    private Registers save() {
+        var into = new Registers();
+
+        into.a = a;
+        into.x = x;
+        into.y = y;
+        into.sp = sp;
+        into.pc = pc;
+        into.p = p;
+        into.cycles = cycles;
+        into.opcode = opcode;
+        into.tick = tick;
+        into.intTick = intTick;
+        into.tickValue = tickValue;
+        into.tickBaseAddress = tickBaseAddress;
+        into.tickUnfixedAddress = tickUnfixedAddress;
+        into.tickAddress = tickAddress;
+        into.tickLow = tickLow;
+        into.tickHigh = tickHigh;
+        into.rstPending = rstPending;
+        into.nmiPending = nmiPending;
+        into.interruptPending = interruptPending;
+        into.sequence = sequence;
+        into.interruptVector = interruptVector;
+
+        return into;
+    }
+
+    private void restore(final Registers from) {
+        a = from.a;
+        x = from.x;
+        y = from.y;
+        sp = from.sp;
+        pc = from.pc;
+        p = from.p;
+        cycles = from.cycles;
+        opcode = from.opcode;
+        tick = from.tick;
+        intTick = from.intTick;
+        tickValue = from.tickValue;
+        tickBaseAddress = from.tickBaseAddress;
+        tickUnfixedAddress = from.tickUnfixedAddress;
+        tickAddress = from.tickAddress;
+        tickLow = from.tickLow;
+        tickHigh = from.tickHigh;
+        rstPending = from.rstPending;
+        nmiPending = from.nmiPending;
+        interruptPending = from.interruptPending;
+        sequence = from.sequence;
+        interruptVector = from.interruptVector;
     }
 
     private void absoluteJump() {

@@ -223,14 +223,24 @@ public class BUS implements CPUBus, PPUBus {
     }
 
     /**
-     * Performs one cycle of DMA transfer if active.
+     * Decides what one CPU cycle is for, and spends it if a transfer can use it.
      *
-     * @param cpuCycle the current CPU cycle counter; OAM DMA alignment depends on its parity
-     * @return true if DMA is in progress
+     * @param cpuCycle the current CPU cycle counter, whose parity is the get/put phase
+     * @return what the CPU should do with this cycle
      */
     @Override
-    public boolean tickDMA(final long cpuCycle) {
-        return mmu.tickDMA(cpuCycle);
+    public DMACycle beginDMACycle(final long cpuCycle) {
+        return mmu.beginDMACycle(cpuCycle);
+    }
+
+    /**
+     * Reports what a halt cycle turned out to be.
+     *
+     * @param cpuWrote true if the CPU spent it writing, which delays the halt
+     */
+    @Override
+    public void endHaltCycle(final boolean cpuWrote) {
+        mmu.endHaltCycle(cpuWrote);
     }
 
     /**

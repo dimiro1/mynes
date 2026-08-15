@@ -2,7 +2,6 @@ package com.github.dimiro1.mynes.accuracycoin;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
-import com.github.dimiro1.mynes.MMU;
 import com.github.dimiro1.mynes.NES;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.commons.logging.Logger;
@@ -98,34 +97,31 @@ final class AccuracyCoinTests {
      * acceptable answers.
      */
     private static final Map<String, String> EXPECTED = Map.ofEntries(
-            entry("Open Bus", "FAIL 1"),
-
             entry("$93   SHA indirect,Y", "FAIL 7"),
             entry("$9F   SHA absolute,Y", "FAIL 7"),
             entry("$9B   SHS absolute,Y", "FAIL 7"),
             entry("$9C   SHY absolute,X", "FAIL 7"),
             entry("$9E   SHX absolute,Y", "FAIL 7"),
 
-            entry("Interrupt flag latency", "FAIL A"),
             entry("NMI Overlap BRK", "FAIL 2"),
             entry("NMI Overlap IRQ", "FAIL 1"),
 
-            entry("DMA + Open Bus", "FAIL 1"),
             entry("DMA + $2002 Read", "FAIL 2"),
-            entry("DMA + $2007 Read", "FAIL 2"),
-            entry("DMA + $2007 Write", "FAIL 1"),
-            entry("DMA + $4015 Read", "FAIL 2"),
-            entry("DMA + $4016 Read", "FAIL 1"),
+
+            // Passing, but on the wrong one of the two acceptable answers: 2 is a console whose
+            // controller port drives more bits than a front-loader's does. Canonically 1.
+            entry("DMA + $4016 Read", "PASS 2"),
+
             entry("DMC DMA Bus Conflicts", "FAIL 2"),
-            entry("DMC DMA + OAM DMA", "FAIL 1"),
-            entry("Explicit DMA Abort", "FAIL 1"),
-            entry("Implicit DMA Abort", "FAIL 1"),
+            entry("DMC DMA + OAM DMA", "FAIL 2"),
+            entry("Explicit DMA Abort", "FAIL 2"),
+            entry("Implicit DMA Abort", "FAIL 2"),
 
             entry("Frame Counter IRQ", "FAIL 7"),
             entry("Frame Counter 4-step", "FAIL 2"),
             entry("Frame Counter 5-step", "FAIL 2"),
-            entry("Delta Modulation Channel", "FAIL K"),
-            entry("APU Register Activation", "FAIL 1"),
+            entry("Delta Modulation Channel", "FAIL L"),
+            entry("APU Register Activation", "FAIL 4"),
             entry("Controller Strobing", "FAIL 1"),
             entry("Controller Clocking", "FAIL 5"),
 
@@ -136,7 +132,7 @@ final class AccuracyCoinTests {
             entry("Misaligned OAM behavior", "FAIL 1"),
             entry("Address $2004 behavior", "FAIL 8"),
             entry("OAM Corruption", "FAIL 3"),
-            entry("INC $4014", "FAIL 1"),
+            entry("INC $4014", "FAIL 2"),
 
             entry("Stale BG Shift Registers", "FAIL 3"),
             entry("Stale Sprite Shift Regs", "FAIL 3"),
@@ -147,10 +143,7 @@ final class AccuracyCoinTests {
             entry("ALE + Read", "FAIL 2"),
             entry("Hybrid Addresses", "FAIL 2"),
 
-            entry("Instruction Timing", "FAIL 1"),
-            entry("Implied Dummy Reads", "FAIL 3"),
-            entry("JSR Edge Cases", "FAIL 3"),
-            entry("Internal Data Bus", "FAIL 1")
+            entry("Internal Data Bus", "FAIL 2")
 
     );
 
