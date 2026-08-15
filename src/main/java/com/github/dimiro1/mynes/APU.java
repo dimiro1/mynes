@@ -114,20 +114,25 @@ public class APU {
     // region field below.
 
     /**
-     * How long a $4017 write takes to reach the sequencer when it lands on an APU cycle.
+     * How long a $4017 write made on a put cycle takes to reach the sequencer.
      * <p>
-     * The APU clock is the CPU clock halved, so half of all writes land on one of its cycles and
-     * half land between two, and the hardware takes three CPU cycles to act on the first kind and
-     * four on the second. Which parity of the CPU cycle counter is which is a convention rather
-     * than a fact -- the count starts wherever the emulator says it does -- so this pairing is one
-     * of the things blargg's {@code 4-jitter} arbitrates.
+     * Three and four are the numbers everyone quotes, and the reason there are two of them is the
+     * one thing nobody writes down: the write takes three CPU cycles to cross the chip, and
+     * <em>the sequencer is only reset on a get cycle</em>. A write made on a put lands on a get
+     * three cycles later and is done; one made on a get lands three cycles later on a put, and has
+     * to wait a fourth for the phase to come round.
+     * <p>
+     * Which way round that pairing goes is the whole of AccuracyCoin's Frame Counter IRQ tests A
+     * to D, which bracket each half separately and one cycle either side. Getting it backwards
+     * still passes blargg's {@code 4-jitter}, because that measures only the difference.
      */
-    private static final int WRITE_DELAY_ON_APU_CYCLE = 3;
+    private static final int WRITE_DELAY_FROM_PUT = 3;
 
     /**
-     * How long a $4017 write takes to reach the sequencer when it lands between two APU cycles.
+     * The same for a write made on a get cycle, which has just missed the phase the reset lands on
+     * and waits a cycle for the next.
      */
-    private static final int WRITE_DELAY_BETWEEN_APU_CYCLES = 4;
+    private static final int WRITE_DELAY_FROM_GET = 4;
 
     // ---------------------------------------------------------------- $4015 bits
 
@@ -172,6 +177,19 @@ public class APU {
      * from the gap between two, which is the only thing the chip itself uses it for.
      */
     private long cycles;
+
+    /**
+     * A $4015 read is waiting to clear the frame counter's interrupt flag.
+     * <p>
+     * The read does not clear it. What the read does is ask for it to be cleared, and the flag goes
+     * out on the next get cycle -- so a read that lands on a put is answered one cycle later, and a
+     * read that lands on a get is answered two. AccuracyCoin measures both halves of that with a
+     * {@code SLO $4015,X}, whose two reads of the register are consecutive cycles: read on a put and
+     * the second read already sees it gone, read on a get and the second read still finds it there.
+     * <p>
+     * Nothing a game does can tell, which is why this was found in 2024 rather than in 1985.
+     */
+    private boolean frameIRQClearPending;
 
     // ---------------------------------------------------------------- the sample pipeline
     //
@@ -228,6 +246,13 @@ public class APU {
      * Advances the chip by one CPU cycle.
      */
     public void tick() {
+        // Before anything else, because this is the edge the cycle starts on rather than work done
+        // during it: a read that happened on the previous cycle has to have cleared the flag by the
+        // time this cycle's own read of $4015 sees it.
+        if (frameIRQClearPending && isGetCycle(cycles)) {
+            setFrameIRQFlag(false);
+        }
+
         frameCounter.tick();
 
         // The pulse and noise dividers are clocked by the APU clock, which is the CPU clock
@@ -392,6 +417,7 @@ public class APU {
      */
     public void serialize(final StateIO io) {
         cycles = io.u64(cycles);
+        frameIRQClearPending = io.bool(frameIRQClearPending);
 
         pulse1.serialize(io);
         pulse2.serialize(io);
@@ -467,9 +493,22 @@ public class APU {
             status |= STATUS_DMC_IRQ;
         }
 
-        setFrameIRQFlag(false);
+        frameIRQClearPending = true;
 
         return status;
+    }
+
+    /**
+     * Which half of the 2A03's divided clock a CPU cycle is, in the same convention
+     * {@link MMU#beginDMACycle} works in: the transfer units read on a get and write on a put.
+     * <p>
+     * Asked here of {@code cycles} at the top of {@link #tick}, where it has not been incremented
+     * yet and so still names the cycle about to run. That is one cycle earlier than the value seen
+     * from inside {@link #readStatus}, which is reached from the CPU's half of the same cycle --
+     * the chip is clocked before the processor is.
+     */
+    private static boolean isGetCycle(final long cpuCycle) {
+        return (cpuCycle & 1) != 0;
     }
 
     /**
@@ -496,8 +535,25 @@ public class APU {
      * bit has had its say.
      */
     private void setFrameIRQFlag(final boolean raised) {
+        setFrameIRQFlag(raised, raised);
+    }
+
+    /**
+     * The same, for the two cycles a sequence ends on where the flag and the line disagree.
+     *
+     * @param raised what bit 6 of $4015 reads back as.
+     * @param line   whether this end of the shared /IRQ line is pulled low.
+     */
+    private void setFrameIRQFlag(final boolean raised, final boolean line) {
         frameCounter.irqFlag = raised;
-        frameIRQHandler.setIRQLine(raised);
+        frameIRQHandler.setIRQLine(line);
+
+        // Whatever a $4015 read was waiting to acknowledge, it is not this. The sequencer raises
+        // the flag on three consecutive cycles at the end of a sequence, so a read landing in the
+        // middle of them is answered by a fresh interrupt before the clear it asked for comes due
+        // -- and that interrupt is a new one, which nobody has acknowledged yet. blargg's
+        // 6-irq_flag_timing measures exactly this: the flag has to read back set on all three.
+        frameIRQClearPending = false;
     }
 
     /**
@@ -757,13 +813,13 @@ public class APU {
                 clockQuarterFrame();
                 clockHalfFrame();
             } else if (cycle == region.irqFirstCycle()) {
-                raiseIRQ();
+                raiseIRQFlag();
             } else if (cycle == region.step4Cycle()) {
                 clockQuarterFrame();
                 clockHalfFrame();
                 raiseIRQ();
             } else if (cycle == region.fourStepPeriod()) {
-                raiseIRQ();
+                settleIRQ();
                 cycle = 0;
             }
         }
@@ -781,10 +837,41 @@ public class APU {
             // The fourth step of this sequence really does nothing.
         }
 
+        // A four step sequence ends on three consecutive cycles, and all three do something
+        // different. The flag and the /IRQ line are not one signal here, and the inhibit bit
+        // reaches them at different moments -- which is why a program that has asked for no
+        // interrupts can still read bit 6 of $4015 back set, for exactly two cycles, and still
+        // never be interrupted. AccuracyCoin brackets every edge of that a cycle either side.
+
+        /**
+         * The first: the flag goes up, and nothing else. The level detector is left where it was,
+         * so an interrupt does not begin here even with the inhibit bit clear -- it begins on the
+         * cycle below, which is what makes AccuracyCoin's tests N and O land an instruction apart
+         * from where a machine that pulled the line here would put them.
+         * <p>
+         * "Where it was" is spelt out rather than remembered: outside these three cycles the line
+         * is the flag gated by the inhibit bit and nothing else drives it, so that expression is
+         * the level it is already sitting at.
+         */
+        private void raiseIRQFlag() {
+            setFrameIRQFlag(true, irqFlag && !irqInhibit);
+        }
+
+        /**
+         * The second: the flag stays up whatever the inhibit bit says, and the line follows it
+         * unless the bit is set. This is the cycle an interrupt actually starts on.
+         */
         private void raiseIRQ() {
-            if (!irqInhibit) {
-                setFrameIRQFlag(true);
-            }
+            setFrameIRQFlag(true, !irqInhibit);
+        }
+
+        /**
+         * The third and last, where the inhibit bit finally reaches the flag itself. Nothing else
+         * closes the two-cycle window above -- an inhibited interrupt is never acknowledged, it
+         * simply stops being reported.
+         */
+        private void settleIRQ() {
+            setFrameIRQFlag(!irqInhibit);
         }
 
         /**
@@ -802,9 +889,12 @@ public class APU {
             }
 
             pendingValue = data;
-            writeDelay = (cycles & 1) == 0
-                    ? WRITE_DELAY_ON_APU_CYCLE
-                    : WRITE_DELAY_BETWEEN_APU_CYCLES;
+
+            // Reached from the CPU's half of the cycle, by which time the chip has already been
+            // clocked for it -- so the cycle doing the writing is the one before this count.
+            writeDelay = isGetCycle(cycles - 1)
+                    ? WRITE_DELAY_FROM_GET
+                    : WRITE_DELAY_FROM_PUT;
         }
 
         /**

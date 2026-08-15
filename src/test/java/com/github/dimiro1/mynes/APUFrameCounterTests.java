@@ -63,6 +63,29 @@ class APUFrameCounterTests {
     }
 
     /**
+     * Which half of the 2A03's divided clock a CPU cycle is. Both the $4017 write delay and the
+     * $4015 read's acknowledge are counted from it, and the hardware documents both in these
+     * terms rather than in parities.
+     */
+    private static final boolean GET = true;
+    private static final boolean PUT = false;
+
+    /**
+     * Runs the chip up to the point a CPU cycle of the given phase is being spent, so that the
+     * register access on the next line lands on one.
+     * <p>
+     * The arithmetic is the one thing here that is not obvious. {@link NES#tick()} clocks this
+     * chip and <em>then</em> lets the processor spend the cycle, so a {@code STA $4017} on cycle N
+     * arrives with the counter already standing at N + 1 -- and it is N whose phase the hardware
+     * is described in.
+     */
+    private void runToCPUCycle(final boolean phase) {
+        while (((apu.getCycles() - 1) & 1) != (phase ? 1 : 0)) {
+            apu.tick();
+        }
+    }
+
+    /**
      * Runs the chip until the sequencer is the given number of cycles into its sequence.
      * <p>
      * Used rather than a cycle count wherever a $4017 write is involved, since where the sequence
@@ -101,11 +124,20 @@ class APUFrameCounterTests {
             assertTrue(apu.isFrameIRQRaised(), "and on the cycle itself");
         }
 
+        /**
+         * The flag and the line are not one signal. The flag goes up on the first of the three
+         * cycles a sequence ends on and the line follows on the second, and that one cycle is the
+         * difference between AccuracyCoin's tests N and O counting three {@code INX}es before the
+         * interrupt arrives or four.
+         */
         @Test
-        void pullsTheSharedLineDownWithTheFlag() {
+        void pullsTheSharedLineDownOneCycleAfterTheFlag() {
             tick(IRQ_CYCLE);
+            assertTrue(apu.isFrameIRQRaised(), "the flag is up");
+            assertFalse(irqLine, "but nothing has pulled the line yet");
 
-            assertTrue(irqLine, "the flag and the line are the same thing");
+            apu.tick();
+            assertTrue(irqLine, "which happens on the cycle after");
         }
 
         @Test
@@ -116,15 +148,17 @@ class APUFrameCounterTests {
         }
 
         /**
-         * The flag is set on three consecutive cycles rather than on one, so a program that reads
-         * $4015 in the middle of the window sees it come straight back. Which is the whole of what
-         * {@code 6-irq_flag_timing} measures.
+         * The flag is set on three consecutive cycles rather than on one, and a $4015 read in the
+         * middle of the window does not take it down: the read only asks for a clear on the next
+         * get cycle, and the sequencer raising the flag again in the meantime is a fresh interrupt
+         * that nobody has acknowledged. Which is the whole of what {@code 6-irq_flag_timing}
+         * measures.
          */
         @Test
         void setsTheFlagOnEachOfTheLastThreeCyclesOfTheSequence() {
             tick(IRQ_CYCLE);
+            assertTrue(apu.isFrameIRQRaised(), "up on the first of the three");
             apu.readStatus();
-            assertFalse(apu.isFrameIRQRaised(), "acknowledged");
 
             apu.tick();
             assertTrue(apu.isFrameIRQRaised(), "and set again on the next cycle");
@@ -138,6 +172,9 @@ class APUFrameCounterTests {
         void raisesItAgainEverySequence() {
             tick(FOUR_STEP_PERIOD);
             apu.readStatus();
+
+            // Two, because the read landed on a get: see the acknowledging tests below.
+            tick(2);
             assertFalse(apu.isFrameIRQRaised());
 
             tickToSequenceCycle(IRQ_CYCLE - 1);
@@ -243,13 +280,38 @@ class APUFrameCounterTests {
     @Nested
     @DisplayName("acknowledging the interrupt")
     class Acknowledging {
+        /**
+         * A $4015 read does not clear the flag. It asks for it to be cleared, and the answer comes
+         * on the next get cycle -- so a read made on a put is answered by the very next cycle, and
+         * one made on a get has to wait for the cycle after that. AccuracyCoin measures both
+         * halves with a {@code SLO $4015,X}, whose two reads of the register are on consecutive
+         * cycles: read on a put and the second read finds the flag gone, read on a get and it is
+         * still there.
+         */
         @Test
-        void readingTheStatusRegisterReturnsTheFlagAndClearsIt() {
-            tick(IRQ_CYCLE);
+        void aReadOnAPutCycleIsAnsweredByTheNextCycle() {
+            tick(IRQ_CYCLE + 4);
+            runToCPUCycle(PUT);
 
             assertEquals(0x40, apu.readStatus() & 0x40, "bit 6 is the frame interrupt");
-            assertFalse(apu.isFrameIRQRaised(), "and reading it is what acknowledges it");
+            assertTrue(apu.isFrameIRQRaised(), "which the read itself has not cleared");
+
+            apu.tick();
+            assertFalse(apu.isFrameIRQRaised(), "the get cycle after it is what clears it");
             assertFalse(irqLine, "so the line comes back up");
+        }
+
+        @Test
+        void aReadOnAGetCycleWaitsForTheNextOne() {
+            tick(IRQ_CYCLE + 4);
+            runToCPUCycle(GET);
+            apu.readStatus();
+
+            apu.tick();
+            assertTrue(apu.isFrameIRQRaised(), "the cycle after a get is a put, which does not");
+
+            apu.tick();
+            assertFalse(apu.isFrameIRQRaised(), "and the one after that does");
         }
 
         @Test
@@ -261,12 +323,29 @@ class APUFrameCounterTests {
             assertFalse(irqLine);
         }
 
+        /**
+         * The inhibit bit does not stop the flag going up, only the interrupt. It is set on the
+         * first two of the three cycles a sequence ends on whatever the bit says, and the third is
+         * what takes it back down again -- so there is a two cycle window where a program that has
+         * asked for no interrupts can still read bit 6 back set. Nothing a game does can see it;
+         * AccuracyCoin reads $4015 on each of the four cycles around it.
+         */
         @Test
-        void theInhibitBitStopsTheNextOneToo() {
+        void theInhibitBitLeavesATwoCycleWindowWhereTheFlagIsStillSet() {
             apu.write(0x4017, 0x40);
-            tick(IRQ_CYCLE + 4);
 
-            assertFalse(apu.isFrameIRQRaised());
+            tickToSequenceCycle(IRQ_CYCLE - 1);
+            assertFalse(apu.isFrameIRQRaised(), "one cycle early");
+
+            apu.tick();
+            assertTrue(apu.isFrameIRQRaised(), "up on the first of the three");
+
+            apu.tick();
+            assertTrue(apu.isFrameIRQRaised(), "and still up on the second");
+
+            apu.tick();
+            assertFalse(apu.isFrameIRQRaised(), "and down again on the third");
+            assertFalse(irqLine, "with the line never pulled at all");
         }
 
         @Test
@@ -284,25 +363,34 @@ class APUFrameCounterTests {
     @Nested
     @DisplayName("the delay on a $4017 write")
     class WriteDelay {
+        /**
+         * The sequencer is only reset on a get cycle, which is where the three and the four come
+         * from: a write made on a put lands on the get three cycles later, and one made on a get
+         * has just missed that phase and waits a fourth. Getting the pairing the other way round
+         * still satisfies blargg's {@code 4-jitter}, which measures only the difference between
+         * them -- AccuracyCoin brackets each half separately.
+         */
         @Test
-        void takesThreeCyclesFromAnApuCycle() {
-            tick(1000);  // an even number of cycles, so the write lands on an APU cycle
+        void takesThreeCyclesFromAPutCycle() {
+            tick(1000);
+            runToCPUCycle(PUT);
 
             apu.write(0x4017, 0x00);
             tick(2);
-            assertEquals(1002, apu.frameCounterCycle(), "still counting the old sequence");
+            assertEquals(1003, apu.frameCounterCycle(), "still counting the old sequence");
 
             apu.tick();
             assertEquals(0, apu.frameCounterCycle(), "and the third cycle restarts it");
         }
 
         @Test
-        void takesFourCyclesFromBetweenTwoApuCycles() {
-            tick(1001);
+        void takesFourCyclesFromAGetCycle() {
+            tick(1000);
+            runToCPUCycle(GET);
 
             apu.write(0x4017, 0x00);
             tick(3);
-            assertEquals(1004, apu.frameCounterCycle(), "still counting the old sequence");
+            assertEquals(1003, apu.frameCounterCycle(), "still counting the old sequence");
 
             apu.tick();
             assertEquals(0, apu.frameCounterCycle(), "and the fourth cycle restarts it");
@@ -317,6 +405,7 @@ class APUFrameCounterTests {
         @Test
         void theResetCycleIsCycleZeroOfTheNewSequence() {
             tick(1000);
+            runToCPUCycle(PUT);
             apu.write(0x4017, 0x00);
             tick(3);
 

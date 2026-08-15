@@ -113,9 +113,6 @@ final class AccuracyCoinTests {
             entry("Explicit DMA Abort", "FAIL 2"),
             entry("Implicit DMA Abort", "FAIL 2"),
 
-            entry("Frame Counter IRQ", "FAIL 7"),
-            entry("Frame Counter 4-step", "FAIL 2"),
-            entry("Frame Counter 5-step", "FAIL 2"),
             entry("Delta Modulation Channel", "FAIL L"),
             entry("APU Register Activation", "FAIL 4"),
             entry("Controller Clocking", "FAIL 7"),
