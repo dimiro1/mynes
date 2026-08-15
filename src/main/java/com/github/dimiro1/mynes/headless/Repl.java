@@ -78,6 +78,13 @@ public final class Repl {
     private final PrintStream out;
 
     /**
+     * Whether replies are spelled as readable text rather than compact JSON. Resolved once by the
+     * caller from {@code --format} and whether a person is at the terminal, so nothing here has to
+     * decide it again per reply.
+     */
+    private final boolean text;
+
+    /**
      * Buttons held until released, as opposed to the countdown a press sets up.
      */
     private int held;
@@ -89,12 +96,14 @@ public final class Repl {
             final Session session,
             final Options options,
             final BufferedReader in,
-            final PrintStream out
+            final PrintStream out,
+            final boolean text
     ) {
         this.session = session;
         this.options = options;
         this.in = in;
         this.out = out;
+        this.text = text;
     }
 
     /**
@@ -633,7 +642,7 @@ public final class Repl {
         body.write(node);
         Report.putStateOf(node, session);
 
-        out.println(Json.compact(node));
+        out.println(text ? Json.text(node) : Json.compact(node));
     }
 
     private void error(final String command, final String message) {
@@ -644,7 +653,7 @@ public final class Repl {
         node.put("error", message);
         node.put("frame", session.frame());
 
-        out.println(Json.compact(node));
+        out.println(text ? Json.text(node) : Json.compact(node));
     }
 
     private long number(final String text, final String command) {

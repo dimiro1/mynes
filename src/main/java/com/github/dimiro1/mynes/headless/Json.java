@@ -57,6 +57,20 @@ final class Json {
     }
 
     /**
+     * The same tree, rendered for a person at a terminal rather than for a machine reading a
+     * stream. Objects become aligned {@code key: value} lines, nested objects are indented under
+     * their key, arrays stay inline, and strings print as themselves -- no surrounding quotes and
+     * no {@code \n}/{@code \t} escapes, so a multi-line blob like {@code help} comes out as the
+     * lines it is.
+     */
+    static String text(final Object root) {
+        var out = new StringBuilder();
+        root.writeText(out, 0);
+
+        return out.toString();
+    }
+
+    /**
      * Anything that can sit in the tree.
      * <p>
      * Sealed over exactly three cases because that is all a document here is made of, and because it
@@ -69,6 +83,18 @@ final class Json {
      */
     private sealed interface Value permits Scalar, Object, Array {
         void write(StringBuilder out, int depth, boolean pretty);
+
+        /**
+         * The human-readable, possibly multi-line, block form. Only an object ever spans more than
+         * the line it starts on; everything else defers to {@link #writeInline}.
+         */
+        void writeText(StringBuilder out, int depth);
+
+        /**
+         * The human-readable form on a single line, as used inside an array and to the right of a
+         * {@code key:}.
+         */
+        void writeInline(StringBuilder out);
     }
 
     /**
@@ -81,6 +107,16 @@ final class Json {
         @Override
         public void write(final StringBuilder out, final int depth, final boolean pretty) {
             out.append(json);
+        }
+
+        @Override
+        public void writeText(final StringBuilder out, final int depth) {
+            writeInline(out);
+        }
+
+        @Override
+        public void writeInline(final StringBuilder out) {
+            out.append(unquote(json));
         }
     }
 
@@ -173,6 +209,68 @@ final class Json {
 
             out.append('}');
         }
+
+        private boolean isEmpty() {
+            return entries.isEmpty();
+        }
+
+        @Override
+        public void writeText(final StringBuilder out, final int depth) {
+            if (entries.isEmpty()) {
+                out.append("{}");
+                return;
+            }
+
+            // Widest key at this level, so the colons of the plain values line up. A key whose
+            // value is a nested object gets no padding: its value is on the lines below, not to
+            // the right of the colon.
+            var width = 0;
+
+            for (var entry : entries.entrySet()) {
+                if (!(entry.getValue() instanceof Object child) || child.isEmpty()) {
+                    width = Math.max(width, entry.getKey().length());
+                }
+            }
+
+            var indent = " ".repeat(INDENT * depth);
+            var first = true;
+
+            for (var entry : entries.entrySet()) {
+                if (!first) {
+                    out.append('\n');
+                }
+
+                first = false;
+                out.append(indent).append(entry.getKey());
+
+                if (entry.getValue() instanceof Object child && !child.isEmpty()) {
+                    out.append(':').append('\n');
+                    child.writeText(out, depth + 1);
+                } else {
+                    out.append(" ".repeat(width - entry.getKey().length())).append(": ");
+                    entry.getValue().writeInline(out);
+                }
+            }
+        }
+
+        @Override
+        public void writeInline(final StringBuilder out) {
+            out.append('{');
+
+            var first = true;
+
+            for (var entry : entries.entrySet()) {
+                if (!first) {
+                    out.append(", ");
+                }
+
+                first = false;
+                out.append(entry.getKey()).append(": ");
+                entry.getValue().writeInline(out);
+            }
+
+            out.append('}');
+        }
     }
 
     /**
@@ -223,6 +321,26 @@ final class Json {
 
             out.append(pretty ? " ]" : "]");
         }
+
+        @Override
+        public void writeText(final StringBuilder out, final int depth) {
+            writeInline(out);
+        }
+
+        @Override
+        public void writeInline(final StringBuilder out) {
+            out.append('[');
+
+            for (var i = 0; i < values.size(); i++) {
+                if (i > 0) {
+                    out.append(", ");
+                }
+
+                values.get(i).writeInline(out);
+            }
+
+            out.append(']');
+        }
     }
 
     private static void newline(final StringBuilder out, final int depth) {
@@ -267,5 +385,47 @@ final class Json {
         }
 
         return out.append('"').toString();
+    }
+
+    /**
+     * Undoes {@link #quote} for the text renderer: a quoted string comes back as the characters it
+     * stood for, escapes and all, and anything that is not a quoted string -- a number, a boolean,
+     * {@code null} -- is already its own plain form and is handed back untouched.
+     */
+    private static String unquote(final String json) {
+        if (json.length() < 2 || json.charAt(0) != '"') {
+            return json;
+        }
+
+        var out = new StringBuilder(json.length());
+
+        for (var i = 1; i < json.length() - 1; i++) {
+            var c = json.charAt(i);
+
+            if (c != '\\') {
+                out.append(c);
+                continue;
+            }
+
+            var next = json.charAt(++i);
+
+            switch (next) {
+                case '"' -> out.append('"');
+                case '\\' -> out.append('\\');
+                case '/' -> out.append('/');
+                case 'b' -> out.append('\b');
+                case 'f' -> out.append('\f');
+                case 'n' -> out.append('\n');
+                case 'r' -> out.append('\r');
+                case 't' -> out.append('\t');
+                case 'u' -> {
+                    out.append((char) Integer.parseInt(json.substring(i + 1, i + 5), 16));
+                    i += 4;
+                }
+                default -> out.append(next);
+            }
+        }
+
+        return out.toString();
     }
 }
