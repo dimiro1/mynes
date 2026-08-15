@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -376,6 +377,7 @@ class SaveStateCompletenessTests {
 
     private static NES load(final String resource) throws IOException {
         try (var rom = SaveStateCompletenessTests.class.getResourceAsStream(resource)) {
+            assertNotNull(rom, resource);
             return new NES(Cart.load(rom.readAllBytes(), resource));
         }
     }

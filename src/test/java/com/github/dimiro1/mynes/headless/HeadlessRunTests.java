@@ -106,7 +106,7 @@ class HeadlessRunTests {
     }
 
     @Test
-    void lastIsWhicheverFrameTheRunEndedOn() throws Exception {
+    void lastIsWhicheverFrameTheRunEndedOn() {
         run("--screenshot", "last");
 
         assertTrue(Files.exists(out.resolve("frame-000060.png")));
@@ -349,7 +349,7 @@ class HeadlessRunTests {
     }
 
     @Test
-    void aStateFromAnotherCartridgeStopsTheRun() throws Exception {
+    void aStateFromAnotherCartridgeStopsTheRun() {
         var state = out.resolve("nestest.mn");
         run("--save-state", state.toString());
 

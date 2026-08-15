@@ -227,8 +227,7 @@ public class CartTests {
             var md5 = MessageDigest.getInstance("MD5");
             return String.format("%x", new BigInteger(1, md5.digest(data)));
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return "";
+            throw new RuntimeException(e);
         }
     }
 }

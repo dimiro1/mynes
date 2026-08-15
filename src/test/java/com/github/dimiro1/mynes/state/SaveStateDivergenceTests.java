@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -38,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       because of the controller rather than because of the state.</li>
  *   <li>The state bytes are compared as well as the pictures, and they are the stronger of the two.
  *       Every vendored ROM here finishes its work and then sits on a results screen forever -- see
- *       {@link #ANIMATED_UNTIL} -- so the picture alone would stop being evidence quite early. The
+ *       {@link #ANIMATED_FRAMES} -- so the picture alone would stop being evidence quite early. The
  *       state bytes carry the cycle counters, the interrupt latches and every APU channel nobody
  *       can hear, and they never stop moving.</li>
  * </ul>
@@ -280,6 +281,7 @@ class SaveStateDivergenceTests {
 
     private static NES load(final String resource) throws IOException {
         try (var rom = SaveStateDivergenceTests.class.getResourceAsStream(resource)) {
+            assertNotNull(rom, resource);
             return new NES(Cart.load(rom.readAllBytes(), resource));
         }
     }

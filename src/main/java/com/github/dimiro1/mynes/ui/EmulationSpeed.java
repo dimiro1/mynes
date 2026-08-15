@@ -100,6 +100,7 @@ public enum EmulationSpeed {
      * Four times is a long way under what the emulator manages unthrottled, so it is a speed the
      * machine actually keeps rather than a promise it might not.
      */
+    @SuppressWarnings("SameReturnValue")
     public static EmulationSpeed defaultFastForward() {
         return FOUR_TIMES;
     }

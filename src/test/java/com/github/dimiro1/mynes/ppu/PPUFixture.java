@@ -148,17 +148,16 @@ abstract class PPUFixture {
     }
 
     /**
-     * Renders whole frames and hands back the last one.
+     * Renders whole frames, leaving the last one in the frame buffer for {@link #pixelAt} and the
+     * other accessors to read.
      * <p>
      * Two at least, normally: the vertical scroll position is only copied out of the staging
      * register on the pre-render line, so the first frame after setting it up is drawn from
      * whatever the address register happened to hold.
      */
-    protected int[] renderFrames(final int frames) {
+    protected void renderFrames(final int frames) {
         runTo(0, 0);
         advanceFrames(frames);
-
-        return ppu.getFrameBuffer();
     }
 
     protected int pixelAt(final int x, final int y) {

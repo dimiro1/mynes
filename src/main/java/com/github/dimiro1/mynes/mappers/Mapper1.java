@@ -88,6 +88,7 @@ public class Mapper1 implements Mapper {
      *                  the line itself, and every MMC1 game sets it up before it draws anything
      *                  because the power-on value is not defined.
      */
+    @SuppressWarnings("unused")
     public Mapper1(final byte[] prgROM, final byte[] chrROM, final Mirroring mirroring) {
         this.prgROM = prgROM;
         this.chrIsRAM = chrROM.length == 0;

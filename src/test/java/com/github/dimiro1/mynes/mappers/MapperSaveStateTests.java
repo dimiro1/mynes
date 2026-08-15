@@ -33,7 +33,8 @@ class MapperSaveStateTests {
      * @param name    what to call it when the assertion fails.
      * @param build   makes one at power up.
      * @param arrange writes the registers.
-     * @param probe   addresses to compare, as {@code prgRead} then {@code charRead} pairs.
+     * @param prgAddresses  addresses to compare through {@code prgRead}.
+     * @param charAddresses addresses to compare through {@code charRead}.
      */
     private record Board(
             String name,

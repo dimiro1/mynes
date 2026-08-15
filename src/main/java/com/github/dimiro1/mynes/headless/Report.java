@@ -331,9 +331,7 @@ public final class Report {
         return String.format("%016x", hash);
     }
 
-    /**
-     * A convenience for the parts of a document that are the same wherever they are built.
-     */
+    // A convenience for the parts of a document that are the same wherever they are built.
     /**
      * A path, or a null where there was no path. Explicitly null rather than absent, so that
      * {@code jq} over two reports compares the same set of keys either way.

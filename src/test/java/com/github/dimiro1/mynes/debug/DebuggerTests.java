@@ -165,7 +165,11 @@ class DebuggerTests {
         debugger.stepFrame();
 
         assertNull(run(10), "an instruction boundary is not the end of a frame");
-        assertEquals(Debugger.Reason.FRAME, debugger.afterFrame(nes.getCPU().getPC()).reason());
+
+        var frameStop = debugger.afterFrame(nes.getCPU().getPC());
+
+        assertNotNull(frameStop);
+        assertEquals(Debugger.Reason.FRAME, frameStop.reason());
     }
 
     @Test
