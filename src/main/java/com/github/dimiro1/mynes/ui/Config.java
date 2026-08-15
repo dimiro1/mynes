@@ -39,6 +39,7 @@ public final class Config {
     private static final String PALETTE_KEY = "video.palette";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
+    private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
@@ -66,6 +67,13 @@ public final class Config {
             # can still be dragged to any size at all from there.
             """;
 
+    private static final String SCREENSHOT_SCALE_HEADER = """
+            # How many times File > Screenshot magnifies the picture on its way into the file:
+            # 1, 2, 3 or 4. 1 is the 256x224 the machine drew and is what to keep; the rest are
+            # for a picture headed somewhere that will not scale it with square pixels. The files
+            # land beside the ROM, named after it and stamped with the time.
+            """;
+
     private static final String REGION_HEADER = """
             # Which machine to run cartridges on: auto, ntsc or pal. Auto believes the header,
             # which nearly every dump leaves blank -- so a European game that comes out 17% fast
@@ -88,6 +96,7 @@ public final class Config {
     private NESPalette palette;
     private NESPalette palPalette;
     private ScreenScale screenScale;
+    private ScreenScale screenshotScale;
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
@@ -97,6 +106,7 @@ public final class Config {
             final NESPalette palette,
             final NESPalette palPalette,
             final ScreenScale screenScale,
+            final ScreenScale screenshotScale,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted) {
@@ -104,6 +114,7 @@ public final class Config {
         this.palette = palette;
         this.palPalette = palPalette;
         this.screenScale = screenScale;
+        this.screenshotScale = screenshotScale;
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
@@ -136,7 +147,8 @@ public final class Config {
                 KeyBindings.from(properties),
                 paletteFrom(properties, PALETTE_KEY, Region.NTSC),
                 paletteFrom(properties, PAL_PALETTE_KEY, Region.PAL),
-                screenScaleFrom(properties),
+                screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
+                screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 mutedFrom(properties));
@@ -172,14 +184,19 @@ public final class Config {
         return RegionSetting.byId(id.trim());
     }
 
-    private static ScreenScale screenScaleFrom(final Properties properties) {
-        var id = properties.getProperty(SCALE_KEY);
+    /**
+     * One reader for the two sizes, since they are the same four multiples asked about twice. Only
+     * what a missing entry means differs, which is the {@code fallback}.
+     */
+    private static ScreenScale screenScaleFrom(
+            final Properties properties, final String key, final ScreenScale fallback) {
+        var id = properties.getProperty(key);
 
         if (id == null) {
-            return ScreenScale.defaultScale();
+            return fallback;
         }
 
-        return ScreenScale.byId(id.trim());
+        return ScreenScale.byId(id.trim(), fallback);
     }
 
     private static EmulationSpeed fastForwardSpeedFrom(final Properties properties) {
@@ -218,6 +235,12 @@ public final class Config {
                 .append(SCALE_KEY)
                 .append('=')
                 .append(screenScale.id())
+                .append("\n\n");
+
+        text.append(SCREENSHOT_SCALE_HEADER)
+                .append(SCREENSHOT_SCALE_KEY)
+                .append('=')
+                .append(screenshotScale.id())
                 .append("\n\n");
 
         text.append(REGION_HEADER)
@@ -290,6 +313,19 @@ public final class Config {
 
     public void setScreenScale(final ScreenScale screenScale) {
         this.screenScale = screenScale;
+    }
+
+    /**
+     * How big File &gt; Screenshot writes the picture. A setting of its own rather than the window's
+     * size, because the two are asked for different reasons: the window is as big as the display
+     * allows, and a picture file wants to be the size it is going to be looked at.
+     */
+    public ScreenScale screenshotScale() {
+        return screenshotScale;
+    }
+
+    public void setScreenshotScale(final ScreenScale screenshotScale) {
+        this.screenshotScale = screenshotScale;
     }
 
     /**

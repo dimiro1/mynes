@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.ui.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
@@ -93,6 +94,30 @@ public class ScreenComponent extends JComponent {
         }
 
         repaint();
+    }
+
+    /**
+     * The picture as it stands, magnified {@code scale} times, or null before the first frame.
+     * <p>
+     * Drawn again from the colour indices rather than read back off the screen, which is what makes
+     * it a picture of the machine rather than one of the window. The component fits its picture to
+     * whatever size the window has been dragged to, so what is on screen is very likely a fractional
+     * magnification with black down either side of it; this is the 256x224 the PPU drew, cropped the
+     * way the window crops it and magnified by a whole number.
+     * <p>
+     * Called on the event dispatch thread, and it asks the emulation thread for nothing: the last
+     * frame and the palette it is drawn with are both already here. So it works on a machine that is
+     * paused or stopped at a breakpoint, which is when somebody is most likely to want a picture of
+     * one.
+     */
+    public @Nullable BufferedImage snapshot(final ScreenScale scale) {
+        synchronized (frameLock) {
+            if (!hasFrame) {
+                return null;
+            }
+
+            return FrameRenderer.render(frame, palette, true, scale.factor());
+        }
     }
 
     /**
