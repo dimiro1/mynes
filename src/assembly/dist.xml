@@ -25,7 +25,7 @@
              jar, so this one file is the whole of the emulator on all of them. -->
         <file>
             <source>${project.build.directory}/mynes.jar</source>
-            <outputDirectory></outputDirectory>
+            <outputDirectory>/</outputDirectory>
             <fileMode>0644</fileMode>
         </file>
     </files>
@@ -35,7 +35,7 @@
              ./mynes work without a chmod first. -->
         <fileSet>
             <directory>src/dist</directory>
-            <outputDirectory></outputDirectory>
+            <outputDirectory>/</outputDirectory>
             <includes>
                 <include>mynes</include>
             </includes>
@@ -47,7 +47,7 @@
              and mis-parses one written with unix endings. -->
         <fileSet>
             <directory>src/dist</directory>
-            <outputDirectory></outputDirectory>
+            <outputDirectory>/</outputDirectory>
             <includes>
                 <include>mynes.bat</include>
             </includes>
@@ -58,7 +58,7 @@
         <!-- Left exactly as they are in the repository, endings included. -->
         <fileSet>
             <directory>${project.basedir}</directory>
-            <outputDirectory></outputDirectory>
+            <outputDirectory>/</outputDirectory>
             <includes>
                 <include>README.md</include>
                 <include>LICENSE</include>

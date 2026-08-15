@@ -172,7 +172,7 @@ class EmulatorRunnerTests {
     }
 
     @Test
-    void aMachineWithNothingArmedRunsFrames() throws Exception {
+    void aMachineWithNothingArmedRunsFrames() {
         runner.start();
 
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(PATIENCE_SECONDS);

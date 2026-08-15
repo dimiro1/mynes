@@ -39,7 +39,7 @@ public class Main {
      * {@code mvn compile exec:exec} both do. {@code --headless} runs a cartridge with nobody
      * watching -- see {@link com.github.dimiro1.mynes.headless}.
      */
-    public static void main(final String[] args) {
+    static void main(final String[] args) {
         // Taken from wherever it appears rather than only from the front. It is a mode rather than
         // an option, so it usually leads, but a command line assembled a piece at a time is exactly
         // the kind that puts it last -- and being told that --headless is not an option would be a

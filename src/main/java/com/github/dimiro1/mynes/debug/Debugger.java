@@ -143,16 +143,6 @@ public final class Debugger {
         }
     }
 
-    /**
-     * Stops watching, leaving the machine as it was before.
-     */
-    public void detach() {
-        if (memory != null) {
-            memory.setWriteListener(null);
-            memory = null;
-        }
-    }
-
     // =================================================================== what the run loop asks
 
     /**
@@ -335,19 +325,14 @@ public final class Debugger {
         }
     }
 
-    /**
-     * @return whether there is now a watchpoint there.
-     */
-    public boolean toggleWatchpoint(final int address) {
+    public void toggleWatchpoint(final int address) {
         if (watchpoints.contains(address & 0xFFFF)) {
             removeWatchpoint(address);
 
-            return false;
+            return;
         }
 
         addWatchpoint(address);
-
-        return true;
     }
 
     /**

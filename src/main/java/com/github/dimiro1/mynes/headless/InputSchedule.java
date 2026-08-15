@@ -121,10 +121,6 @@ public final class InputSchedule {
         return events;
     }
 
-    public int pressFrames() {
-        return pressFrames;
-    }
-
     public boolean isEmpty() {
         return events.isEmpty();
     }

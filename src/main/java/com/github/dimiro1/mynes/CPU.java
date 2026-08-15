@@ -339,6 +339,7 @@ public class CPU {
      *
      * @return true if the next {@link #tick()} starts something new.
      */
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public boolean isAtInstructionBoundary() {
         return !stalled && tick == 1 && intTick == 1;
     }
@@ -1988,6 +1989,8 @@ public class CPU {
         write(address, value);
     }
 
+    // The 6502 NOP: it deliberately does nothing, the empty body is the whole instruction.
+    @SuppressWarnings("EmptyMethod")
     private void nop() {
         /* No Operation */
     }

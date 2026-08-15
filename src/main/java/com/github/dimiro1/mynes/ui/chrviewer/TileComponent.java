@@ -71,17 +71,14 @@ public class TileComponent extends JComponent {
     /**
      * Fetches the tile's bytes from character memory again, redrawing only if they changed --
      * which for a CHR ROM tile is never, and for CHR RAM is whenever the game rewrote it.
-     *
-     * @return whether anything had changed.
      */
-    public boolean refresh() {
+    public void refresh() {
         if (!fetchTileData()) {
-            return false;
+            return;
         }
 
         renderImage();
         repaint();
-        return true;
     }
 
     /**

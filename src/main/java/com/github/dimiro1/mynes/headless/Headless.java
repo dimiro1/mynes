@@ -262,10 +262,25 @@ public final class Headless {
                 ? Files.newBufferedReader(options.scriptPath())
                 : new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
 
-            var repl = new Repl(session, options, in, System.out);
+            var repl = new Repl(session, options, in, System.out, wantsText(options));
 
             return new Outcome(repl.run(), Report.StoppedBecause.QUIT, List.of());
         }
+    }
+
+    /**
+     * Whether the REPL should answer in readable text rather than compact JSON.
+     * <p>
+     * {@code --format} has the final say when it names one. Left on {@code auto}, a person typing at
+     * a terminal gets text and anything piped or scripted gets JSON, so the "one JSON document per
+     * line" contract that machines read against is only ever broken for a human session.
+     */
+    private static boolean wantsText(final Options options) {
+        return switch (options.format()) {
+            case TEXT -> true;
+            case JSON -> false;
+            case AUTO -> options.scriptPath() == null && System.console() != null;
+        };
     }
 
     private static void shoot(final Options options, final Session session, final long frame)

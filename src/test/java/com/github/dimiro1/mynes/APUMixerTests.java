@@ -152,7 +152,7 @@ class APUMixerTests {
         @Test
         void thePulseTableFollowsTheClosedForm() {
             assertEquals(0.0, pulseLevel(0), 1e-9, "silence is silence");
-            assertEquals(95.52 / (8128.0 / 1 + 100), pulseLevel(1), 1e-9);
+            assertEquals(95.52 / (8128.0 + 100), pulseLevel(1), 1e-9);
             assertEquals(95.52 / (8128.0 / 15 + 100), pulseLevel(15), 1e-9);
             assertEquals(95.52 / (8128.0 / 30 + 100), pulseLevel(30), 1e-9);
         }
@@ -172,7 +172,7 @@ class APUMixerTests {
         @Test
         void theTndTableFollowsTheClosedForm() {
             assertEquals(0.0, tndLevel(0), 1e-9);
-            assertEquals(163.67 / (24329.0 / 1 + 100), tndLevel(1), 1e-9);
+            assertEquals(163.67 / (24329.0 + 100), tndLevel(1), 1e-9);
             assertEquals(163.67 / (24329.0 / 202 + 100), tndLevel(202), 1e-9);
         }
 

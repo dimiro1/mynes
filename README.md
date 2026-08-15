@@ -58,6 +58,7 @@ is never anything a build here has not already made.
 | Select | Shift |
 | Quick Save | F5 |
 | Quick Load | F7 |
+| Screenshot | F12 |
 
 **Settings > Controller...** remaps any of them. Click a button, press the key you want on it, and
 that is it: there is no save button. Your choices land in `~/.mynes/config.properties`, along with
@@ -67,6 +68,7 @@ the palette, screen size and fast forward speed:
 video.palette=nesdev
 video.palette.pal=2c07
 video.scale=2
+video.screenshot.scale=1
 emulation.region=auto
 emulation.fast-forward=4x
 audio.muted=false
@@ -116,6 +118,13 @@ frame; the choice is remembered separately for each kind of machine.
 packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
 every other one. You can still resize the window by hand, and the picture is fitted and letterboxed
 to keep its shape; the menu is how to get back to a clean multiple.
+
+**Screenshots** from **File > Screenshot**, or `F12`, which writes a PNG beside the ROM named after
+it and stamped with the time — no dialog, since a picture that took one to save would be a picture
+of the moment after the one worth keeping. **Settings > Screenshot Size** magnifies it by 1x to 4x
+on the way out; 1x is the 256x224 the machine drew. It is the picture rather than the window: the
+overscan is cropped the way the window crops it, the magnification is a whole number whatever size
+the window has been dragged to, and it works on a machine that is paused or stopped at a breakpoint.
 
 **Fast forward** at 2x, 4x, 8x or unlimited, from the Machine menu. The console is clocked exactly
 as it always is. What shrinks is the wait between frames, and the display still shows sixty a

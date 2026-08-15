@@ -340,12 +340,14 @@ class SaveStateFormatTests {
      */
     @Test
     void aSlotIsNamedAfterTheRomAndNumbered() {
+        var zelda = Path.of("/games/Zelda.nes");
+
         assertEquals(
                 Path.of("/games/Zelda.mn1"),
-                SaveState.slotPath(Path.of("/games/Zelda.nes"), 1));
+                SaveState.slotPath(zelda, 1));
         assertEquals(
                 Path.of("/games/Zelda.mn9"),
-                SaveState.slotPath(Path.of("/games/Zelda.nes"), 9));
+                SaveState.slotPath(zelda, 9));
         assertEquals(
                 Path.of("/games/Mario Bros 3.mn1"),
                 SaveState.slotPath(Path.of("/games/Mario Bros 3.nes"), 1),
@@ -354,8 +356,8 @@ class SaveStateFormatTests {
                 Path.of("/games/no-extension.mn1"),
                 SaveState.slotPath(Path.of("/games/no-extension"), 1));
         assertNotEquals(
-                SaveState.slotPath(Path.of("/games/Zelda.nes"), 1),
-                BatteryRAM.pathFor(Path.of("/games/Zelda.nes")),
+                SaveState.slotPath(zelda, 1),
+                BatteryRAM.pathFor(zelda),
                 "a slot must never collide with the battery file, which is the one that matters");
     }
 

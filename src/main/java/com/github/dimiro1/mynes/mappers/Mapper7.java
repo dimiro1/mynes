@@ -53,6 +53,7 @@ public class Mapper7 implements Mapper {
      */
     private int bankSelect;
 
+    @SuppressWarnings("unused")
     public Mapper7(final byte[] prgROM, final byte[] chrROM, final Mirroring mirroring) {
         this.prgROM = prgROM;
         this.chrIsRAM = chrROM.length == 0;

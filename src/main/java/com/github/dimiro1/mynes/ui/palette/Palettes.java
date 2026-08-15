@@ -104,6 +104,7 @@ public final class Palettes {
     /**
      * What the emulator draws with when nothing has said otherwise.
      */
+    @SuppressWarnings("SameReturnValue")
     public static NESPalette defaultPalette() {
         return NESDEV;
     }

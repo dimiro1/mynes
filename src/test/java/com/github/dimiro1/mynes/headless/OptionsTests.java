@@ -61,7 +61,7 @@ class OptionsTests {
 
     @Test
     void aReportOfMinusIsPrintedRatherThanFiled() {
-        assertEquals(null, parse("--rom", "x.nes", "--report", "-").reportPath());
+        assertNull(parse("--rom", "x.nes", "--report", "-").reportPath());
     }
 
     @Test
@@ -237,5 +237,21 @@ class OptionsTests {
     void theUsageExplainsThatABatteryFileIsTheInteroperableOne() {
         assertTrue(Options.usage().contains("every other emulator"),
                 "somebody reading --help should learn that a .sav can come from anywhere");
+    }
+
+    @Test
+    void theReplyFormatIsLeftToBeResolvedUnlessNamed() {
+        assertEquals(Options.Format.AUTO, parse("--rom", "x.nes").format());
+    }
+
+    @Test
+    void aNamedReplyFormatIsTakenAsAsked() {
+        assertEquals(Options.Format.JSON, parse("--rom", "x.nes", "--format", "json").format());
+        assertEquals(Options.Format.TEXT, parse("--rom", "x.nes", "--format", "text").format());
+    }
+
+    @Test
+    void aReplyFormatThatIsNoneOfTheThreeIsRefused() {
+        assertTrue(refused("--rom", "x.nes", "--format", "yaml").getMessage().contains("yaml"));
     }
 }

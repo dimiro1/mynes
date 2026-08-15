@@ -146,10 +146,8 @@ final class HarteCaseRunner {
         if (hexDigits == 0) {
             problems.add(String.format("%s: expected %d, was %d", name, expected, actual));
         } else {
-            problems.add(String.format(
-                    "%s: expected $%0" + hexDigits + "X, was $%0" + hexDigits + "X",
-                    name, expected, actual
-            ));
+            var pattern = "%s: expected $%0" + hexDigits + "X, was $%0" + hexDigits + "X";
+            problems.add(String.format(pattern, name, expected, actual));
         }
     }
 

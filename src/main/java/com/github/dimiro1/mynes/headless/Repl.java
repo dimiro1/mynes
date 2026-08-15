@@ -78,6 +78,13 @@ public final class Repl {
     private final PrintStream out;
 
     /**
+     * Whether replies are spelled as readable text rather than compact JSON. Resolved once by the
+     * caller from {@code --format} and whether a person is at the terminal, so nothing here has to
+     * decide it again per reply.
+     */
+    private final boolean text;
+
+    /**
      * Buttons held until released, as opposed to the countdown a press sets up.
      */
     private int held;
@@ -89,12 +96,14 @@ public final class Repl {
             final Session session,
             final Options options,
             final BufferedReader in,
-            final PrintStream out
+            final PrintStream out,
+            final boolean text
     ) {
         this.session = session;
         this.options = options;
         this.in = in;
         this.out = out;
+        this.text = text;
     }
 
     /**
@@ -254,7 +263,7 @@ public final class Repl {
         });
     }
 
-    private void disasm(final String[] words) throws IOException {
+    private void disasm(final String[] words) {
         var address = words.length > 1
                 ? (int) number(words[1], "disasm")
                 : session.nes().getCPU().getPC();
@@ -274,7 +283,7 @@ public final class Repl {
      * The four commands that put a point down or pick one up, which differ only in which set they
      * touch and are not worth four methods.
      */
-    private void point(final String name, final String[] words) throws IOException {
+    private void point(final String name, final String[] words) {
         if (words.length < 2) {
             throw new UsageException(name + " wants an address, as in \"" + name + " $C000\".");
         }
@@ -295,7 +304,7 @@ public final class Repl {
         });
     }
 
-    private void points(final String[] words) throws IOException {
+    private void points(final String[] words) {
         if (words.length > 1) {
             if (!words[1].equals("clear")) {
                 throw new UsageException(
@@ -308,7 +317,7 @@ public final class Repl {
         reply("points", this::putPoints);
     }
 
-    private void press(final String[] words) throws IOException {
+    private void press(final String[] words) {
         if (words.length < 2) {
             throw new UsageException("press wants buttons, as in \"press start\".");
         }
@@ -324,7 +333,7 @@ public final class Repl {
         });
     }
 
-    private void hold(final String[] words) throws IOException {
+    private void hold(final String[] words) {
         if (words.length < 2) {
             throw new UsageException("hold wants buttons, as in \"hold right\".");
         }
@@ -334,7 +343,7 @@ public final class Repl {
         reply("hold", node -> buttons(node, held));
     }
 
-    private void release() throws IOException {
+    private void release() {
         held = 0;
         pressRemaining = 0;
         pressButtons = 0;
@@ -344,7 +353,7 @@ public final class Repl {
         reply("release", node -> buttons(node, 0));
     }
 
-    private void reset() throws IOException {
+    private void reset() {
         session.reset();
 
         reply("reset", node -> {
@@ -362,7 +371,7 @@ public final class Repl {
         reply("screenshot", node -> node.put("path", path.toString()));
     }
 
-    private void state() throws IOException {
+    private void state() {
         var nes = session.nes();
         var cpuState = nes.getCPU().getState();
         var ppu = nes.getPPU();
@@ -403,7 +412,7 @@ public final class Repl {
         });
     }
 
-    private void read(final String name, final String[] words) throws IOException {
+    private void read(final String name, final String[] words) {
         if (words.length < 2) {
             throw new UsageException(name + " wants an address.");
         }
@@ -421,7 +430,7 @@ public final class Repl {
         });
     }
 
-    private void oam(final String[] words) throws IOException {
+    private void oam(final String[] words) {
         var start = words.length > 1 ? (int) number(words[1], "oam") : 0;
         var count = words.length > 2 ? (int) number(words[2], "oam") : 256;
         var values = session.readOAM(start, count);
@@ -462,7 +471,7 @@ public final class Repl {
      * load, try the other. The reply carries the frame and the picture hash like every other, so the
      * answer to "where am I now" comes back with it.
      */
-    private void saveState(final String[] words) throws IOException {
+    private void saveState(final String[] words) {
         if (words.length < 2) {
             throw new UsageException(
                     "save-state wants somewhere to write it, as in \"save-state before.mn\".");
@@ -491,7 +500,7 @@ public final class Repl {
         });
     }
 
-    private void loadState(final String[] words) throws IOException {
+    private void loadState(final String[] words) {
         if (words.length < 2) {
             throw new UsageException(
                     "load-state wants a file to read, as in \"load-state before.mn\".");
@@ -523,7 +532,7 @@ public final class Repl {
      * What the sound has been doing since this was last asked, which is the form the question
      * usually takes: not "does this cartridge make any noise" but "did that make a noise".
      */
-    private void audio() throws IOException {
+    private void audio() {
         var since = session.audioSinceMark();
         var total = session.audioStats();
 
@@ -609,8 +618,8 @@ public final class Repl {
         var breakpoints = node.putArray("breakpoints");
         var watchpoints = node.putArray("watchpoints");
 
-        debugger.breakpoints().forEach(address -> breakpoints.add((int) address));
-        debugger.watchpoints().forEach(address -> watchpoints.add((int) address));
+        debugger.breakpoints().forEach(address -> breakpoints.add(address));
+        debugger.watchpoints().forEach(address -> watchpoints.add(address));
     }
 
     private void buttons(final Json.Object node, final int mask) {
@@ -633,7 +642,7 @@ public final class Repl {
         body.write(node);
         Report.putStateOf(node, session);
 
-        out.println(Json.compact(node));
+        out.println(text ? Json.text(node) : Json.compact(node));
     }
 
     private void error(final String command, final String message) {
@@ -644,7 +653,7 @@ public final class Repl {
         node.put("error", message);
         node.put("frame", session.frame());
 
-        out.println(Json.compact(node));
+        out.println(text ? Json.text(node) : Json.compact(node));
     }
 
     private long number(final String text, final String command) {

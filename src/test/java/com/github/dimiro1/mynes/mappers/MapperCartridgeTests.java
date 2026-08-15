@@ -146,7 +146,7 @@ class MapperCartridgeTests {
         @Test
         void gxromMovesThePatternTablesWithTheSameWriteThatMovesTheProgram() {
             var board = board("GxROM", 66, 4, 0x8000, 0x8000, 0x8000, bank -> bank << 4);
-            var memory = run(cartridge(board, chrWalk(board, 0x2000)));
+            var memory = run(cartridge(board, chrWalk(board)));
 
             assertEquals(DONE, memory[DONE_FLAG], "GxROM never finished");
 
@@ -194,8 +194,8 @@ class MapperCartridgeTests {
     private static List<Integer> latchWalk(final Board board) {
         var code = new ArrayList<Integer>();
 
-        waitForVBlank(code, board.codeAddress());
-        waitForVBlank(code, board.codeAddress());
+        waitForVBlank(code);
+        waitForVBlank(code);
 
         // $B000 is the bank shown while the latch says $FD, $C000 the one it says $FE.
         loadImmediate(code, 1);
@@ -220,11 +220,11 @@ class MapperCartridgeTests {
     /**
      * Select each CHR bank in turn and read a byte of the pattern table back through $2007.
      */
-    private static List<Integer> chrWalk(final Board board, final int chrBankSize) {
+    private static List<Integer> chrWalk(final Board board) {
         var code = new ArrayList<Integer>();
 
-        waitForVBlank(code, board.codeAddress());
-        waitForVBlank(code, board.codeAddress());
+        waitForVBlank(code);
+        waitForVBlank(code);
 
         for (var bank = 0; bank < 4; bank++) {
             // On GxROM the CHR bank is the low two bits of the same byte the PRG bank is in, so
@@ -242,7 +242,7 @@ class MapperCartridgeTests {
      * {@code BIT $2002 / BPL -5}: spin until the PPU raises vblank. Two of these are how a game
      * waits out the warm up before it is allowed to write $2006.
      */
-    private static void waitForVBlank(final List<Integer> code, final int codeAddress) {
+    private static void waitForVBlank(final List<Integer> code) {
         code.add(0x2C);
         code.add(0x02);
         code.add(0x20);

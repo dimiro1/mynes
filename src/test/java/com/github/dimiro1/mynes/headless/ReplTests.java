@@ -49,7 +49,9 @@ class ReplTests {
         try (var out = new PrintStream(captured, true, StandardCharsets.UTF_8);
              var in = new BufferedReader(new StringReader(String.join("\n", commands) + "\n"))) {
 
-            new Repl(session, options, in, out).run();
+            // JSON, so the one-document-per-line assertions below hold whatever a real terminal
+            // would have resolved --format to.
+            new Repl(session, options, in, out, false).run();
         }
 
         var replies = new ArrayList<JsonNode>();
@@ -439,6 +441,32 @@ class ReplTests {
         var finished = session("press start 1", "run 1", "run 1", "state", "quit").get(3);
 
         assertEquals(List.of(), buttons(finished));
+    }
+
+    /**
+     * In text mode a reply is readable lines for a person, not one JSON document for a machine: no
+     * surrounding braces, a bare {@code key: value}, and the frame on a line of its own.
+     */
+    @Test
+    void textModeAnswersInReadableLinesRatherThanJson() throws Exception {
+        var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
+        var session = new Session(new NES(cart), Palettes.defaultPalette().colours(), null);
+        var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
+        var captured = new ByteArrayOutputStream();
+
+        try (var out = new PrintStream(captured, true, StandardCharsets.UTF_8);
+             var in = new BufferedReader(new StringReader("run 10\nquit\n"))) {
+
+            new Repl(session, options, in, out, true).run();
+        }
+
+        var text = captured.toString(StandardCharsets.UTF_8);
+
+        assertTrue(text.lines().anyMatch(line -> line.matches("frame\\s*: 10")),
+                "the frame is a readable line of its own");
+        assertTrue(text.contains("\n"), "spread over lines, not squeezed onto one");
+        assertFalse(text.contains("{\"ok\""), "and not a compact JSON object");
+        assertFalse(text.contains("\\n"), "nor an escaped newline");
     }
 
     private static List<Integer> addresses(final JsonNode reply, final String field) {

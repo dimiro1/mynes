@@ -620,6 +620,8 @@ public class APU {
         return pulse1.output();
     }
 
+    // Symmetric debug accessor mirroring pulse1Output(); kept for parity even when unused.
+    @SuppressWarnings("unused")
     int pulse2Output() {
         return pulse2.output();
     }
