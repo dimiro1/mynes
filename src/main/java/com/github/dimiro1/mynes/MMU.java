@@ -393,7 +393,19 @@ public class MMU {
             return busRead(addr);
         }
 
-        return conflict(addr, busRead(addr), 0x4000 | (addr & 0x1F));
+        final var register = 0x4000 | (addr & 0x1F);
+
+        // Whether a port is selected is settled by this address's bottom five bits, not by the
+        // whole of it -- so a fetch whose mirror lands on the same port a halted CPU is already
+        // reading does not break the run of reads, and the port is clocked once for the whole
+        // instruction rather than twice. One whose mirror lands anywhere else deselects it, and
+        // the instruction's own read afterwards is a fresh one. The read of the memory underneath
+        // knows nothing about either and must not be allowed to decide.
+        final var selected = lastPortRead;
+        final var memory = busRead(addr);
+        lastPortRead = register == 0x4016 || register == 0x4017 ? selected : 0;
+
+        return conflict(addr, memory, register);
     }
 
     /**

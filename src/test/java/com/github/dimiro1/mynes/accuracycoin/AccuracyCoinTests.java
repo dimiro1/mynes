@@ -111,7 +111,7 @@ final class AccuracyCoinTests {
 
             entry("Delta Modulation Channel", "FAIL L"),
             entry("APU Register Activation", "FAIL 7"),
-            entry("Controller Clocking", "FAIL 7"),
+            entry("Controller Clocking", "PASS 1"),
 
             entry("PPU Read Buffer", "PASS G"),
 
