@@ -582,15 +582,30 @@ public class APU {
     }
 
     /**
-     * Whether the sample a fetch is being made for still exists.
-     * <p>
-     * A write to $4015 that switches the channel off does not politely wait for a transfer already
-     * under way. The sample is gone, so the fetch is abandoned where it stands -- and abandoning
-     * it matters twice over, because a fetch allowed to finish would take a byte off a sample that
-     * no longer has any, and the channel would then be neither playing nor stopped.
+     * Whether there is a sample left to fetch bytes of. Asked either side of a $4015 write to tell
+     * a write that stopped playback from one that changed nothing.
      */
     public boolean isDMCSampleActive() {
         return dmc.bytesRemaining > 0;
+    }
+
+    /**
+     * Whether a sample stopped now would be stopped inside the window that schedules an aborted
+     * DMA: the DMC is playing, and its output unit is one or two cycles from emptying the buffer
+     * and asking for the next byte. See MMU.scheduleAbortedDMA.
+     */
+    public boolean isDMCReloadImminent() {
+        return dmc.bytesRemaining > 0 && dmc.sampleBufferFilled && dmc.loadDelay == 0
+                && dmc.isReloadImminent();
+    }
+
+    /**
+     * Which half of the divided clock the cycle the CPU is part way through is, for code reached
+     * from a bus access rather than from {@link #tick()}. One behind {@code cycles}, because the
+     * chip is clocked before the processor is. See {@link #isGetCycle}.
+     */
+    boolean isGetCycleNow() {
+        return isGetCycle(cycles - 1);
     }
 
     /**
@@ -608,9 +623,11 @@ public class APU {
      * sample either loops or raises the interrupt when it runs out.
      *
      * @param data the byte read from {@link #dmcFetchAddress()}.
+     * @return true if this byte was the sample's last and it ran out inside the window that
+     *         schedules an aborted DMA -- an implicit stop. See MMU.scheduleAbortedDMA.
      */
-    public void finishDMCFetch(final int data) {
-        dmc.finishFetch(data);
+    public boolean finishDMCFetch(final int data) {
+        return dmc.finishFetch(data);
     }
 
     // ---------------------------------------------------------------- for the tests
@@ -1740,7 +1757,15 @@ public class APU {
             } else if (bytesRemaining == 0) {
                 currentAddress = sampleAddress;
                 bytesRemaining = sampleLength;
-                loadDelay = LOAD_DELAY;
+
+                // Counted to the chip's own clock rather than the processor's. The fetch a $4015
+                // write starts halts the CPU on the get cycle of the second APU cycle after the
+                // write -- so both halves of one APU cycle aim at the same cycle, and a write on
+                // the put half waits one cycle less than a write on the get half. Left as a fixed
+                // number of CPU cycles the two land two cycles apart instead of together, which
+                // AccuracyCoin's Explicit DMA Abort reads straight off: it measures the fetch's
+                // position against code an abort has already shifted by an odd number of cycles.
+                loadDelay = LOAD_DELAY - (isGetCycle(cycles - 1) ? 0 : 1);
             }
         }
 
@@ -1748,7 +1773,26 @@ public class APU {
             return loadDelay == 0 && !sampleBufferFilled && bytesRemaining > 0;
         }
 
-        private void finishFetch(final int data) {
+        /**
+         * Whether the output unit is one or two cycles from emptying the buffer, and so from
+         * asking for the next byte.
+         * <p>
+         * Playback stopping inside that window is what schedules an aborted DMA. See
+         * MMU.scheduleAbortedDMA.
+         */
+        private boolean isReloadImminent() {
+            return bitsRemaining == 1 && timer <= 1;
+        }
+
+        private boolean finishFetch(final int data) {
+            // A fetch whose sample was taken from under it still happens on the bus -- see
+            // MMU.scheduleAbortedDMA -- but the byte has nowhere to go. Loading it anyway would
+            // leave the buffer full, and the next sample the CPU started would then wait for the
+            // timer to empty it rather than fetching straight away.
+            if (bytesRemaining == 0) {
+                return false;
+            }
+
             sampleBuffer = data & 0xFF;
             sampleBufferFilled = true;
 
@@ -1759,15 +1803,24 @@ public class APU {
             bytesRemaining--;
 
             if (bytesRemaining > 0) {
-                return;
+                return false;
             }
 
             if (loop) {
                 currentAddress = sampleAddress;
                 bytesRemaining = sampleLength;
-            } else if (irqEnabled) {
+
+                return false;
+            }
+
+            if (irqEnabled) {
                 setDMCIRQFlag(true);
             }
+
+            // The sample has just run out. If the output unit was about to ask for another byte,
+            // that is an implicit stop, and it schedules an aborted DMA exactly as switching the
+            // channel off by hand would.
+            return isReloadImminent();
         }
     }
 }

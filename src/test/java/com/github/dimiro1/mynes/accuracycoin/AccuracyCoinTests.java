@@ -105,10 +105,8 @@ final class AccuracyCoinTests {
 
             entry("DMA + $2002 Read", "PASS 1"),
             entry("DMA + $4016 Read", "PASS 1"),
-            entry("Explicit DMA Abort", "FAIL 2"),
-            entry("Implicit DMA Abort", "FAIL 2"),
+            entry("Implicit DMA Abort", "PASS 2"),
 
-            entry("Delta Modulation Channel", "FAIL L"),
             entry("APU Register Activation", "FAIL 7"),
             entry("Controller Clocking", "PASS 1"),
 

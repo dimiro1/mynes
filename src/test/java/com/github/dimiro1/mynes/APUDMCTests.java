@@ -103,7 +103,9 @@ class APUDMCTests {
     }
 
     /**
-     * How long a sample started by a $4015 write takes to ask for its first byte.
+     * How long a sample started by a $4015 write takes to ask for its first byte, from a write on
+     * a get cycle. One on a put waits a cycle less, because both are aiming at the same cycle of
+     * the chip's own clock; these tests all write on a get.
      *
      * @see Fetch#doesNotAskForTheFirstByteUntilTheChannelHasLoaded
      */
@@ -321,6 +323,172 @@ class APUDMCTests {
             }
 
             return stalled;
+        }
+    }
+
+    @Nested
+    @DisplayName("the aborted DMA")
+    class Abort {
+        /**
+         * Where the machine has got to, so that the get/put phase runs on across a whole test
+         * rather than starting again at each step of one.
+         */
+        private int cycle;
+
+        /**
+         * One cycle of the whole machine.
+         *
+         * @return true if the CPU was held off the bus for it.
+         */
+        private boolean tick() {
+            var stalled = stallCycle(mmu, cycle++);
+            apu.tick();
+
+            return stalled;
+        }
+
+        /**
+         * @return how many of the next {@code cycles} cycles the CPU is held off the bus for.
+         */
+        private int stalledCyclesOver(final int cycles) {
+            var stalled = 0;
+
+            for (var i = 0; i < cycles; i++) {
+                if (tick()) {
+                    stalled++;
+                }
+            }
+
+            return stalled;
+        }
+
+        /**
+         * The interval from one request to the next, measured rather than assumed.
+         */
+        private int period;
+
+        /**
+         * Starts a looping sample and runs it until its rhythm is known, which is the only thing
+         * any of this can be positioned against.
+         * <p>
+         * The DMC's divider free-runs, so the interval is fixed. This measures it across two
+         * requests -- not the first, which comes from the load delay rather than from the divider
+         * and so is short.
+         *
+         * @return the cycle the next request will be seen on.
+         */
+        private int startTheSampleAndLearnItsRhythm() {
+            putSample(0xC000, 0x00);
+            apu.write(0x4010, 0x4F);  // looping, fastest rate, so the requests keep coming
+            apu.write(0x4012, 0x00);
+            apu.write(0x4013, 0x00);
+            apu.write(0x4015, 0x10);
+
+            runToARequest();
+            serveTheFetch();
+
+            var first = runToARequest();
+            serveTheFetch();
+
+            var second = runToARequest();
+            serveTheFetch();
+
+            period = second - first;
+
+            return second + period;
+        }
+
+        /**
+         * Runs on to the cycle a write should land on to be {@code before} cycles ahead of
+         * {@code request}.
+         */
+        private void runToWriteOn(final int request, final int before) {
+            stalledCyclesOver(request - before + 1 - cycle);
+        }
+
+        /**
+         * @return the cycle the DMC will be seen asking for a byte on.
+         */
+        private int runToARequest() {
+            var start = cycle;
+
+            while (!apu.isDMCFetchPending()) {
+                tick();
+
+                if (cycle - start > 5_000) {
+                    throw new AssertionError("the DMC never asked for a byte");
+                }
+            }
+
+            return cycle;
+        }
+
+        private void serveTheFetch() {
+            assertEquals(FETCH_CYCLES, stalledCyclesOver(FETCH_CYCLES + 1),
+                    "a transfer the emptying buffer asked for");
+        }
+
+        /**
+         * The window is two cycles wide, and what it costs is a halt cycle and nothing else -- no
+         * dummy cycle, no alignment, and no read.
+         *
+         * @see <a href="https://www.nesdev.org/wiki/DMA#Bugs">DMC DMA bugs</a>
+         */
+        @ParameterizedTest
+        @CsvSource({"2", "3"})
+        void spendsOneCycleWhenPlaybackStopsJustBeforeTheDmcWouldAsk(final int before) {
+            runToWriteOn(startTheSampleAndLearnItsRhythm(), before);
+
+            mmu.write(0x4015, 0x00);
+
+            assertFalse(apu.isDMCFetchPending(), "the sample is gone, so nothing is fetched");
+            assertEquals(1, stalledCyclesOver(FETCH_CYCLES + 4));
+        }
+
+        @Test
+        void spendsNothingWhenPlaybackStopsBeforeThatWindow() {
+            runToWriteOn(startTheSampleAndLearnItsRhythm(), 4);
+
+            mmu.write(0x4015, 0x00);
+
+            assertEquals(0, stalledCyclesOver(FETCH_CYCLES + 4), "too early to have started");
+        }
+
+        /**
+         * Once the DMC has asked, nothing stops the transfer: the byte is read and handed to a
+         * channel that is no longer playing, which throws it away.
+         */
+        @Test
+        void letsATransferTheDmcHasAlreadyAskedForFinish() {
+            runToWriteOn(startTheSampleAndLearnItsRhythm(), 0);
+
+            mmu.write(0x4015, 0x00);
+
+            assertEquals(FETCH_CYCLES, stalledCyclesOver(FETCH_CYCLES + 4));
+        }
+
+        /**
+         * The implicit stop. Nobody wrote $4015 to stop anything: a one byte sample with looping
+         * off simply ran out, and running out inside the window schedules the same aborted DMA.
+         * <p>
+         * The buffer has to be empty for a $4015 write to start a transfer at all, so this stops
+         * the sample and lets the output unit run the buffer dry before starting the one byte one
+         * far enough ahead that its only byte is fetched in the window.
+         */
+        @ParameterizedTest
+        @CsvSource({"9", "10"})
+        void alsoHappensWhenAOneByteSampleRunsOutInThatWindow(final int before) {
+            var request = startTheSampleAndLearnItsRhythm();
+
+            apu.write(0x4015, 0x00);
+            stalledCyclesOver(request - cycle);
+
+            runToWriteOn(request + period, before);
+            apu.write(0x4010, 0x0F);  // no loop, so one byte is the whole sample
+            mmu.write(0x4015, 0x10);
+
+            assertEquals(FETCH_CYCLES + 1, stalledCyclesOver(2 * FETCH_CYCLES + 4),
+                    "the transfer that fetched the byte, and the aborted one behind it");
         }
     }
 
