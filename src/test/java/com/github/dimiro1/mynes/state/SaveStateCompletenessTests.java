@@ -202,13 +202,21 @@ class SaveStateCompletenessTests {
         var fields = new TreeMap<String, String>();
 
         // The mapper arrives through the Cart the NES now holds, so one walk reaches everything.
-        collect(nes, fields, new IdentityHashMap<>());
+        collect(nes, nes.getClass().getSimpleName(), fields, new IdentityHashMap<>());
 
         return fields;
     }
 
+    /**
+     * @param owner the object being walked.
+     * @param label what to call it in a field name. Its simple name, except for an element of an
+     *              array of them, which carries its index -- eight sprite output units all called
+     *              {@code SpriteUnit} would be one entry in the map rather than eight, and seven of
+     *              them would go uncompared.
+     */
     private static void collect(
             final Object owner,
+            final String label,
             final Map<String, String> into,
             final IdentityHashMap<Object, Boolean> seen) {
         if (owner == null || seen.put(owner, true) != null) {
@@ -230,22 +238,50 @@ class SaveStateCompletenessTests {
                 throw new IllegalStateException("could not read " + field, e);
             }
 
-            var name = owner.getClass().getSimpleName() + "." + field.getName();
+            var name = label + "." + field.getName();
 
             if (field.getType().isPrimitive() || value instanceof Enum<?> || value == null) {
                 into.put(name, String.valueOf(value));
             } else if (field.getType().isArray()
                     && field.getType().getComponentType().isPrimitive()) {
                 into.put(name, name + "#" + hashOf(value));
-            } else if (value.getClass().getName().startsWith("com.github.dimiro1.mynes")
-                    && !value.getClass().isSynthetic()) {
+            } else if (isOurs(field.getType().getComponentType())) {
+                // An array of the emulator's own objects: the PPU's eight sprite output units. The
+                // branch below cannot catch it, because the class of a SpriteUnit[] is named
+                // "[Lcom...PPU$SpriteUnit;" and so does not start with the package -- which would
+                // leave every field of all eight silently unwalked.
+                for (var i = 0; i < Array.getLength(value); i++) {
+                    collect(Array.get(value, i), elementLabel(field, i), into, seen);
+                }
+            } else if (isOurs(value.getClass())) {
                 // Into the emulator's own objects, which is the only way to reach the APU's five
                 // channels and their length counters and envelopes: all private nested classes with
                 // no accessors between them. Synthetic classes are skipped because an IRQHandler
                 // lambda is one, and its only field is the BUS it captured.
-                collect(value, into, seen);
+                collect(value, value.getClass().getSimpleName(), into, seen);
             }
         }
+    }
+
+    /**
+     * What to call the {@code i}th element of an array of the emulator's own objects.
+     */
+    private static String elementLabel(final java.lang.reflect.Field field, final int i) {
+        return field.getType().getComponentType().getSimpleName() + "[" + i + "]";
+    }
+
+    /**
+     * Whether a class is one of the emulator's own, and so something to walk into rather than a
+     * value to record.
+     * <p>
+     * Null for the component type of anything that is not an array, which is why that is a question
+     * this can be asked. Synthetic classes are not ours for this purpose: an {@code IRQHandler}
+     * lambda is one, and its only field is the BUS it captured.
+     */
+    private static boolean isOurs(final Class<?> type) {
+        return type != null
+                && type.getName().startsWith("com.github.dimiro1.mynes")
+                && !type.isSynthetic();
     }
 
     /**
@@ -263,13 +299,14 @@ class SaveStateCompletenessTests {
     private static List<String> scramble(final NES nes) {
         var touched = new ArrayList<String>();
 
-        scramble(nes, touched, new IdentityHashMap<>(), new int[]{1});
+        scramble(nes, nes.getClass().getSimpleName(), touched, new IdentityHashMap<>(), new int[]{1});
 
         return touched;
     }
 
     private static void scramble(
             final Object owner,
+            final String label,
             final List<String> touched,
             final IdentityHashMap<Object, Boolean> seen,
             final int[] counter) {
@@ -292,7 +329,7 @@ class SaveStateCompletenessTests {
                 throw new IllegalStateException("could not read " + field, e);
             }
 
-            var name = owner.getClass().getSimpleName() + "." + field.getName();
+            var name = label + "." + field.getName();
             var next = counter[0]++;
 
             if (field.getType().isArray() && field.getType().getComponentType().isPrimitive()) {
@@ -305,12 +342,17 @@ class SaveStateCompletenessTests {
 
                     touched.add(name);
                 }
-            } else if (value != null
-                    && value.getClass().getName().startsWith("com.github.dimiro1.mynes")
-                    && !value.getClass().isSynthetic()) {
+            } else if (isOurs(field.getType().getComponentType())) {
+                // An array of our own objects, which the branch below cannot see for the reason
+                // given in collect. Left unscrambled, all eight sprite output units would come out
+                // of the walk above "untested" and nothing would notice.
+                for (var i = 0; i < Array.getLength(value); i++) {
+                    scramble(Array.get(value, i), elementLabel(field, i), touched, seen, counter);
+                }
+            } else if (value != null && isOurs(value.getClass())) {
                 // Whether or not the reference is final: BUS holds the four chips in non-final
                 // fields, so recursing only through final ones would never reach the CPU at all.
-                scramble(value, touched, seen, counter);
+                scramble(value, value.getClass().getSimpleName(), touched, seen, counter);
             } else if (!Modifier.isFinal(field.getModifiers()) && write(owner, field, value, next)) {
                 touched.add(name);
             }
