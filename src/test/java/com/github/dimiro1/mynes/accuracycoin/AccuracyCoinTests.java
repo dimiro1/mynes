@@ -114,8 +114,6 @@ final class AccuracyCoinTests {
 
             entry("$2002 flag timing", "FAIL 1"),
             entry("Address $2004 behavior", "PASS G"),
-            entry("OAM Corruption", "FAIL 4"),
-            entry("INC $4014", "FAIL 2"),
 
             entry("Stale BG Shift Registers", "FAIL 3"),
             entry("Stale Sprite Shift Regs", "FAIL 3"),

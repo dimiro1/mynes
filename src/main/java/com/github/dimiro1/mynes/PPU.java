@@ -352,6 +352,16 @@ public class PPU {
     private boolean spriteZeroOnThisLine;
 
     /**
+     * A row of OAM owed to the next rendering dot, and which row.
+     * <p>
+     * Switching rendering off part way down the picture leaves the sprite hardware holding an
+     * address it never got to use, and the next time rendering starts it spends that address on a
+     * copy nobody asked for. See {@link #corruptOAM}.
+     */
+    private boolean corruptionPending;
+    private int corruptionSeed;
+
+    /**
      * The sprite output units, loaded during dots 257-320 and drained across the next scanline.
      */
     private int spriteCount;
@@ -479,7 +489,19 @@ public class PPU {
         }
 
         if (maskDelay > 0 && --maskDelay == 0) {
+            var wasRendering = isRenderingEnabled();
             mask = pendingMask;
+
+            // The seed is taken where the mask actually lands rather than where it was written,
+            // which is what makes the corrupted row depend on the delay above.
+            if (wasRendering && !isRenderingEnabled() && isRenderingLine()) {
+                corruptionSeed = secondaryOAMAddress();
+                corruptionPending = true;
+            }
+        }
+
+        if (corruptionPending && isRenderingEnabled() && isRenderingLine()) {
+            corruptOAM();
         }
 
         if (addressDelay > 0 && --addressDelay == 0) {
@@ -923,6 +945,69 @@ public class PPU {
         }
 
         oamAddress = next & 0xFF;
+    }
+
+    /**
+     * Where in secondary OAM the sprite hardware is pointing, which depends only on where the beam
+     * is.
+     * <p>
+     * The clear walks it up one place every other dot. The evaluation moves it as it copies, but a
+     * seed taken from it then comes out rounded up to a multiple of four -- the four bytes of a
+     * sprite go across as a unit, so only a boundary is ever caught -- and reads zero once
+     * secondary OAM is full. The fetch resets it at dot 257 and then steps it three times in the
+     * first half of each sprite's eight dots and once at the end of them.
+     *
+     * @return an address into the thirty two bytes of secondary OAM.
+     */
+    private int secondaryOAMAddress() {
+        if (dot >= 1 && dot <= 64) {
+            return (dot - 1) >> 1;
+        }
+
+        if (dot >= 65 && dot <= 256) {
+            return spritesFound == 8 ? 0 : (evaluationSlot + 3) & 0x1C;
+        }
+
+        if (dot >= 257 && dot <= 320) {
+            var offset = dot - 257;
+
+            return ((offset >> 3) << 2) | Math.min(offset & 7, 3);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Copies the first row of OAM over the row the interrupted sprite hardware was pointing at.
+     * <p>
+     * Rendering switched off part way down the picture strands the sprite hardware mid-address.
+     * Nothing happens while it stays off -- OAM reads back exactly as it was -- but the first dot
+     * of rendering after that, on the pre-render line or a visible one, spends the stranded
+     * address on a copy: eight bytes from row 0 over the eight at the seed, and the same one byte
+     * move in secondary OAM. A game that switches rendering off in the middle of a line and back
+     * on later loses a sprite to it, which is why the advice is to do it in blanking.
+     * <p>
+     * Seeding on row 0 costs nothing, because row 0 is what gets copied -- so this can never
+     * disturb an ordinary sprite zero hit.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_registers#OAMADDR_precautions">NESdev: OAMADDR
+     * precautions</a>
+     */
+    private void corruptOAM() {
+        corruptionPending = false;
+
+        if (corruptionSeed == 0) {
+            return;
+        }
+
+        var row = corruptionSeed * 8;
+        refreshOAMRow(corruptionSeed);
+
+        for (var i = 0; i < 8; i++) {
+            oam[row + i] = readOAM(i);
+        }
+
+        secondaryOAM[corruptionSeed] = secondaryOAM[0];
     }
 
     /**
@@ -1682,6 +1767,8 @@ public class PPU {
         io.skip(1);
 
         firstAddressExamined = io.u8(firstAddressExamined);
+        corruptionPending = io.bool(corruptionPending);
+        corruptionSeed = io.u8(corruptionSeed);
         spritesFound = io.u8(spritesFound);
         spriteZeroOnNextLine = io.bool(spriteZeroOnNextLine);
         spriteZeroOnThisLine = io.bool(spriteZeroOnThisLine);

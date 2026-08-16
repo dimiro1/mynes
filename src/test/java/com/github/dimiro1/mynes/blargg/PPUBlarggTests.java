@@ -45,23 +45,25 @@ public class PPUBlarggTests {
      * <p>
      * {@code oam_stress} spends about thirty seconds of emulated time hammering $2003 and $2004
      * with rendering switched off, and refreshes OAM itself as it goes -- but not nearly often
-     * enough for a chip whose OAM holds its charge for a few milliseconds. Almost all of OAM has
-     * faded by the time it looks, so nearly every one of the 256 bytes it prints comes back as a
-     * mismatch: fifteen full rows of asterisks, and a sixteenth where the handful of bytes the ROM
-     * happened to touch inside {@link com.github.dimiro1.mynes.Region#oamDecayDots()} survived.
+     * enough for a chip whose OAM holds its charge for a matter of milliseconds. Most of OAM has
+     * faded by the time it looks, so most of the 256 bytes it prints come back as a mismatch: one
+     * row that survived in full, a second that survived as far as the ROM got round to it inside
+     * {@link com.github.dimiro1.mynes.Region#oamDecayDots()}, and fourteen that did not.
      * <p>
-     * Making it pass would mean stretching the decay to something like a twentieth of a second,
-     * which is nothing like DRAM, so the decay stays where three other measurements put it and
-     * this is recorded instead. blargg's own readme says the ROM "passes only for one of the four
-     * random PPU-CPU synchronizations at power/reset" on a real console, so it is not a clean pass
-     * there either.
+     * Making it pass outright would mean stretching the decay to something like a twentieth of a
+     * second, which is nothing like DRAM, so this is recorded instead. blargg's own readme says
+     * the ROM "passes only for one of the four random PPU-CPU synchronizations at power/reset" on
+     * a real console, so it is not a clean pass there either.
      * <p>
-     * Both lines are matched exactly rather than by shape, so this is a ratchet on the decay time
+     * Every line is matched exactly rather than by shape, so this is a ratchet on the decay time
      * as well: move it and the surviving run changes, and somebody has to come back here and say
-     * why.
+     * why. It has moved once, when AccuracyCoin's OAM Corruption test showed the window had to
+     * outlast a frame of forced blanking -- and this got two rows better rather than worse, which
+     * is the direction that says the new figure is the more honest one.
      */
     private static final Map<String, Set<String>> ACCEPTED_DEVIATIONS = Map.of(
-            "/oam/oam_stress.nes", Set.of("****************", "***--***--------")
+            "/oam/oam_stress.nes",
+            Set.of("----------------", "-------*********", "****************")
     );
 
     @Nested
