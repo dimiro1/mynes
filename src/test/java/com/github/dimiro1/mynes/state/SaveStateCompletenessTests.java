@@ -364,6 +364,10 @@ class SaveStateCompletenessTests {
             Array.setShort(array, index, (short) ((value % 200) + 7));
         } else if (type == double.class) {
             Array.setDouble(array, index, value + 0.5);
+        } else if (type == boolean.class) {
+            // Alternating rather than all true, so that an array the machine happens to have left
+            // all one way is still visibly disturbed.
+            Array.setBoolean(array, index, (value & 1) == 0);
         }
     }
 

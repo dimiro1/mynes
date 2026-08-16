@@ -112,13 +112,10 @@ final class AccuracyCoinTests {
 
             entry("PPU Read Buffer", "PASS G"),
 
-            entry("$2002 flag timing", "FAIL 1"),
             entry("Address $2004 behavior", "PASS G"),
 
-            entry("Stale BG Shift Registers", "FAIL 3"),
-            entry("Stale Sprite Shift Regs", "FAIL 3"),
             entry("BG Serial In", "FAIL 2"),
-            entry("Sprites On Scanline 0", "FAIL 2"),
+            entry("Sprites On Scanline 0", "PASS 1"),
             entry("$2004 Stress Test", "FAIL 2"),
             entry("$2007 Stress Test", "FAIL 2"),
             entry("ALE + Read", "FAIL 2"),
