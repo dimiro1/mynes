@@ -77,6 +77,17 @@ public class PPU {
 
     /**
      * How many dots a write to $2001 takes to reach the rendering hardware.
+     * <p>
+     * The wiki says three to four and calls the delay load bearing -- Battletoads crashes without
+     * it -- but two is what blargg's {@code 10-even_odd_timing} accepts, and that ROM measures the
+     * delay directly, against the dot an odd frame drops. It is the tighter oracle, so it wins.
+     * <p>
+     * AccuracyCoin's {@code BG Serial In} wants four or five and is the reason to say so here. It
+     * blanks eighteen dots across the background shift registers' reload and only leaves the hole
+     * it looks for if that blank covers three reload dots; at two dots of delay it covers two. The
+     * two ROMs are measuring the same number against different things -- the frame's dropped dot
+     * and the reload cadence -- and they disagree by two dots, which is a real discrepancy rather
+     * than a choice to be made. Left where blargg puts it.
      */
     private static final int MASK_WRITE_DELAY_DOTS = 2;
 
@@ -703,11 +714,26 @@ public class PPU {
                 + ((v >> 12) & 0x07);
     }
 
+    /**
+     * Shifts the four background registers along by one pixel.
+     * <p>
+     * Something has to come in at the far end, and what comes in is wired rather than fetched: a
+     * 0 into the low bit plane, a 1 into the high one, and for the attributes the one bit latch
+     * that fed the parallel load. It normally makes no difference at all -- the eight bits a
+     * reload puts in are the eight the beam reads out, and the serial input never reaches the top
+     * half of the register before the next reload overwrites the bottom.
+     * <p>
+     * It shows when a game arranges for the reload not to happen: switch rendering off just before
+     * one and on again just after, and the registers keep shifting with nothing going into them
+     * but their serial inputs, so what gets drawn is colour 2 of whichever palette the attribute
+     * latch is still holding. AccuracyCoin's {@code BG Serial In} draws a screen of it and then
+     * puts a sprite over it to prove the background was not transparent.
+     */
     private void shiftBackground() {
         patternShiftLow = (patternShiftLow << 1) & 0xFFFF;
-        patternShiftHigh = (patternShiftHigh << 1) & 0xFFFF;
-        attributeShiftLow = (attributeShiftLow << 1) & 0xFFFF;
-        attributeShiftHigh = (attributeShiftHigh << 1) & 0xFFFF;
+        patternShiftHigh = ((patternShiftHigh << 1) | 1) & 0xFFFF;
+        attributeShiftLow = ((attributeShiftLow << 1) | (attributeLatch & 1)) & 0xFFFF;
+        attributeShiftHigh = ((attributeShiftHigh << 1) | ((attributeLatch >> 1) & 1)) & 0xFFFF;
     }
 
     /**
