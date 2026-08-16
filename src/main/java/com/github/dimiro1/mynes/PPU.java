@@ -1310,7 +1310,7 @@ public class PPU {
      * about to be set on -- the flag is stopped from being set at all.
      */
     private int readStatus() {
-        var value = status() | (openBus() & 0x1F);
+        var value = statusAsRead() | (openBus() & 0x1F);
 
         if (scanline == VBLANK_START_LINE && dot == STATUS_DOT) {
             preventVBlankFlag = true;
@@ -1328,6 +1328,39 @@ public class PPU {
         return (vblankFlag ? STATUS_VBLANK : 0)
                 | (spriteZeroHit ? STATUS_SPRITE_ZERO_HIT : 0)
                 | (spriteOverflow ? STATUS_SPRITE_OVERFLOW : 0);
+    }
+
+    /**
+     * The same three flags, but sampled the way a CPU read of $2002 samples them -- which is not
+     * all at the same instant.
+     * <p>
+     * A read happens while M2 is high, and the PPU latches the VBlank flag as M2 rises. The sprite
+     * flags are not latched, so what the CPU carries away is whatever they are when M2 falls again
+     * at the end of the read. On the NTSC 2A03 that high phase is a 15/24 duty cycle -- one and
+     * seven-eighths PPU cycles -- and on the PAL 2A07 it is 19/32, or 1.9 of the 3.2 dots in a
+     * cycle. Either way M2 falls part way through the <em>next</em> dot, so the sprite bits come
+     * from one dot later than the VBlank bit.
+     * <p>
+     * All three are cleared together on dot 1 of the pre-render line, so the only thing that dot
+     * of separation shows is a read straddling it: VBlank comes back still set, the sprite flags
+     * already cleared. That is the whole of AccuracyCoin's {@code $2002 flag timing} test, and it
+     * is why the answer is not to move the sprite flags' clear a dot earlier -- the clear is on
+     * dot 1 like the wiki says, and it is the read that is late.
+     * <p>
+     * The look-ahead is only over the clear. Setting a sprite flag a dot ahead of time would mean
+     * rendering the dot to find out, and the hardware's own answer there is a hair either side of
+     * a dot boundary depending on how the two clocks powered up -- which is why the ROM accepts
+     * two answers for the sample that lands on it.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/CPU_pinout">CPU pinout: M2</a>
+     */
+    private int statusAsRead() {
+        // dot is the one M2 falls in: the cycle's own dots have already been run.
+        var spriteFlagsClearing = scanline == preRenderLine && dot == STATUS_DOT;
+
+        return (vblankFlag ? STATUS_VBLANK : 0)
+                | (spriteZeroHit && !spriteFlagsClearing ? STATUS_SPRITE_ZERO_HIT : 0)
+                | (spriteOverflow && !spriteFlagsClearing ? STATUS_SPRITE_OVERFLOW : 0);
     }
 
     /**

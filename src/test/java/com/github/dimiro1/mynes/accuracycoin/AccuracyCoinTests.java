@@ -112,7 +112,6 @@ final class AccuracyCoinTests {
 
             entry("PPU Read Buffer", "PASS G"),
 
-            entry("$2002 flag timing", "FAIL 1"),
             entry("Address $2004 behavior", "PASS G"),
 
             entry("Stale BG Shift Registers", "FAIL 3"),

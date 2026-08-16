@@ -45,6 +45,7 @@ class PPUSpriteTests extends PPUFixture {
 
     private static final int SPRITE_OVERFLOW = 0x20;
     private static final int SPRITE_ZERO_HIT = 0x40;
+    private static final int VBLANK = 0x80;
 
     /**
      * A tile of solid pixel value 1, and one whose left half only is solid, for the flip tests.
@@ -307,6 +308,39 @@ class PPUSpriteTests extends PPUFixture {
 
             ppu.tick();
             assertFalse(overflowSet());
+        }
+
+        /**
+         * A CPU read is one and seven-eighths dots long and only the VBlank flag is latched at the
+         * start of it, so a read whose end crosses the clearing dot brings the two halves of
+         * $2002 back from either side of it.
+         */
+        @Test
+        void isAlreadyGoneToAReadTheVBlankFlagSurvives() {
+            nineSpritesOnAScanline();
+            startRendering();
+            renderFrames(2);
+            runTo(261, 1);
+
+            assertEquals(VBLANK, ppu.read(PPUSTATUS) & 0xE0,
+                    "VBlank latched as M2 rose, the sprite flags read a dot later as it fell");
+        }
+
+        @Test
+        void isStillThereOneDotEarlier() {
+            nineSpritesOnAScanline();
+            startRendering();
+            renderFrames(2);
+            runTo(261, 0);
+
+            assertEquals(VBLANK | SPRITE_OVERFLOW, ppu.read(PPUSTATUS) & 0xE0,
+                    "M2 falls on dot 0 of the pre-render line, before the clear");
+        }
+
+        private void nineSpritesOnAScanline() {
+            for (var i = 0; i < 9; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 8);
+            }
         }
 
         /**
