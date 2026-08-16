@@ -10,8 +10,8 @@ There is a zip on the [releases page](https://github.com/dimiro1/mynes/releases)
 the script inside:
 
 ```sh
-unzip mynes-0.1.0.zip
-cd mynes-0.1.0
+unzip mynes-0.2.0.zip
+cd mynes-0.2.0
 ./mynes
 ```
 
