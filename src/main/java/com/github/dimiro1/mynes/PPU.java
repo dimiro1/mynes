@@ -59,6 +59,15 @@ public class PPU {
     private static final int STATUS_DOT = 1;
 
     /**
+     * The dot the sprite output units are put back to counting on, near the end of a scanline.
+     * <p>
+     * It is the one thing that says "a new line starts now" to hardware that otherwise only counts
+     * down, and it is the only reason a sprite is drawn once rather than every time its counter
+     * comes round again. See {@link #isLineTheFrameCutsShort}.
+     */
+    private static final int COUNTER_RESTART_DOT = LAST_DOT - 1;
+
+    /**
      * How many frames an open bus bit holds its charge for.
      * <p>
      * The real decay is around 600 milliseconds, which is about 36 frames, and it varies between
@@ -362,10 +371,19 @@ public class PPU {
     private int corruptionSeed;
 
     /**
-     * The sprite output units, loaded during dots 257-320 and drained across the next scanline.
+     * The eight sprite output units, loaded during dots 257-320 and drained across the next
+     * scanline.
+     * <p>
+     * Each is an X down-counter, an attribute latch and a pair of eight bit shift registers. The
+     * counter is loaded from the sprite's X coordinate; it counts down once per visible dot and
+     * the unit <em>halts</em> when it reaches zero, which is when its shift registers start putting
+     * a pixel out on every dot. There is no list of how many sprites are on the line and no
+     * comparison against a coordinate: a slot nobody filled holds the $FF secondary OAM was wiped
+     * with, so it counts all the way to the right hand edge and finds a transparent pattern when
+     * it gets there.
      */
-    private int spriteCount;
-    private final int[] spriteX = new int[8];
+    private final int[] spriteCounter = new int[8];
+    private final boolean[] spriteHalted = new boolean[8];
     private final int[] spriteAttributes = new int[8];
     private final int[] spritePatternLow = new int[8];
     private final int[] spritePatternHigh = new int[8];
@@ -522,6 +540,8 @@ public class PPU {
                 endVBlank();
             }
 
+            clockSpriteCounters();
+
             if (isRenderingEnabled()) {
                 backgroundTick();
                 spriteTick();
@@ -532,6 +552,12 @@ public class PPU {
             if (scanline < POST_RENDER_LINE && dot >= 1 && dot <= SCREEN_WIDTH) {
                 renderPixel();
             }
+
+            // After the pixel rather than before it: what a sprite puts out on a dot is what its
+            // shift register holds during that dot, and the shift is the clock edge at the end of
+            // it. The difference only shows on the first dot of a unit's life -- a unit that was
+            // already halted when the scanline began would otherwise throw its first pixel away.
+            shiftSpriteUnits();
         } else if (scanline == VBLANK_START_LINE && dot == STATUS_DOT) {
             startVBlank();
         }
@@ -740,6 +766,13 @@ public class PPU {
             }
         }
 
+        if (dot == COUNTER_RESTART_DOT && !isLineTheFrameCutsShort()) {
+            // The one dot that puts every counter back to counting. A scanline that spends it in
+            // forced blank leaves them halted instead, and whatever they are holding is drawn from
+            // the first dot rendering comes back on.
+            Arrays.fill(spriteHalted, false);
+        }
+
         if (dot < 257 || dot > 320) {
             return;
         }
@@ -749,21 +782,92 @@ public class PPU {
         oamAddress = 0;
 
         if (dot == 257) {
-            // Nothing was evaluated for the line after the pre-render one, so nothing is drawn
-            // on it.
-            spriteCount = scanline == preRenderLine ? 0 : spritesFound;
-            spriteZeroOnThisLine = scanline != preRenderLine && spriteZeroOnNextLine;
+            // The pre-render line evaluates nothing, so this is still the answer the line above
+            // the picture came to -- which is the only reason a stale sprite drawn on scanline 0
+            // can set the hit flag.
+            spriteZeroOnThisLine = spriteZeroOnNextLine;
         }
 
-        var offset = (dot - 257) & 7;
+        var unit = (dot - 257) >> 3;
 
-        if (offset == 0 || offset == 2) {
+        switch ((dot - 257) & 7) {
             // Two reads of the nametable address the background fetch left behind. Nothing uses
             // the bytes -- the sprite's tile number came out of secondary OAM, not out of a
-            // nametable -- but a mapper watching the address bus can see them.
-            vram.read(0x2000 | (v & 0x0FFF));
-        } else if (offset == 4) {
-            loadSpriteUnit((dot - 257) >> 3);
+            // nametable -- but a mapper watching the address bus can see them, and so does a
+            // $2007 read waiting for the next byte off the pipeline.
+            case 0, 2 -> vram.read(0x2000 | (v & 0x0FFF));
+
+            // The attribute latch and the X counter are loaded during the second of those two
+            // reads, one on each of its dots.
+            case 3 -> spriteAttributes[unit] = secondaryOAM[unit * 4 + 2];
+            case 4 -> spriteCounter[unit] = secondaryOAM[unit * 4 + 3];
+
+            case 5 -> spritePatternLow[unit] = fetchSpritePattern(unit, 0);
+            case 7 -> spritePatternHigh[unit] = fetchSpritePattern(unit, 8);
+            default -> { /* the dots that only put an address out */ }
+        }
+    }
+
+    /**
+     * @return whether this is the pre-render line of a frame that is about to drop its last dot.
+     * <p>
+     * Two measurements have to be fitted together here, and AccuracyCoin makes both. The restart
+     * pulse is on dot 339: {@code Stale Sprite Shift Regs} pins it there by enabling rendering on
+     * dot 340 and showing the units stay halted anyway. And the pulse is what an odd frame loses
+     * when it shortens the pre-render line: {@code Sprites On Scanline 0} watches a sprite the
+     * fetch loaded put its first pixel out at x=0 on every other frame, which only happens to a
+     * unit nobody told to start counting. So the shortened line issues no pulse, whichever end of
+     * it the missing dot is counted from.
+     */
+    private boolean isLineTheFrameCutsShort() {
+        return region.skipsDotOnOddFrames() && scanline == preRenderLine && oddFrame;
+    }
+
+    /**
+     * The X down-counters, one dot's worth.
+     * <p>
+     * These run whether or not rendering is enabled, which is the first half of AccuracyCoin's
+     * {@code Stale Sprite Shift Regs}: switching the picture off for a few dots does not move a
+     * sprite along the line, it comes back exactly where it would have been. They do not run
+     * outside the visible dots, so a unit that halted near the right hand edge is still halted at
+     * the start of the next line unless something puts it back to counting.
+     */
+    private void clockSpriteCounters() {
+        if (dot < 1 || dot > SCREEN_WIDTH) {
+            return;
+        }
+
+        for (var unit = 0; unit < spriteCounter.length; unit++) {
+            if (spriteHalted[unit]) {
+                continue;
+            }
+
+            if (spriteCounter[unit] == 0) {
+                spriteHalted[unit] = true;
+            } else {
+                spriteCounter[unit]--;
+            }
+        }
+    }
+
+    /**
+     * The pattern shift registers, one dot's worth.
+     * <p>
+     * The other half of {@code Stale Sprite Shift Regs}: these run only while rendering, so the
+     * dots a sprite spends in forced blank are dots it spends not being drawn rather than dots it
+     * spends being drawn somewhere else. A unit that halted before rendering was switched off
+     * picks up from exactly the pixel it had reached.
+     */
+    private void shiftSpriteUnits() {
+        if (dot < 1 || dot > SCREEN_WIDTH || !isRenderingEnabled()) {
+            return;
+        }
+
+        for (var unit = 0; unit < spriteCounter.length; unit++) {
+            if (spriteHalted[unit]) {
+                spritePatternLow[unit] = (spritePatternLow[unit] << 1) & 0xFF;
+                spritePatternHigh[unit] = (spritePatternHigh[unit] << 1) & 0xFF;
+            }
         }
     }
 
@@ -1023,24 +1127,34 @@ public class PPU {
     }
 
     /**
-     * Loads one of the eight sprite output units from the slot of secondary OAM that feeds it.
+     * Fetches one bit plane of one sprite output unit from the slot of secondary OAM that feeds it.
      * <p>
-     * Unused slots still go through the motions -- secondary OAM was wiped to $FF, so they fetch
-     * row 0 of tile $FF -- but {@link #spriteCount} keeps them off the screen.
+     * The fetch asks the same "is this sprite on this line" question the evaluation asked, and asks
+     * it of the low eight bits of the scanline counter rather than of the whole thing. A slot that
+     * fails it still costs the read -- an unused one holds the $FF secondary OAM was wiped with, so
+     * it reads row 0 of tile $FF, which is where the dummy fetches a mapper sees come from -- but
+     * the byte is dropped and the shift register is loaded transparent instead.
+     * <p>
+     * Which is how a sprite reaches scanline 0. The pre-render line is line 261, and 261 in eight
+     * bits is 5, so the fetch that runs at the bottom of it will happily load whatever is left in
+     * secondary OAM from the line above the picture if that sprite covers <em>line 5</em>. Nothing
+     * evaluated it and nothing put it there on purpose; it is simply still there.
+     *
+     * @param unit  which of the eight, 0 to 7.
+     * @param plane 0 for the low bit plane, 8 for the high one.
+     * @see <a href="https://forums.nesdev.org/viewtopic.php?t=26291">NESdev forums: sprites on scanline 0</a>
      */
-    private void loadSpriteUnit(final int unit) {
+    private int fetchSpritePattern(final int unit, final int plane) {
         var base = unit * 4;
         var y = secondaryOAM[base];
         var tile = secondaryOAM[base + 1];
         var attributes = secondaryOAM[base + 2];
 
-        spriteAttributes[unit] = attributes;
-        spriteX[unit] = secondaryOAM[base + 3];
-
         var height = spriteHeight();
-        var row = scanline - y;
+        var row = (scanline & 0xFF) - y;
+        var inRange = row >= 0 && row < height;
 
-        if (row < 0 || row >= height) {
+        if (!inRange) {
             row = 0;
         }
 
@@ -1059,16 +1173,15 @@ public class PPU {
             address = ((ctrl & CTRL_SPRITE_TABLE) != 0 ? 0x1000 : 0x0000) | (tile << 4) | row;
         }
 
-        var low = vram.read(address);
-        var high = vram.read(address + 8);
+        var data = vram.read(address + plane);
 
-        if ((attributes & 0x40) != 0) {
-            low = reverseBits(low);
-            high = reverseBits(high);
+        if (!inRange) {
+            return 0;
         }
 
-        spritePatternLow[unit] = low;
-        spritePatternHigh[unit] = high;
+        // A horizontally flipped sprite is loaded into the shift register back to front rather
+        // than shifted the other way.
+        return (attributes & 0x40) != 0 ? reverseBits(data) : data;
     }
 
     /**
@@ -1121,16 +1234,13 @@ public class PPU {
         var colour = 0;
 
         if ((mask & MASK_SHOW_SPRITES) != 0 && (x >= 8 || (mask & MASK_SHOW_SPRITES_LEFT) != 0)) {
-            for (var i = 0; i < spriteCount; i++) {
-                var offset = x - spriteX[i];
-
-                if (offset < 0 || offset > 7) {
+            for (var i = 0; i < spriteHalted.length; i++) {
+                if (!spriteHalted[i]) {
                     continue;
                 }
 
-                var bit = 0x80 >> offset;
-                colour = ((spritePatternHigh[i] & bit) != 0 ? 2 : 0)
-                        | ((spritePatternLow[i] & bit) != 0 ? 1 : 0);
+                colour = ((spritePatternHigh[i] & 0x80) != 0 ? 2 : 0)
+                        | ((spritePatternLow[i] & 0x80) != 0 ? 1 : 0);
 
                 if (colour != 0) {
                     unit = i;
@@ -1806,11 +1916,18 @@ public class PPU {
         spriteZeroOnNextLine = io.bool(spriteZeroOnNextLine);
         spriteZeroOnThisLine = io.bool(spriteZeroOnThisLine);
 
-        spriteCount = io.u8(spriteCount);
-        io.bytes(spriteX);
+        // Where the count of sprites on the line used to be. The output units answer that for
+        // themselves now: an empty slot is one whose counter never reaches a pattern worth drawing.
+        io.skip(1);
+
+        io.bytes(spriteCounter);
         io.bytes(spriteAttributes);
         io.bytes(spritePatternLow);
         io.bytes(spritePatternHigh);
+
+        for (var unit = 0; unit < spriteHalted.length; unit++) {
+            spriteHalted[unit] = io.bool(spriteHalted[unit]);
+        }
 
         openBus = io.u8(openBus);
         io.longs(openBusRefreshedOn);

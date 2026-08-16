@@ -118,6 +118,30 @@ class PPUSpriteTests extends PPUFixture {
             assertEquals(colour(SPRITE_COLOUR), pixelAt(20, 1));
         }
 
+        /**
+         * The two halves of an output unit are clocked by different things: the X counter runs
+         * whether or not rendering is on, and only the shift register stops.
+         */
+        @Test
+        void keepCountingThroughAGapInTheRendering() {
+            writeSprite(0, 10, SOLID_TILE, 0, 40);
+            startRendering();
+            renderFrames(2);
+
+            // Off for ten dots well before the sprite is due, and back on again with plenty of
+            // room to spare.
+            runTo(11, 5);
+            ppu.write(PPUMASK, 0x00);
+            runTo(11, 15);
+            ppu.write(PPUMASK, SHOW_EVERYTHING);
+            advanceFrames(1);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(40, 11),
+                    "the counter ran through the gap, so the sprite is where its X says");
+            assertEquals(colour(BACKDROP), pixelAt(50, 11),
+                    "and not ten pixels further along");
+        }
+
         @Test
         void areEightPixelsWideStartingAtTheirXCoordinate() {
             writeSprite(0, 10, SOLID_TILE, 0, 20);
