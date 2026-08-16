@@ -36,6 +36,27 @@ public interface CPUBus {
     }
 
     /**
+     * Which half of the CPU's clock a cycle is.
+     * <p>
+     * The 2A03 divides its clock in two and gives the transfer units alternate halves: they read on
+     * a get and write on a put. Which parity is which is a convention rather than a measurement --
+     * nothing observable says whether cycle zero was a get or a put -- but it is <em>this</em>
+     * convention, because blargg's {@code 4-jitter} and the OAM transfer's 513 versus 514 cycles
+     * are both calibrated against it.
+     * <p>
+     * Here rather than in either of the two chips that ask, because a convention with two homes is
+     * a convention that can come to disagree with itself, and this one is load bearing in both. The
+     * MMU asks it of the cycle {@link #beginDMACycle} was handed; the APU asks it of its own
+     * counter, which runs one ahead -- the chip is clocked before the processor is.
+     *
+     * @param cpuCycle a CPU cycle counter.
+     * @return true if that cycle is a get.
+     */
+    static boolean isGetCycle(final long cpuCycle) {
+        return (cpuCycle & 1) != 0;
+    }
+
+    /**
      * Asks what this cycle is for before the CPU spends it.
      *
      * @param cpuCycle the cycle counter, whose parity is the get/put phase.

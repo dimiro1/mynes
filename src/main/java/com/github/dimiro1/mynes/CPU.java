@@ -896,24 +896,7 @@ public class CPU {
             case 4 -> {
                 pollInterrupts();
                 tickValue = read(ByteUtils.joinBytes(tickHigh, tickLow));
-
-                switch (opcode) {
-                    case 0x0C -> nop();
-                    case 0x0D -> ora(tickValue);
-                    case 0x2C -> bit(tickValue);
-                    case 0x2D -> and(tickValue);
-                    case 0x4D -> eor(tickValue);
-                    case 0x6D -> adc(tickValue);
-                    case 0xAC -> ldy(tickValue);
-                    case 0xAD -> lda(tickValue);
-                    case 0xAE -> ldx(tickValue);
-                    case 0xAF -> lax(tickValue);
-                    case 0xCC -> cpy(tickValue);
-                    case 0xCD -> cmp(tickValue);
-                    case 0xEC -> cpx(tickValue);
-                    case 0xED -> sbc(tickValue);
-                }
-
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -937,24 +920,7 @@ public class CPU {
             }
             case 5 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x0E -> asl(tickValue);
-                    case 0x0F -> slo(tickValue);
-                    case 0x2E -> rol(tickValue);
-                    case 0x2F -> rla(tickValue);
-                    case 0x4F -> sre(tickValue);
-                    case 0x4E -> lsr(tickValue);
-                    case 0x6E -> ror(tickValue);
-                    case 0x6F -> rra(tickValue);
-                    case 0xCE -> dec(tickValue);
-                    case 0xCF -> dcp(tickValue);
-                    case 0xEE -> inc(tickValue);
-                    case 0xEF -> isc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 6 -> {
@@ -979,12 +945,7 @@ public class CPU {
             case 4 -> {
                 pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
-                switch (opcode) {
-                    case 0x8C -> write(tickAddress, y);
-                    case 0x8D -> write(tickAddress, a);
-                    case 0x8E -> write(tickAddress, x);
-                    case 0x8F -> write(tickAddress, a & x);
-                }
+                writeOperation();
                 resetTick();
             }
         }
@@ -1000,24 +961,7 @@ public class CPU {
             case 3 -> {
                 pollInterrupts();
                 tickValue = read(tickAddress);
-
-                switch (opcode) {
-                    case 0x05 -> ora(tickValue);
-                    case 0x24 -> bit(tickValue);
-                    case 0x25 -> and(tickValue);
-                    case 0x45 -> eor(tickValue);
-                    case 0x65 -> adc(tickValue);
-                    case 0xA4 -> ldy(tickValue);
-                    case 0xA5 -> lda(tickValue);
-                    case 0xA6 -> ldx(tickValue);
-                    case 0xA7 -> lax(tickValue);
-                    case 0xC4 -> cpy(tickValue);
-                    case 0xC5 -> cmp(tickValue);
-                    case 0xE4 -> cpx(tickValue);
-                    case 0xE5 -> sbc(tickValue);
-                    case 0x04, 0x44, 0x64 -> nop();
-                }
-
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -1036,25 +980,7 @@ public class CPU {
             }
             case 4 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x06 -> asl(tickValue);
-                    case 0x07 -> slo(tickValue);
-                    case 0x26 -> rol(tickValue);
-                    case 0x27 -> rla(tickValue);
-                    case 0x47 -> sre(tickValue);
-                    case 0x66 -> ror(tickValue);
-                    case 0x67 -> rra(tickValue);
-                    case 0xC6 -> dec(tickValue);
-                    case 0xC7 -> dcp(tickValue);
-                    case 0xE6 -> inc(tickValue);
-                    case 0xE7 -> isc(tickValue);
-                    case 0x46, 0x56 -> lsr(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
-
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 5 -> {
@@ -1074,13 +1000,7 @@ public class CPU {
             }
             case 3 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x84 -> write(tickAddress, y);
-                    case 0x85 -> write(tickAddress, a);
-                    case 0x86 -> write(tickAddress, x);
-                    case 0x87 -> write(tickAddress, a & x);
-                }
-
+                writeOperation();
                 resetTick();
             }
         }
@@ -1101,12 +1021,7 @@ public class CPU {
             case 4 -> {
                 pollInterrupts();
                 tickValue = read(tickAddress);
-
-                switch (opcode) {
-                    case 0xB6 -> ldx(tickValue);
-                    case 0xB7 -> lax(tickValue);
-                }
-
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -1127,19 +1042,7 @@ public class CPU {
             case 4 -> {
                 pollInterrupts();
                 tickValue = read(tickAddress);
-
-                switch (opcode) {
-                    case 0x15 -> ora(tickValue);
-                    case 0x35 -> and(tickValue);
-                    case 0x55 -> eor(tickValue);
-                    case 0x75 -> adc(tickValue);
-                    case 0xB4 -> ldy(tickValue);
-                    case 0xB5 -> lda(tickValue);
-                    case 0xD5 -> cmp(tickValue);
-                    case 0xF5 -> sbc(tickValue);
-                    case 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4 -> nop();
-                }
-
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -1159,11 +1062,7 @@ public class CPU {
             }
             case 4 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x96 -> write(tickAddress, x);
-                    case 0x97 -> write(tickAddress, a & x);
-                }
-
+                writeOperation();
                 resetTick();
             }
         }
@@ -1183,11 +1082,7 @@ public class CPU {
             }
             case 4 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x94 -> write(tickAddress, y);
-                    case 0x95 -> write(tickAddress, a);
-                }
-
+                writeOperation();
                 resetTick();
             }
         }
@@ -1211,25 +1106,7 @@ public class CPU {
             }
             case 5 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x16 -> asl(tickValue);
-                    case 0x17 -> slo(tickValue);
-                    case 0x36 -> rol(tickValue);
-                    case 0x37 -> rla(tickValue);
-                    case 0x56 -> lsr(tickValue);
-                    case 0x57 -> sre(tickValue);
-                    case 0x76 -> ror(tickValue);
-                    case 0x77 -> rra(tickValue);
-                    case 0xD6 -> dec(tickValue);
-                    case 0xD7 -> dcp(tickValue);
-                    case 0xF6 -> inc(tickValue);
-                    case 0xF7 -> isc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
-
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 6 -> {
@@ -1267,30 +1144,15 @@ public class CPU {
                 ) {
                     incTick();
                 } else {
-                    absoluteIndexedYReadAction(tickValue);
+                    readOperation(tickValue);
                     resetTick(); // no need to execute cycle 5
                 }
             }
             case 5 -> {
                 pollInterrupts();
-                absoluteIndexedYReadAction(read(tickAddress));
+                readOperation(read(tickAddress));
                 resetTick();
             }
-        }
-    }
-
-    private void absoluteIndexedYReadAction(final int value) {
-        switch (opcode) {
-            case 0x19 -> ora(value);
-            case 0x39 -> and(value);
-            case 0x59 -> eor(value);
-            case 0x79 -> adc(value);
-            case 0xB9 -> lda(value);
-            case 0xBB -> las(value);
-            case 0xBE -> ldx(value);
-            case 0xBF -> lax(value);
-            case 0xD9 -> cmp(value);
-            case 0xF9 -> sbc(value);
         }
     }
 
@@ -1319,19 +1181,7 @@ public class CPU {
             }
             case 6 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x1B -> slo(tickValue);
-                    case 0x3B -> rla(tickValue);
-                    case 0x5B -> sre(tickValue);
-                    case 0x7B -> rra(tickValue);
-                    case 0xDB -> dcp(tickValue);
-                    case 0xFB -> isc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
-
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 7 -> {
@@ -1367,25 +1217,7 @@ public class CPU {
             }
             case 6 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x1F -> slo(tickValue);
-                    case 0x1E -> asl(tickValue);
-                    case 0x3F -> rla(tickValue);
-                    case 0x3E -> rol(tickValue);
-                    case 0x5F -> sre(tickValue);
-                    case 0x5E -> lsr(tickValue);
-                    case 0x7F -> rra(tickValue);
-                    case 0x7E -> ror(tickValue);
-                    case 0xDF -> dcp(tickValue);
-                    case 0xDE -> dec(tickValue);
-                    case 0xFF -> isc(tickValue);
-                    case 0xFE -> inc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
-
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 7 -> {
@@ -1423,29 +1255,15 @@ public class CPU {
                 ) {
                     incTick();
                 } else {
-                    absoluteIndexedXReadAction(tickValue);
+                    readOperation(tickValue);
                     resetTick(); // no need to execute cycle 5
                 }
             }
             case 5 -> {
                 pollInterrupts();
-                absoluteIndexedXReadAction(read(tickAddress));
+                readOperation(read(tickAddress));
                 resetTick();
             }
-        }
-    }
-
-    private void absoluteIndexedXReadAction(final int value) {
-        switch (opcode) {
-            case 0x1D -> ora(value);
-            case 0x3D -> and(value);
-            case 0x5D -> eor(value);
-            case 0x7D -> adc(value);
-            case 0xBC -> ldy(value);
-            case 0xBD -> lda(value);
-            case 0xDD -> cmp(value);
-            case 0xFD -> sbc(value);
-            case 0x1C, 0xFC, 0xDC, 0x7C, 0x5C, 0x3C -> nop();
         }
     }
 
@@ -1470,16 +1288,7 @@ public class CPU {
             }
             case 5 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x99 -> write(tickAddress, a);
-                    case 0x9B -> {
-                        // TAS/SHS also copies A & X into the stack pointer.
-                        setSP(a & x);
-                        storeHigh(sp);
-                    }
-                    case 0x9E -> storeHigh(x);
-                    case 0x9F -> storeHigh(a & x);
-                }
+                writeOperation();
                 resetTick();
             }
         }
@@ -1506,10 +1315,7 @@ public class CPU {
             }
             case 5 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x9C -> storeHigh(y);
-                    case 0x9D -> write(tickAddress, a);
-                }
+                writeOperation();
                 resetTick();
             }
         }
@@ -1603,17 +1409,7 @@ public class CPU {
                 pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
                 tickValue = read(tickAddress);
-
-                switch (opcode) {
-                    case 0x01 -> ora(tickValue);
-                    case 0x21 -> and(tickValue);
-                    case 0x41 -> eor(tickValue);
-                    case 0x61 -> adc(tickValue);
-                    case 0xA1 -> lda(tickValue);
-                    case 0xA3 -> lax(tickValue);
-                    case 0xC1 -> cmp(tickValue);
-                    case 0xE1 -> sbc(tickValue);
-                }
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -1646,19 +1442,7 @@ public class CPU {
             }
             case 7 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x03 -> slo(tickValue);
-                    case 0x23 -> rla(tickValue);
-                    case 0x43 -> sre(tickValue);
-                    case 0x63 -> rra(tickValue);
-                    case 0xC3 -> dcp(tickValue);
-                    case 0xE3 -> isc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
-
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 8 -> {
@@ -1692,12 +1476,7 @@ public class CPU {
             case 6 -> {
                 pollInterrupts();
                 tickAddress = ByteUtils.joinBytes(tickHigh, tickLow);
-
-                switch (opcode) {
-                    case 0x81 -> write(tickAddress, a);
-                    case 0x83 -> write(tickAddress, a & x);
-                }
-
+                writeOperation();
                 resetTick();
             }
         }
@@ -1731,29 +1510,16 @@ public class CPU {
                 ) {
                     incTick();
                 } else {
-                    indirectIndexedReadAction(tickValue);
+                    readOperation(tickValue);
                     resetTick();
                 }
             }
             case 6 -> {
                 pollInterrupts();
                 tickValue = read(tickAddress);
-                indirectIndexedReadAction(tickValue);
+                readOperation(tickValue);
                 resetTick();
             }
-        }
-    }
-
-    private void indirectIndexedReadAction(final int value) {
-        switch (opcode) {
-            case 0x11 -> ora(value);
-            case 0x31 -> and(value);
-            case 0x51 -> eor(value);
-            case 0x71 -> adc(value);
-            case 0xB1 -> lda(value);
-            case 0xB3 -> lax(value);
-            case 0xD1 -> cmp(value);
-            case 0xF1 -> sbc(value);
         }
     }
 
@@ -1786,18 +1552,7 @@ public class CPU {
             }
             case 7 -> {
                 write(tickAddress, tickValue);
-
-                tickValue = switch (opcode) {
-                    case 0x13 -> slo(tickValue);
-                    case 0x33 -> rla(tickValue);
-                    case 0x53 -> sre(tickValue);
-                    case 0x73 -> rra(tickValue);
-                    case 0xD3 -> dcp(tickValue);
-                    case 0xF3 -> isc(tickValue);
-                    default -> throw new IllegalStateException(
-                            "Unexpected opcode: " + opcode
-                    );
-                };
+                tickValue = modifyOperation(tickValue);
                 incTick();
             }
             case 8 -> {
@@ -1833,10 +1588,7 @@ public class CPU {
             }
             case 6 -> {
                 pollInterrupts();
-                switch (opcode) {
-                    case 0x91 -> write(tickAddress, a);
-                    case 0x93 -> storeHigh(a & x);
-                }
+                writeOperation();
                 resetTick();
             }
         }
@@ -1848,28 +1600,7 @@ public class CPU {
             case 2 -> {
                 pollInterrupts();
                 tickValue = fetchPCInc();
-
-                switch (opcode) {
-                    case 0x09 -> ora(tickValue);
-                    case 0x29 -> and(tickValue);
-                    case 0x49 -> eor(tickValue);
-                    case 0x4B -> asr(tickValue);
-                    case 0x69 -> adc(tickValue);
-                    case 0x6B -> arr(tickValue);
-                    case 0x8B -> xaa(tickValue);
-                    case 0xA0 -> ldy(tickValue);
-                    case 0xA2 -> ldx(tickValue);
-                    case 0xA9 -> lda(tickValue);
-                    case 0xAB -> lxa(tickValue);
-                    case 0xC0 -> cpy(tickValue);
-                    case 0xC9 -> cmp(tickValue);
-                    case 0xCB -> axs(tickValue);
-                    case 0xE0 -> cpx(tickValue);
-                    case 0x0B, 0x2B -> anc(tickValue);
-                    case 0xE9, 0xEB -> sbc(tickValue);
-                    case 0x80, 0x89, 0x82, 0xC2, 0xE2 -> nop();
-                }
-
+                readOperation(tickValue);
                 resetTick();
             }
         }
@@ -2117,6 +1848,110 @@ public class CPU {
                 setPC(ByteUtils.joinBytes(fetchPC(), tickLow));
                 resetTick();
             }
+        }
+    }
+
+    /**
+     * What a read instruction does with the byte its addressing mode fetched.
+     * <p>
+     * Nine modes reach here and every one of them used to carry its own copy of this switch, which
+     * is nine places for one fact to be written down and eight of them to be forgotten. One switch
+     * can serve all nine because an opcode has exactly one addressing mode: the nine sets are
+     * disjoint, so there is nothing for the mode to disambiguate. What stays with each mode is its
+     * cycle switch, which is where the timing lives.
+     *
+     * @param value the byte the mode put on the bus, passed rather than read from
+     *              {@link #tickValue} because the page-crossing modes call this with a byte they
+     *              have not stored there.
+     */
+    private void readOperation(final int value) {
+        switch (opcode) {
+            case 0x01, 0x05, 0x09, 0x0D, 0x11, 0x15, 0x19, 0x1D -> ora(value);
+            case 0x21, 0x25, 0x29, 0x2D, 0x31, 0x35, 0x39, 0x3D -> and(value);
+            case 0x41, 0x45, 0x49, 0x4D, 0x51, 0x55, 0x59, 0x5D -> eor(value);
+            case 0x61, 0x65, 0x69, 0x6D, 0x71, 0x75, 0x79, 0x7D -> adc(value);
+            case 0xA1, 0xA5, 0xA9, 0xAD, 0xB1, 0xB5, 0xB9, 0xBD -> lda(value);
+            case 0xC1, 0xC5, 0xC9, 0xCD, 0xD1, 0xD5, 0xD9, 0xDD -> cmp(value);
+            case 0xE1, 0xE5, 0xE9, 0xEB, 0xED, 0xF1, 0xF5, 0xF9, 0xFD -> sbc(value);
+
+            case 0xA2, 0xA6, 0xAE, 0xB6, 0xBE -> ldx(value);
+            case 0xA0, 0xA4, 0xAC, 0xB4, 0xBC -> ldy(value);
+            case 0xE0, 0xE4, 0xEC -> cpx(value);
+            case 0xC0, 0xC4, 0xCC -> cpy(value);
+            case 0x24, 0x2C -> bit(value);
+
+            // The illegal reads: LAX in six addressing modes, LAS in one -- absolute indexed by Y
+            // -- and the rest immediate only, the last two of those being the ones real hardware
+            // is unstable about. See UNSTABLE_MAGIC.
+            case 0xA3, 0xA7, 0xAF, 0xB3, 0xB7, 0xBF -> lax(value);
+            case 0xBB -> las(value);
+            case 0x0B, 0x2B -> anc(value);
+            case 0x4B -> asr(value);
+            case 0x6B -> arr(value);
+            case 0xCB -> axs(value);
+            case 0x8B -> xaa(value);
+            case 0xAB -> lxa(value);
+
+            case 0x04, 0x0C, 0x14, 0x1C, 0x34, 0x3C, 0x44, 0x54, 0x5C, 0x64, 0x74, 0x7C,
+                 0x80, 0x82, 0x89, 0xC2, 0xD4, 0xDC, 0xE2, 0xF4, 0xFC -> nop();
+
+            default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+        }
+    }
+
+    /**
+     * What a read-modify-write instruction does to the byte between the two writes.
+     * <p>
+     * The same seven modes, one mapping, for the reason given on {@link #readOperation(int)}. The
+     * twelve operations are six shifts and the six illegal opcodes that pair a shift with an ALU
+     * operation -- which is why those six return the shifted byte and not the ALU's result: what
+     * goes back to memory is the shift, and the ALU only touches the accumulator and the flags.
+     *
+     * @param value the byte read from the address being modified.
+     * @return what to write over it on the cycle after next.
+     */
+    private int modifyOperation(final int value) {
+        return switch (opcode) {
+            case 0x06, 0x0E, 0x16, 0x1E -> asl(value);
+            case 0x03, 0x07, 0x0F, 0x13, 0x17, 0x1B, 0x1F -> slo(value);
+            case 0x26, 0x2E, 0x36, 0x3E -> rol(value);
+            case 0x23, 0x27, 0x2F, 0x33, 0x37, 0x3B, 0x3F -> rla(value);
+            case 0x46, 0x4E, 0x56, 0x5E -> lsr(value);
+            case 0x43, 0x47, 0x4F, 0x53, 0x57, 0x5B, 0x5F -> sre(value);
+            case 0x66, 0x6E, 0x76, 0x7E -> ror(value);
+            case 0x63, 0x67, 0x6F, 0x73, 0x77, 0x7B, 0x7F -> rra(value);
+            case 0xC6, 0xCE, 0xD6, 0xDE -> dec(value);
+            case 0xC3, 0xC7, 0xCF, 0xD3, 0xD7, 0xDB, 0xDF -> dcp(value);
+            case 0xE6, 0xEE, 0xF6, 0xFE -> inc(value);
+            case 0xE3, 0xE7, 0xEF, 0xF3, 0xF7, 0xFB, 0xFF -> isc(value);
+            default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
+        };
+    }
+
+    /**
+     * The whole of what a store instruction does on its last cycle.
+     * <p>
+     * Every one of the eight modes has worked {@link #tickAddress} out by the time it gets here, so
+     * all that is left to differ is which register goes out on the bus -- and, for the five
+     * unstable ones, that it goes out through {@link #storeHigh(int)} rather than straight.
+     */
+    private void writeOperation() {
+        switch (opcode) {
+            case 0x81, 0x85, 0x8D, 0x91, 0x95, 0x99, 0x9D -> write(tickAddress, a);
+            case 0x86, 0x8E, 0x96 -> write(tickAddress, x);
+            case 0x84, 0x8C, 0x94 -> write(tickAddress, y);
+            case 0x83, 0x87, 0x8F, 0x97 -> write(tickAddress, a & x);
+
+            case 0x9C -> storeHigh(y);
+            case 0x9E -> storeHigh(x);
+            case 0x93, 0x9F -> storeHigh(a & x);
+            case 0x9B -> {
+                // TAS/SHS also copies A & X into the stack pointer.
+                setSP(a & x);
+                storeHigh(sp);
+            }
+
+            default -> throw new IllegalStateException("Unexpected opcode: " + opcode);
         }
     }
 

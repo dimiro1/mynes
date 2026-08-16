@@ -291,15 +291,18 @@ public class PPU {
      */
     private int readBuffer;
 
-    private int oamAddress;
-    private final int[] oam = new int[256];
-
     /**
-     * The dot each eight byte row of OAM was last refreshed on. Per row rather than per byte
-     * because that is how the DRAM behind it is wired: touching any byte of a row refreshes all
-     * eight of them.
+     * Where in OAM the sprite hardware is pointing.
+     * <p>
+     * On the PPU rather than inside {@link OAM} or {@link SpriteEvaluation} because there is one of
+     * it and three things use it: the CPU sets it through $2003, $2004 reads and writes move it,
+     * and sprite evaluation walks it across a scanline and leaves it wherever it finished. Every
+     * quirk in this file that begins "a game that left OAMADDR pointing somewhere odd" is a
+     * consequence of that sharing, so it is deliberately not hidden inside either of them.
      */
-    private final long[] oamRefreshedOn = new long[32];
+    private int oamAddress;
+
+    private final OAM oam = new OAM();
 
     /**
      * Palette RAM. Thirty two entries of six bits, inside the PPU rather than on its bus.
@@ -308,67 +311,27 @@ public class PPU {
 
     // ---------------------------------------------------------------- background pipeline
 
-    /**
-     * The four bytes of the tile currently being fetched. They sit here until the eight dot fetch
-     * is over and {@link #reloadShifters()} hands them to the shift registers.
-     */
-    private int nameTableLatch;
-    private int attributeLatch;
-    private int patternLowLatch;
-    private int patternHighLatch;
-
-    /**
-     * The pattern shift registers, sixteen bits each: the tile on screen in the top half and the
-     * one after it in the bottom half. A pixel is whichever bit fine X points at.
-     */
-    private int patternShiftLow;
-    private int patternShiftHigh;
-
-    /**
-     * The attribute shift registers, alongside the pattern ones and holding the palette number
-     * for the same pixels.
-     */
-    private int attributeShiftLow;
-    private int attributeShiftHigh;
+    private final Background background = new Background();
 
     // ---------------------------------------------------------------- sprite pipeline
 
     /**
      * The eight sprites the PPU has picked out for the next scanline, four bytes each. Filled with
      * $FF at the start of every visible line and then written by the evaluation state machine.
+     * <p>
+     * Shared memory rather than {@link SpriteEvaluation}'s own, in the same way {@link #oamAddress}
+     * is: the evaluation writes it across the first half of a line, the fetch reads it across the
+     * second half, and $2004 reads whichever of them is holding it.
      */
     private final int[] secondaryOAM = new int[32];
 
-    /**
-     * Where in secondary OAM the next byte goes.
-     */
-    private int evaluationSlot;
+    private final SpriteEvaluation evaluation = new SpriteEvaluation();
 
     /**
-     * The byte read on the odd dot, acted on at the even one.
+     * Whether the sprite in the first output unit is the one that can set the sprite 0 hit flag,
+     * which is decided a line before it is used -- {@link SpriteEvaluation#foundSpriteZero} is the
+     * line being evaluated and this is the line being drawn.
      */
-    private int evaluationLatch;
-
-    /**
-     * Which of a sprite's four bytes {@link #evaluationLatch} is holding.
-     */
-    private EvaluationStep evaluationStep = EvaluationStep.Y_POSITION;
-
-    /**
-     * The address the evaluation started from, which is wherever OAMADDR pointed when the scanline
-     * reached dot 65. Sprite 0 hit is really "the first byte examined", not "sprite number zero",
-     * and the two only differ when a game leaves OAMADDR somewhere else.
-     */
-    private int firstAddressExamined;
-
-    private int spritesFound;
-
-    /**
-     * Whether the sprite that landed in the first secondary OAM slot was the first one examined,
-     * and so the one that can set the sprite 0 hit flag. One flag for the line being evaluated
-     * and one for the line being drawn.
-     */
-    private boolean spriteZeroOnNextLine;
     private boolean spriteZeroOnThisLine;
 
     /**
@@ -384,35 +347,15 @@ public class PPU {
     /**
      * The eight sprite output units, loaded during dots 257-320 and drained across the next
      * scanline.
-     * <p>
-     * Each is an X down-counter, an attribute latch and a pair of eight bit shift registers. The
-     * counter is loaded from the sprite's X coordinate; it counts down once per visible dot and
-     * the unit <em>halts</em> when it reaches zero, which is when its shift registers start putting
-     * a pixel out on every dot. There is no list of how many sprites are on the line and no
-     * comparison against a coordinate: a slot nobody filled holds the $FF secondary OAM was wiped
-     * with, so it counts all the way to the right hand edge and finds a transparent pattern when
-     * it gets there.
      */
-    private final int[] spriteCounter = new int[8];
-    private final boolean[] spriteHalted = new boolean[8];
-    private final int[] spriteAttributes = new int[8];
-    private final int[] spritePatternLow = new int[8];
-    private final int[] spritePatternHigh = new int[8];
+    private final SpriteUnit[] spriteUnits = {
+            new SpriteUnit(), new SpriteUnit(), new SpriteUnit(), new SpriteUnit(),
+            new SpriteUnit(), new SpriteUnit(), new SpriteUnit(), new SpriteUnit(),
+    };
 
     // ---------------------------------------------------------------- open bus
 
-    /**
-     * The PPU's own open bus, a row of eight tiny capacitors on the data pins. Reading a
-     * write-only register, or a bit the PPU does not drive, comes back as whatever is still
-     * charged here.
-     */
-    private int openBus;
-
-    /**
-     * The frame each open bus bit was last refreshed on. Per bit rather than per byte because
-     * different reads refresh different bits.
-     */
-    private final long[] openBusRefreshedOn = new long[8];
+    private final OpenBus openBus = new OpenBus();
 
     // ---------------------------------------------------------------- output
 
@@ -508,43 +451,7 @@ public class PPU {
 
         clock++;
 
-        if (warmingUp && scanline == preRenderLine) {
-            // The internal reset signal is released when the beam first reaches the pre-render
-            // line, which on NTSC is 89001 dots from power on, or 29667 CPU cycles -- the wiki's
-            // "around 29658", said in the units this class thinks in. On PAL the beam has fifty
-            // more lines to cross first, so the window is 106051 dots, and a game that waits for
-            // two VBlanks rather than counting cycles does not care either way.
-            warmingUp = false;
-        }
-
-        if (maskDelay > 0 && --maskDelay == 0) {
-            var wasRendering = isRenderingEnabled();
-            mask = pendingMask;
-
-            // The seed is taken where the mask actually lands rather than where it was written,
-            // which is what makes the corrupted row depend on the delay above.
-            if (wasRendering && !isRenderingEnabled() && isRenderingLine()) {
-                corruptionSeed = secondaryOAMAddress();
-                corruptionPending = true;
-            }
-        }
-
-        if (corruptionPending && isRenderingEnabled() && isRenderingLine()) {
-            corruptOAM();
-        }
-
-        if (addressDelay > 0 && --addressDelay == 0) {
-            // Ahead of the fetch pipeline rather than behind it, so that the dot the load lands
-            // on already reads from the new address -- and so that a coarse X increment that fell
-            // into the gap is overwritten, which is what the hardware does.
-            v = t;
-
-            // The counter drives the address bus, so loading it puts the address out there with
-            // no access going with it. That is how a game with the picture switched off clocks an
-            // MMC3's scanline counter, and it happens here rather than at the write because until
-            // this dot the bus is still holding the old address.
-            mapper.ppuAddress(v & 0x3FFF);
-        }
+        settle();
 
         if (isRenderingLine()) {
             if (scanline == preRenderLine && dot == STATUS_DOT) {
@@ -574,6 +481,55 @@ public class PPU {
         }
 
         advance();
+    }
+
+    /**
+     * The four things decided on an earlier dot that land on this one, before the dot does any work
+     * of its own.
+     * <p>
+     * They are in this order because they feed each other. The mask has to land before the check
+     * that reads it, and the fact that it has just landed with rendering switched <em>off</em> is
+     * exactly why the corruption cannot also happen on this dot -- it waits for the dot rendering
+     * comes back on. And the address load goes ahead of the fetch pipeline rather than behind it,
+     * so the dot the load lands on already reads from the new address.
+     */
+    private void settle() {
+        if (warmingUp && scanline == preRenderLine) {
+            // The internal reset signal is released when the beam first reaches the pre-render
+            // line, which on NTSC is 89001 dots from power on, or 29667 CPU cycles -- the wiki's
+            // "around 29658", said in the units this class thinks in. On PAL the beam has fifty
+            // more lines to cross first, so the window is 106051 dots, and a game that waits for
+            // two VBlanks rather than counting cycles does not care either way.
+            warmingUp = false;
+        }
+
+        if (maskDelay > 0 && --maskDelay == 0) {
+            var wasRendering = isRenderingEnabled();
+            mask = pendingMask;
+
+            // The seed is taken where the mask actually lands rather than where it was written,
+            // which is what makes the corrupted row depend on the delay above.
+            if (wasRendering && !isRenderingEnabled() && isRenderingLine()) {
+                corruptionSeed = secondaryOAMAddress();
+                corruptionPending = true;
+            }
+        }
+
+        if (corruptionPending && isRenderingEnabled() && isRenderingLine()) {
+            corruptOAM();
+        }
+
+        if (addressDelay > 0 && --addressDelay == 0) {
+            // A coarse X increment that fell into the gap between the write and this is overwritten
+            // rather than kept, which is what the hardware does.
+            v = t;
+
+            // The counter drives the address bus, so loading it puts the address out there with
+            // no access going with it. That is how a game with the picture switched off clocks an
+            // MMC3's scanline counter, and it happens here rather than at the write because until
+            // this dot the bus is still holding the old address.
+            mapper.ppuAddress(v & 0x3FFF);
+        }
     }
 
     /**
@@ -656,21 +612,21 @@ public class PPU {
         var fetching = (dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336);
 
         if ((dot >= 2 && dot <= 257) || (dot >= 322 && dot <= 337)) {
-            shiftBackground();
+            background.shift();
         }
 
         // Dots 9, 17, ... 257, then 329 and 337. The reload at dots 1 and 321 that this also
         // catches is a repeat of the one at 337, so it changes nothing.
         if ((fetching || dot == 257 || dot == 337) && (dot & 7) == 1) {
-            reloadShifters();
+            background.reload();
         }
 
         if (fetching) {
             switch (dot & 7) {
-                case 1 -> nameTableLatch = vram.read(0x2000 | (v & 0x0FFF));
-                case 3 -> attributeLatch = fetchAttribute();
-                case 5 -> patternLowLatch = vram.read(patternAddress());
-                case 7 -> patternHighLatch = vram.read(patternAddress() + 8);
+                case 1 -> background.nameTableLatch = vram.read(0x2000 | (v & 0x0FFF));
+                case 3 -> background.attributeLatch = fetchAttribute();
+                case 5 -> background.patternLowLatch = vram.read(patternAddress());
+                case 7 -> background.patternHighLatch = vram.read(patternAddress() + 8);
                 case 0 -> incrementCoarseX();
                 default -> { /* the odd dots drive the address, the even ones take the byte */ }
             }
@@ -710,45 +666,118 @@ public class PPU {
      */
     private int patternAddress() {
         return ((ctrl & CTRL_BACKGROUND_TABLE) != 0 ? 0x1000 : 0x0000)
-                + nameTableLatch * 16
+                + background.nameTableLatch * 16
                 + ((v >> 12) & 0x07);
     }
 
     /**
-     * Shifts the four background registers along by one pixel.
+     * The four bytes of the tile being fetched, and the shift registers they are handed to eight
+     * dots later.
      * <p>
-     * Something has to come in at the far end, and what comes in is wired rather than fetched: a
-     * 0 into the low bit plane, a 1 into the high one, and for the attributes the one bit latch
-     * that fed the parallel load. It normally makes no difference at all -- the eight bits a
-     * reload puts in are the eight the beam reads out, and the serial input never reaches the top
-     * half of the register before the next reload overwrites the bottom.
-     * <p>
-     * It shows when a game arranges for the reload not to happen: switch rendering off just before
-     * one and on again just after, and the registers keep shifting with nothing going into them
-     * but their serial inputs, so what gets drawn is colour 2 of whichever palette the attribute
-     * latch is still holding. AccuracyCoin's {@code BG Serial In} draws a screen of it and then
-     * puts a sprite over it to prove the background was not transparent.
+     * Nothing here knows where the beam is or what $2001 says: the fetch calls {@link #reload()}
+     * at the dot the hardware does, the dot machine calls {@link #shift()} on the dots the hardware
+     * does, and {@link #pixel(int)} answers for whichever bit fine X points at. Which dots those
+     * are is the PPU's business and stays there.
      */
-    private void shiftBackground() {
-        patternShiftLow = (patternShiftLow << 1) & 0xFFFF;
-        patternShiftHigh = ((patternShiftHigh << 1) | 1) & 0xFFFF;
-        attributeShiftLow = ((attributeShiftLow << 1) | (attributeLatch & 1)) & 0xFFFF;
-        attributeShiftHigh = ((attributeShiftHigh << 1) | ((attributeLatch >> 1) & 1)) & 0xFFFF;
-    }
+    private static final class Background {
+        /**
+         * The four bytes of the tile currently being fetched. They sit here until the eight dot
+         * fetch is over and {@link #reload()} hands them to the shift registers.
+         */
+        private int nameTableLatch;
+        private int attributeLatch;
+        private int patternLowLatch;
+        private int patternHighLatch;
 
-    /**
-     * Drops the tile that has just been fetched into the bottom half of the shift registers,
-     * eight dots before the beam needs it.
-     * <p>
-     * The attribute is two bits for the whole tile rather than one per pixel, so its shift
-     * registers are filled with eight copies of each bit. Real hardware keeps a one bit latch and
-     * a narrower shifter instead; the picture is the same.
-     */
-    private void reloadShifters() {
-        patternShiftLow = (patternShiftLow & 0xFF00) | patternLowLatch;
-        patternShiftHigh = (patternShiftHigh & 0xFF00) | patternHighLatch;
-        attributeShiftLow = (attributeShiftLow & 0xFF00) | ((attributeLatch & 1) != 0 ? 0xFF : 0x00);
-        attributeShiftHigh = (attributeShiftHigh & 0xFF00) | ((attributeLatch & 2) != 0 ? 0xFF : 0x00);
+        /**
+         * The pattern shift registers, sixteen bits each: the tile on screen in the top half and
+         * the one after it in the bottom half. A pixel is whichever bit fine X points at.
+         */
+        private int patternShiftLow;
+        private int patternShiftHigh;
+
+        /**
+         * The attribute shift registers, alongside the pattern ones and holding the palette number
+         * for the same pixels.
+         */
+        private int attributeShiftLow;
+        private int attributeShiftHigh;
+
+        /**
+         * Shifts all four registers along by one pixel.
+         * <p>
+         * Something has to come in at the far end, and what comes in is wired rather than fetched:
+         * a 0 into the low bit plane, a 1 into the high one, and for the attributes the one bit
+         * latch that fed the parallel load. It normally makes no difference at all -- the eight
+         * bits a reload puts in are the eight the beam reads out, and the serial input never
+         * reaches the top half of the register before the next reload overwrites the bottom.
+         * <p>
+         * It shows when a game arranges for the reload not to happen: switch rendering off just
+         * before one and on again just after, and the registers keep shifting with nothing going
+         * into them but their serial inputs, so what gets drawn is colour 2 of whichever palette
+         * the attribute latch is still holding. AccuracyCoin's {@code BG Serial In} draws a screen
+         * of it and then puts a sprite over it to prove the background was not transparent.
+         */
+        private void shift() {
+            patternShiftLow = (patternShiftLow << 1) & 0xFFFF;
+            patternShiftHigh = ((patternShiftHigh << 1) | 1) & 0xFFFF;
+            attributeShiftLow = ((attributeShiftLow << 1) | (attributeLatch & 1)) & 0xFFFF;
+            attributeShiftHigh = ((attributeShiftHigh << 1) | ((attributeLatch >> 1) & 1)) & 0xFFFF;
+        }
+
+        /**
+         * Drops the tile that has just been fetched into the bottom half of the shift registers,
+         * eight dots before the beam needs it.
+         * <p>
+         * The attribute is two bits for the whole tile rather than one per pixel, so its shift
+         * registers are filled with eight copies of each bit. Real hardware keeps a one bit latch
+         * and a narrower shifter instead; the picture is the same.
+         */
+        private void reload() {
+            patternShiftLow = (patternShiftLow & 0xFF00) | patternLowLatch;
+            patternShiftHigh = (patternShiftHigh & 0xFF00) | patternHighLatch;
+            attributeShiftLow =
+                    (attributeShiftLow & 0xFF00) | ((attributeLatch & 1) != 0 ? 0xFF : 0x00);
+            attributeShiftHigh =
+                    (attributeShiftHigh & 0xFF00) | ((attributeLatch & 2) != 0 ? 0xFF : 0x00);
+        }
+
+        /**
+         * @param fineX which of the sixteen bits in flight is the one on screen now. It is the only
+         *              part of the scroll position applied here rather than by the fetch.
+         * @return the low four bits of a palette address -- palette number in bits 3-2 and colour
+         * within it in bits 1-0 -- or zero if the background is transparent here.
+         */
+        private int pixel(final int fineX) {
+            var bit = 0x8000 >> fineX;
+
+            var colour = ((patternShiftHigh & bit) != 0 ? 2 : 0)
+                    | ((patternShiftLow & bit) != 0 ? 1 : 0);
+
+            if (colour == 0) {
+                return 0;
+            }
+
+            var palette = ((attributeShiftHigh & bit) != 0 ? 2 : 0)
+                    | ((attributeShiftLow & bit) != 0 ? 1 : 0);
+
+            return (palette << 2) | colour;
+        }
+
+        /**
+         * Unlike the other units here this one carries its own list, because the eight fields were
+         * already next to each other and in this order in the file format.
+         */
+        private void serialize(final StateIO io) {
+            nameTableLatch = io.u8(nameTableLatch);
+            attributeLatch = io.u8(attributeLatch);
+            patternLowLatch = io.u8(patternLowLatch);
+            patternHighLatch = io.u8(patternHighLatch);
+            patternShiftLow = io.u16(patternShiftLow);
+            patternShiftHigh = io.u16(patternShiftHigh);
+            attributeShiftLow = io.u16(attributeShiftLow);
+            attributeShiftHigh = io.u16(attributeShiftHigh);
+        }
     }
 
     /**
@@ -788,7 +817,7 @@ public class PPU {
             if (dot >= 1 && dot <= 64) {
                 clearSecondaryOAM();
             } else if (dot >= 65 && dot <= 256) {
-                evaluateSprites();
+                evaluation.tick();
             }
         }
 
@@ -796,7 +825,9 @@ public class PPU {
             // The one dot that puts every counter back to counting. A scanline that spends it in
             // forced blank leaves them halted instead, and whatever they are holding is drawn from
             // the first dot rendering comes back on.
-            Arrays.fill(spriteHalted, false);
+            for (var unit : spriteUnits) {
+                unit.halted = false;
+            }
         }
 
         if (dot < 257 || dot > 320) {
@@ -811,10 +842,11 @@ public class PPU {
             // The pre-render line evaluates nothing, so this is still the answer the line above
             // the picture came to -- which is the only reason a stale sprite drawn on scanline 0
             // can set the hit flag.
-            spriteZeroOnThisLine = spriteZeroOnNextLine;
+            spriteZeroOnThisLine = evaluation.foundSpriteZero;
         }
 
-        var unit = (dot - 257) >> 3;
+        var slot = (dot - 257) >> 3;
+        var unit = spriteUnits[slot];
 
         switch ((dot - 257) & 7) {
             // Two reads of the nametable address the background fetch left behind. Nothing uses
@@ -827,13 +859,73 @@ public class PPU {
             // reads, one on each of its dots.
             case 2 -> {
                 vram.read(0x2000 | (v & 0x0FFF));
-                spriteAttributes[unit] = secondaryOAM[unit * 4 + 2];
+                unit.attributes = secondaryOAM[slot * 4 + 2];
             }
-            case 3 -> spriteCounter[unit] = secondaryOAM[unit * 4 + 3];
+            case 3 -> unit.counter = secondaryOAM[slot * 4 + 3];
 
-            case 4 -> spritePatternLow[unit] = fetchSpritePattern(unit, 0);
-            case 6 -> spritePatternHigh[unit] = fetchSpritePattern(unit, 8);
+            case 4 -> unit.patternLow = fetchSpritePattern(slot, 0);
+            case 6 -> unit.patternHigh = fetchSpritePattern(slot, 8);
             default -> { /* the dots that only put an address out */ }
+        }
+    }
+
+    /**
+     * One sprite output unit: an X down-counter, an attribute latch and a pair of eight bit shift
+     * registers.
+     * <p>
+     * The counter is loaded from the sprite's X coordinate; it counts down once per visible dot and
+     * the unit <em>halts</em> when it reaches zero, which is when its shift registers start putting
+     * a pixel out on every dot. There is no list of how many sprites are on the line and no
+     * comparison against a coordinate: a slot nobody filled holds the $FF secondary OAM was wiped
+     * with, so it counts all the way to the right hand edge and finds a transparent pattern when it
+     * gets there.
+     */
+    private static final class SpriteUnit {
+        private int counter;
+        private boolean halted;
+        private int attributes;
+        private int patternLow;
+        private int patternHigh;
+
+        /**
+         * One dot of the X down-counter, which stops rather than wrapping: reaching zero is what
+         * starts the unit drawing, and it goes on drawing until something puts it back to counting.
+         */
+        private void clockCounter() {
+            if (halted) {
+                return;
+            }
+
+            if (counter == 0) {
+                halted = true;
+            } else {
+                counter--;
+            }
+        }
+
+        /**
+         * One dot of the pattern shift registers, which only move once the unit has halted -- a
+         * unit still counting is a sprite the beam has not reached yet.
+         */
+        private void shift() {
+            if (!halted) {
+                return;
+            }
+
+            patternLow = (patternLow << 1) & 0xFF;
+            patternHigh = (patternHigh << 1) & 0xFF;
+        }
+
+        /**
+         * @return the two bit colour this unit is putting out, zero meaning transparent -- which is
+         * also the answer for a unit that has not started drawing yet.
+         */
+        private int pixel() {
+            if (!halted) {
+                return 0;
+            }
+
+            return ((patternHigh & 0x80) != 0 ? 2 : 0) | ((patternLow & 0x80) != 0 ? 1 : 0);
         }
     }
 
@@ -866,16 +958,8 @@ public class PPU {
             return;
         }
 
-        for (var unit = 0; unit < spriteCounter.length; unit++) {
-            if (spriteHalted[unit]) {
-                continue;
-            }
-
-            if (spriteCounter[unit] == 0) {
-                spriteHalted[unit] = true;
-            } else {
-                spriteCounter[unit]--;
-            }
+        for (var unit : spriteUnits) {
+            unit.clockCounter();
         }
     }
 
@@ -892,11 +976,8 @@ public class PPU {
             return;
         }
 
-        for (var unit = 0; unit < spriteCounter.length; unit++) {
-            if (spriteHalted[unit]) {
-                spritePatternLow[unit] = (spritePatternLow[unit] << 1) & 0xFF;
-                spritePatternHigh[unit] = (spritePatternHigh[unit] << 1) & 0xFF;
-            }
+        for (var unit : spriteUnits) {
+            unit.shift();
         }
     }
 
@@ -908,176 +989,235 @@ public class PPU {
     }
 
     /**
-     * The sprite evaluation state machine, one step per dot.
+     * The sprite evaluation state machine: the hardware that walks OAM across dots 65 to 256 and
+     * picks the eight sprites the next scanline will draw.
      * <p>
-     * Odd dots read a byte of OAM, even dots decide what to do with it. Written out literally
-     * rather than as a loop over sixty four sprites, because the interesting behaviour is all in
-     * what happens when it runs out of time or out of slots -- and in the overflow scan, which is
-     * documented hardware and is documented as being wrong.
+     * Written out literally rather than as a loop over sixty four sprites, because the interesting
+     * behaviour is all in what happens when it runs out of time or out of slots -- and in the
+     * overflow scan, which is documented hardware and is documented as being wrong.
+     * <p>
+     * What it deliberately does <em>not</em> own is the address it walks. {@link PPU#oamAddress} is
+     * one register shared with $2003, $2004 and the fetch phase, and every quirk here is a
+     * consequence of that sharing, so hiding a private copy of it in this class would be hiding the
+     * whole point. It does not own {@link PPU#secondaryOAM} either, for the same reason.
+     * <p>
+     * Its fields travel in {@link PPU#serialize} rather than in a {@code serialize} of its own: the
+     * order of that method is the file format, and it was settled while these were the PPU's.
      */
-    private void evaluateSprites() {
-        if (dot == 65) {
-            beginEvaluation();
-        }
+    private final class SpriteEvaluation {
+        /**
+         * Where in secondary OAM the next byte goes.
+         */
+        private int slot;
 
-        if ((dot & 1) == 1) {
-            evaluationLatch = readOAM(oamAddress);
-            return;
-        }
+        /**
+         * The byte read on the odd dot, acted on at the even one.
+         */
+        private int latch;
 
-        if (evaluationStep == EvaluationStep.FINISHED) {
-            return;
-        }
+        /**
+         * Which of a sprite's four bytes {@link #latch} is holding.
+         */
+        private EvaluationStep step = EvaluationStep.Y_POSITION;
 
-        // Once eight sprites are in hand nothing more is copied, but the hardware carries on
-        // reading, and it is what it does with the address between reads that goes wrong.
-        var full = spritesFound == 8;
+        /**
+         * The address the evaluation started from, which is wherever OAMADDR pointed when the
+         * scanline reached dot 65. Sprite 0 hit is really "the first byte examined", not "sprite
+         * number zero", and the two only differ when a game leaves OAMADDR somewhere else.
+         */
+        private int firstAddressExamined;
 
-        if (!full) {
-            // Written before anyone knows whether the sprite is wanted. The slot is only kept if
-            // it turns out to be, so an unwanted Y coordinate is overwritten by the next one.
-            secondaryOAM[evaluationSlot] = evaluationLatch;
-        }
+        private int spritesFound;
 
-        switch (evaluationStep) {
-            case Y_POSITION -> evaluateYPosition(full);
-            case TILE, ATTRIBUTES -> copyByte(full);
-            case X_POSITION -> evaluateXPosition(full);
-            case FINISHED -> { }
-        }
-    }
+        /**
+         * Whether the sprite that landed in the first secondary OAM slot was the first one
+         * examined, and so the one that can set the sprite 0 hit flag.
+         */
+        private boolean foundSpriteZero;
 
-    private void beginEvaluation() {
-        // "The OAM memory is refreshed once per scanline while rendering is enabled" -- and this
-        // runs at dot 65 of a visible line with rendering on, which is exactly that condition. So
-        // OAM only ever decays for a game that leaves rendering off for more than a millisecond.
-        for (var row = 0; row < oamRefreshedOn.length; row++) {
-            refreshOAMRow(row);
-        }
-
-        // Wherever OAMADDR happens to be pointing. Evaluation walks it on from there and leaves it
-        // wherever it finished, which is why $2004 read during dots 65 to 256 follows the
-        // evaluation around rather than answering with whatever the CPU last asked for.
-        firstAddressExamined = oamAddress;
-        evaluationSlot = 0;
-        evaluationStep = EvaluationStep.Y_POSITION;
-        spritesFound = 0;
-        spriteZeroOnNextLine = false;
-    }
-
-    /**
-     * Decides whether the sprite this byte is the Y coordinate of belongs on the next scanline.
-     */
-    private void evaluateYPosition(final boolean full) {
-        if (!isInRange(evaluationLatch)) {
-            skipSprite(full);
-            return;
-        }
-
-        if (full) {
-            // No room for it, which is the only thing the overflow flag actually reports.
-            spriteOverflow = true;
-        } else {
-            if (evaluationSlot == 0) {
-                spriteZeroOnNextLine = oamAddress == firstAddressExamined;
+        /**
+         * One dot's worth: odd dots read a byte of OAM, even dots decide what to do with it.
+         */
+        private void tick() {
+            if (dot == 65) {
+                begin();
             }
 
-            evaluationSlot++;
+            if ((dot & 1) == 1) {
+                latch = oam.read(oamAddress);
+                return;
+            }
+
+            if (step == EvaluationStep.FINISHED) {
+                return;
+            }
+
+            // Once eight sprites are in hand nothing more is copied, but the hardware carries on
+            // reading, and it is what it does with the address between reads that goes wrong.
+            var full = spritesFound == 8;
+
+            if (!full) {
+                // Written before anyone knows whether the sprite is wanted. The slot is only kept
+                // if it turns out to be, so an unwanted Y coordinate is overwritten by the next one.
+                secondaryOAM[slot] = latch;
+            }
+
+            switch (step) {
+                case Y_POSITION -> evaluateYPosition(full);
+                case TILE, ATTRIBUTES -> copyByte(full);
+                case X_POSITION -> evaluateXPosition(full);
+                case FINISHED -> { }
+            }
         }
 
-        evaluationStep = EvaluationStep.TILE;
-        advance(1);
-    }
+        private void begin() {
+            // "The OAM memory is refreshed once per scanline while rendering is enabled" -- and
+            // this runs at dot 65 of a visible line with rendering on, which is exactly that
+            // condition. So OAM only ever decays for a game that leaves rendering off for more
+            // than a millisecond.
+            oam.refreshEveryRow();
 
-    /**
-     * The tile number and the attribute byte, which are copied without being looked at.
-     */
-    private void copyByte(final boolean full) {
-        if (!full) {
-            evaluationSlot++;
+            // Wherever OAMADDR happens to be pointing. Evaluation walks it on from there and leaves
+            // it wherever it finished, which is why $2004 read during dots 65 to 256 follows the
+            // evaluation around rather than answering with whatever the CPU last asked for.
+            firstAddressExamined = oamAddress;
+            slot = 0;
+            step = EvaluationStep.Y_POSITION;
+            spritesFound = 0;
+            foundSpriteZero = false;
         }
 
-        evaluationStep = evaluationStep == EvaluationStep.TILE
-                ? EvaluationStep.ATTRIBUTES
-                : EvaluationStep.X_POSITION;
+        /**
+         * Decides whether the sprite this byte is the Y coordinate of belongs on the next scanline.
+         */
+        private void evaluateYPosition(final boolean full) {
+            if (!isInRange(latch)) {
+                skipSprite(full, 4);
+                return;
+            }
 
-        advance(1);
-    }
+            if (full) {
+                // No room for it, which is the only thing the overflow flag actually reports.
+                spriteOverflow = true;
+            } else {
+                if (slot == 0) {
+                    foundSpriteZero = oamAddress == firstAddressExamined;
+                }
 
-    /**
-     * The X coordinate, which is copied -- and then put through the same in-range test the Y
-     * coordinate was, for no reason anybody has ever found a use for.
-     * <p>
-     * An X that fails it moves the address on by one and then re-aligns, exactly as a rejected Y
-     * does but a byte rather than four. With aligned OAM the two are the same thing, because one
-     * more byte is where the next sprite starts anyway; it is only visible when a game has left
-     * OAMADDR pointing into the middle of a sprite.
-     */
-    private void evaluateXPosition(final boolean full) {
-        var inRange = isInRange(evaluationLatch);
+                slot++;
+            }
 
-        if (!full) {
-            evaluationSlot++;
-            spritesFound++;
-        }
-
-        evaluationStep = EvaluationStep.Y_POSITION;
-
-        if (inRange) {
+            step = EvaluationStep.TILE;
             advance(1);
-        } else {
-            skipSprite(full, 1);
-        }
-    }
-
-    /**
-     * Moves past a sprite the scanline does not want.
-     */
-    private void skipSprite(final boolean full) {
-        skipSprite(full, 4);
-    }
-
-    /**
-     * @param full whether secondary OAM has no room left, which is what stops the address being
-     *             pulled back into alignment -- and makes it slip one byte further every time.
-     * @param by   how far past the byte just rejected the next sprite starts, when the address is
-     *             still being kept aligned. Four past a rejected Y coordinate, one past a rejected
-     *             X, which is the same place either way for an address that was aligned already.
-     */
-    private void skipSprite(final boolean full, final int by) {
-        if (!full) {
-            advance(by);
-            oamAddress &= 0xFC;
-
-            return;
         }
 
-        // With nowhere to put anything the two halves of the address stop agreeing. The sprite
-        // number steps on, and so does the byte number -- but the byte number has no carry into
-        // the sprite number and simply wraps, so every rejected sprite leaves the address a byte
-        // further into the next one. What the hardware then tests as a Y coordinate is a tile
-        // number, and after that an attribute byte, and after that an X: the sprite overflow flag
-        // is answering a question about the wrong bytes, and games depend on which ones.
-        var nextSprite = (oamAddress & 0xFC) + 4;
-        var nextByte = (oamAddress + 1) & 3;
+        /**
+         * The tile number and the attribute byte, which are copied without being looked at.
+         */
+        private void copyByte(final boolean full) {
+            if (!full) {
+                slot++;
+            }
 
-        advance(nextSprite + nextByte - oamAddress);
-    }
+            step = step == EvaluationStep.TILE
+                    ? EvaluationStep.ATTRIBUTES
+                    : EvaluationStep.X_POSITION;
 
-    /**
-     * Moves the address on, ending the evaluation if it runs off the end of OAM.
-     * <p>
-     * Whatever is left of the scanline after that is spent reading the last address over and over
-     * and throwing away what comes back.
-     */
-    private void advance(final int by) {
-        var next = oamAddress + by;
-
-        if (next > 0xFF) {
-            evaluationStep = EvaluationStep.FINISHED;
+            advance(1);
         }
 
-        oamAddress = next & 0xFF;
+        /**
+         * The X coordinate, which is copied -- and then put through the same in-range test the Y
+         * coordinate was, for no reason anybody has ever found a use for.
+         * <p>
+         * An X that fails it moves the address on by one and then re-aligns, exactly as a rejected
+         * Y does but a byte rather than four. With aligned OAM the two are the same thing, because
+         * one more byte is where the next sprite starts anyway; it is only visible when a game has
+         * left OAMADDR pointing into the middle of a sprite.
+         */
+        private void evaluateXPosition(final boolean full) {
+            var inRange = isInRange(latch);
+
+            if (!full) {
+                slot++;
+                spritesFound++;
+            }
+
+            step = EvaluationStep.Y_POSITION;
+
+            if (inRange) {
+                advance(1);
+            } else {
+                skipSprite(full, 1);
+            }
+        }
+
+        /**
+         * Moves past a sprite the scanline does not want.
+         *
+         * @param full whether secondary OAM has no room left, which is what stops the address being
+         *             pulled back into alignment -- and makes it slip one byte further every time.
+         * @param by   how far past the byte just rejected the next sprite starts, when the address
+         *             is still being kept aligned. Four past a rejected Y coordinate, one past a
+         *             rejected X, which is the same place either way for an address that was
+         *             aligned already.
+         */
+        private void skipSprite(final boolean full, final int by) {
+            if (!full) {
+                advance(by);
+                oamAddress &= 0xFC;
+
+                return;
+            }
+
+            // With nowhere to put anything the two halves of the address stop agreeing. The sprite
+            // number steps on, and so does the byte number -- but the byte number has no carry into
+            // the sprite number and simply wraps, so every rejected sprite leaves the address a
+            // byte further into the next one. What the hardware then tests as a Y coordinate is a
+            // tile number, and after that an attribute byte, and after that an X: the sprite
+            // overflow flag is answering a question about the wrong bytes, and games depend on
+            // which ones.
+            var nextSprite = (oamAddress & 0xFC) + 4;
+            var nextByte = (oamAddress + 1) & 3;
+
+            advance(nextSprite + nextByte - oamAddress);
+        }
+
+        /**
+         * Moves OAMADDR on, ending the evaluation if it runs off the end of OAM.
+         * <p>
+         * Whatever is left of the scanline after that is spent reading the last address over and
+         * over and throwing away what comes back.
+         */
+        private void advance(final int by) {
+            var next = oamAddress + by;
+
+            if (next > 0xFF) {
+                step = EvaluationStep.FINISHED;
+            }
+
+            oamAddress = next & 0xFF;
+        }
+
+        /**
+         * Where in secondary OAM this leaves the sprite hardware pointing, which is rounded up to a
+         * multiple of four -- the four bytes of a sprite go across as a unit, so only a boundary is
+         * ever caught -- and reads zero once there is no room left.
+         */
+        private int secondaryOAMAddress() {
+            return spritesFound == 8 ? 0 : (slot + 3) & 0x1C;
+        }
+
+        /**
+         * @return whether a sprite with this Y coordinate covers the scanline being evaluated.
+         * Not the same test {@link PPU#fetchSpritePattern} makes a moment later: that one asks it
+         * of the low eight bits of the scanline counter, and the difference is how a sprite reaches
+         * scanline 0.
+         */
+        private boolean isInRange(final int y) {
+            var row = scanline - y;
+            return row >= 0 && row < spriteHeight();
+        }
     }
 
     /**
@@ -1098,7 +1238,7 @@ public class PPU {
         }
 
         if (dot >= 65 && dot <= 256) {
-            return spritesFound == 8 ? 0 : (evaluationSlot + 3) & 0x1C;
+            return evaluation.secondaryOAMAddress();
         }
 
         if (dot >= 257 && dot <= 320) {
@@ -1134,21 +1274,13 @@ public class PPU {
         }
 
         var row = corruptionSeed * 8;
-        refreshOAMRow(corruptionSeed);
+        oam.refreshRow(corruptionSeed);
 
         for (var i = 0; i < 8; i++) {
-            oam[row + i] = readOAM(i);
+            oam.bytes[row + i] = oam.read(i);
         }
 
         secondaryOAM[corruptionSeed] = secondaryOAM[0];
-    }
-
-    /**
-     * @return whether a sprite with this Y coordinate covers the scanline being evaluated.
-     */
-    private boolean isInRange(final int y) {
-        var row = scanline - y;
-        return row >= 0 && row < spriteHeight();
     }
 
     private int spriteHeight() {
@@ -1263,13 +1395,8 @@ public class PPU {
         var colour = 0;
 
         if ((mask & MASK_SHOW_SPRITES) != 0 && (x >= 8 || (mask & MASK_SHOW_SPRITES_LEFT) != 0)) {
-            for (var i = 0; i < spriteHalted.length; i++) {
-                if (!spriteHalted[i]) {
-                    continue;
-                }
-
-                colour = ((spritePatternHigh[i] & 0x80) != 0 ? 2 : 0)
-                        | ((spritePatternLow[i] & 0x80) != 0 ? 1 : 0);
+            for (var i = 0; i < spriteUnits.length; i++) {
+                colour = spriteUnits[i].pixel();
 
                 if (colour != 0) {
                     unit = i;
@@ -1294,7 +1421,7 @@ public class PPU {
             spriteZeroHit = true;
         }
 
-        var attributes = spriteAttributes[unit];
+        var attributes = spriteUnits[unit].attributes;
 
         if (background != 0 && (attributes & 0x20) != 0) {
             return drawnBackground;
@@ -1321,21 +1448,7 @@ public class PPU {
             return 0;
         }
 
-        // Fine X chooses which of the sixteen bits in flight is the one on screen now. It is the
-        // only part of the scroll position that is applied here rather than by the fetch.
-        var bit = 0x8000 >> fineX;
-
-        var colour = ((patternShiftHigh & bit) != 0 ? 2 : 0)
-                | ((patternShiftLow & bit) != 0 ? 1 : 0);
-
-        if (colour == 0) {
-            return 0;
-        }
-
-        var palette = ((attributeShiftHigh & bit) != 0 ? 2 : 0)
-                | ((attributeShiftLow & bit) != 0 ? 1 : 0);
-
-        return (palette << 2) | colour;
+        return background.pixel(fineX);
     }
 
     /**
@@ -1369,7 +1482,7 @@ public class PPU {
             // $2000, $2001, $2003, $2005 and $2006 are write only. The PPU does not drive the
             // data bus at all, so the CPU reads back the decaying charge left on it, and reading
             // does not refresh it.
-            default -> openBus();
+            default -> openBus.read();
         };
     }
 
@@ -1386,7 +1499,7 @@ public class PPU {
         // Every write puts the whole byte on the PPU's data pins, including a write to the
         // read-only status register and including one the warm-up window is about to drop: the
         // byte is on the pins whether or not the PPU acts on it.
-        refreshOpenBus(value, 0xFF);
+        openBus.drive(value, 0xFF);
 
         if (warmingUp && (WARM_UP_IGNORED_REGISTERS & (1 << index)) != 0) {
             // Dropped here rather than inside the handlers, which is also what keeps the write
@@ -1420,13 +1533,15 @@ public class PPU {
      * @return the byte a read would have returned.
      */
     public int peek(final int register) {
+        // openBus.value rather than openBus.read(), because a read is what applies the decay and a
+        // debugger must not be the thing that clears a bit.
         return switch (register & 7) {
-            case 2 -> status() | (openBus & 0x1F);
-            case 4 -> oam[oamAddress];
+            case 2 -> status() | (openBus.value & 0x1F);
+            case 4 -> oam.peek(oamAddress);
             case 7 -> (v & 0x3FFF) >= 0x3F00
-                    ? (openBus & 0xC0) | readPalette(v)
+                    ? (openBus.value & 0xC0) | (readPalette(v) & greyscaleMask())
                     : readBuffer;
-            default -> openBus;
+            default -> openBus.value;
         };
     }
 
@@ -1449,7 +1564,7 @@ public class PPU {
      * about to be set on -- the flag is stopped from being set at all.
      */
     private int readStatus() {
-        var value = statusAsRead() | (openBus() & 0x1F);
+        var value = statusAsRead() | (openBus.read() & 0x1F);
 
         if (scanline == VBLANK_START_LINE && dot == STATUS_DOT) {
             preventVBlankFlag = true;
@@ -1459,7 +1574,7 @@ public class PPU {
         writeLatch = false;
         updateNMILine();
 
-        refreshOpenBus(value, 0xE0);
+        openBus.drive(value, 0xE0);
         return value;
     }
 
@@ -1511,7 +1626,7 @@ public class PPU {
     private int readOAMData() {
         var value = openOAMBus();
 
-        refreshOpenBus(value, 0xFF);
+        openBus.drive(value, 0xFF);
         return value;
     }
 
@@ -1534,27 +1649,23 @@ public class PPU {
      */
     private int openOAMBus() {
         if (!isRenderingEnabled() || !isRenderingLine()) {
-            return readOAM(oamAddress);
+            return oam.read(oamAddress);
         }
 
         if (dot >= 1 && dot <= 64) {
             return 0xFF;
         }
 
-        if (dot >= 257 && dot <= 320) {
-            var slot = (dot - 257) >> 3;
-            var offset = Math.min((dot - 257) & 7, 3);
-
-            return secondaryOAM[(slot << 2) | offset];
+        // The fetch, and then the tail of the line where the background pipeline is being primed
+        // and the only thing still reading secondary OAM reads the first byte of it over and over.
+        // Both are just "wherever the counter has got to", which is why this asks rather than works
+        // it out again: the window $2004 reads through and the seed the corruption is taken from
+        // have to be the same counter, or one of them is describing hardware that does not exist.
+        if (dot >= 257) {
+            return secondaryOAM[secondaryOAMAddress()];
         }
 
-        // The tail of the line, where the background pipeline is being primed and the only thing
-        // still reading secondary OAM reads the first byte of it over and over.
-        if (dot > 320) {
-            return secondaryOAM[0];
-        }
-
-        return readOAM(oamAddress);
+        return oam.read(oamAddress);
     }
 
     /**
@@ -1578,7 +1689,7 @@ public class PPU {
         // Bits 2 to 4 of a sprite's attribute byte do not exist: there are no RAM cells behind
         // them, so they read back as zero no matter what was written. Masking here rather than on
         // the read path means OAM DMA, which funnels through this same method, is covered too.
-        writeOAM(oamAddress, (oamAddress & 3) == 2 ? value & 0xE3 : value);
+        oam.write(oamAddress, (oamAddress & 3) == 2 ? value & 0xE3 : value);
         oamAddress = (oamAddress + 1) & 0xFF;
     }
 
@@ -1632,17 +1743,17 @@ public class PPU {
         int value;
 
         if (address >= 0x3F00) {
-            value = (openBus() & 0xC0) | (readPalette(address) & greyscaleMask());
+            value = (openBus.read() & 0xC0) | (readPalette(address) & greyscaleMask());
             // The palette address itself goes on the bus -- the nametable below it is what
             // answers, because only thirteen of the fourteen lines reach the nametable RAM, but
             // A12 is high and a mapper watching the bus sees that. Reading $3F05 and reading
             // $2F05 fetch the same byte and differ only in what the cartridge saw go past.
             readBuffer = vram.read(address);
-            refreshOpenBus(value, 0x3F);
+            openBus.drive(value, 0x3F);
         } else {
             value = readBuffer;
             readBuffer = vram.read(address);
-            refreshOpenBus(value, 0xFF);
+            openBus.drive(value, 0xFF);
         }
 
         incrementAddress();
@@ -1692,39 +1803,74 @@ public class PPU {
     // ================================================================ object attribute memory
 
     /**
-     * Reads a byte of OAM, refreshing the row it lives in.
-     */
-    private int readOAM(final int address) {
-        refreshOAMRow(address >> 3);
-        return oam[address];
-    }
-
-    /**
-     * Writes a byte of OAM, refreshing the row it lives in.
-     */
-    private void writeOAM(final int address, final int value) {
-        refreshOAMRow(address >> 3);
-        oam[address] = value;
-    }
-
-    /**
-     * Lets an eight byte row of OAM decay if it has gone too long untouched, and then starts its
-     * clock again.
+     * The 256 bytes of sprite memory, and the charge holding them there.
      * <p>
      * OAM is DRAM with no refresh circuit of its own, so the only thing that keeps it alive is
-     * being read or written. The sprite evaluation does that once per scanline, but only while
-     * rendering is enabled; a row left alone for longer than {@link Region#oamDecayDots()} loses
-     * its charge and reads back as zero. Zeroing the array here rather than masking on the way out
-     * is what keeps sprite evaluation, $2004 and OAM DMA all seeing the same OAM.
+     * being read or written -- which is why every access here goes through {@link #read} or
+     * {@link #write} rather than at the array, and why the clock those two consult is the PPU's
+     * own {@link PPU#clock} rather than anything this class could keep for itself.
      *
      * @see <a href="https://www.nesdev.org/wiki/PPU_OAM">NESdev: PPU OAM</a>
      */
-    private void refreshOAMRow(final int row) {
-        if (clock - oamRefreshedOn[row] >= oamDecayDots) {
-            Arrays.fill(oam, row * 8, row * 8 + 8, 0);
+    private final class OAM {
+        private final int[] bytes = new int[256];
+
+        /**
+         * The dot each eight byte row was last refreshed on. Per row rather than per byte because
+         * that is how the DRAM is wired: touching any byte of a row refreshes all eight of them.
+         */
+        private final long[] refreshedOn = new long[32];
+
+        /**
+         * Reads a byte, refreshing the row it lives in.
+         */
+        private int read(final int address) {
+            refreshRow(address >> 3);
+            return bytes[address];
         }
 
-        oamRefreshedOn[row] = clock;
+        /**
+         * Writes a byte, refreshing the row it lives in.
+         */
+        private void write(final int address, final int value) {
+            refreshRow(address >> 3);
+            bytes[address] = value;
+        }
+
+        /**
+         * Reads a byte without refreshing anything, for debug UIs.
+         * <p>
+         * A debugger that kept OAM alive by looking at it would hide the decay it was there to
+         * watch, which is the whole reason this is not {@link #read}.
+         */
+        private int peek(final int address) {
+            return bytes[address & 0xFF];
+        }
+
+        /**
+         * Lets a row decay if it has gone too long untouched, and then starts its clock again.
+         * <p>
+         * Sprite evaluation refreshes every row once per scanline, but only while rendering is
+         * enabled; a row left alone for longer than {@link Region#oamDecayDots()} loses its charge
+         * and reads back as zero. Zeroing the array here rather than masking on the way out is what
+         * keeps sprite evaluation, $2004 and OAM DMA all seeing the same OAM.
+         */
+        private void refreshRow(final int row) {
+            if (clock - refreshedOn[row] >= oamDecayDots) {
+                Arrays.fill(bytes, row * 8, row * 8 + 8, 0);
+            }
+
+            refreshedOn[row] = clock;
+        }
+
+        /**
+         * The whole chip at once, which is what a scanline of rendering amounts to.
+         */
+        private void refreshEveryRow() {
+            for (var row = 0; row < refreshedOn.length; row++) {
+                refreshRow(row);
+            }
+        }
     }
 
     // ================================================================ palette RAM
@@ -1762,31 +1908,49 @@ public class PPU {
     // ================================================================ open bus
 
     /**
-     * Reads the open bus latch, letting any bit that has gone too long without a refresh decay
-     * to zero first.
+     * The PPU's own open bus: a row of eight tiny capacitors on the data pins.
+     * <p>
+     * Reading a write-only register, or a bit of a register the PPU does not drive, comes back as
+     * whatever is still charged here. Kept apart from {@link OAM}'s decay despite the family
+     * resemblance -- this one is per bit and per frame and leaves what it has alone, that one is
+     * per row and per dot and zeroes eight bytes at a time.
      */
-    private int openBus() {
-        for (var bit = 0; bit < 8; bit++) {
-            if (frame - openBusRefreshedOn[bit] >= OPEN_BUS_DECAY_FRAMES) {
-                openBus &= ~(1 << bit);
+    private final class OpenBus {
+        private int value;
+
+        /**
+         * The frame each bit was last refreshed on. Per bit rather than per byte because different
+         * reads drive different bits.
+         */
+        private final long[] refreshedOn = new long[8];
+
+        /**
+         * Reads the latch, letting any bit that has gone too long without a refresh decay to zero
+         * first.
+         */
+        private int read() {
+            for (var bit = 0; bit < 8; bit++) {
+                if (frame - refreshedOn[bit] >= OPEN_BUS_DECAY_FRAMES) {
+                    value &= ~(1 << bit);
+                }
             }
+
+            return value;
         }
 
-        return openBus;
-    }
+        /**
+         * Drives some of the data pins, which both sets those bits and starts their decay over.
+         *
+         * @param data the byte being driven.
+         * @param mask which bits of it the PPU actually drives; the rest keep their old charge.
+         */
+        private void drive(final int data, final int mask) {
+            value = (value & ~mask) | (data & mask);
 
-    /**
-     * Drives some of the data pins, which both sets those bits and starts their decay over.
-     *
-     * @param value the byte being driven.
-     * @param mask  which bits of it the PPU actually drives; the rest keep their old charge.
-     */
-    private void refreshOpenBus(final int value, final int mask) {
-        openBus = (openBus & ~mask) | (value & mask);
-
-        for (var bit = 0; bit < 8; bit++) {
-            if ((mask & (1 << bit)) != 0) {
-                openBusRefreshedOn[bit] = frame;
+            for (var bit = 0; bit < 8; bit++) {
+                if ((mask & (1 << bit)) != 0) {
+                    refreshedOn[bit] = frame;
+                }
             }
         }
     }
@@ -1885,6 +2049,11 @@ public class PPU {
      * </ul>
      * The two decay tables come with {@link #clock} and {@link #frame}, which is what they are
      * measured against -- a table restored without its clock would decay at the wrong time.
+     * <p>
+     * It stays one flat list even where the fields now belong to a sub-unit, because the order of
+     * this method is the file format and it was settled before there were sub-units to group them
+     * into. {@link Background} is the exception, and only because its eight fields already sat
+     * together in exactly the order it writes them.
      *
      * @see com.github.dimiro1.mynes.state.SaveState
      */
@@ -1913,53 +2082,59 @@ public class PPU {
         readBuffer = io.u8(readBuffer);
 
         oamAddress = io.u8(oamAddress);
-        io.bytes(oam);
-        io.longs(oamRefreshedOn);
+        io.bytes(oam.bytes);
+        io.longs(oam.refreshedOn);
         io.bytes(palette);
 
-        nameTableLatch = io.u8(nameTableLatch);
-        attributeLatch = io.u8(attributeLatch);
-        patternLowLatch = io.u8(patternLowLatch);
-        patternHighLatch = io.u8(patternHighLatch);
-        patternShiftLow = io.u16(patternShiftLow);
-        patternShiftHigh = io.u16(patternShiftHigh);
-        attributeShiftLow = io.u16(attributeShiftLow);
-        attributeShiftHigh = io.u16(attributeShiftHigh);
+        background.serialize(io);
 
         io.bytes(secondaryOAM);
         // A hole where the evaluation kept its own copy of the OAM address, and another where it
         // kept a byte index, before the two became the one address the hardware actually has.
         io.skip(2);
 
-        evaluationSlot = io.u8(evaluationSlot);
-        evaluationLatch = io.u8(evaluationLatch);
-        evaluationStep = io.enumeration(evaluationStep, EvaluationStep.class);
+        evaluation.slot = io.u8(evaluation.slot);
+        evaluation.latch = io.u8(evaluation.latch);
+        evaluation.step = io.enumeration(evaluation.step, EvaluationStep.class);
 
         // And a second, where the overflow scan kept its own count of the bytes still to read.
         io.skip(1);
 
-        firstAddressExamined = io.u8(firstAddressExamined);
+        evaluation.firstAddressExamined = io.u8(evaluation.firstAddressExamined);
         corruptionPending = io.bool(corruptionPending);
         corruptionSeed = io.u8(corruptionSeed);
-        spritesFound = io.u8(spritesFound);
-        spriteZeroOnNextLine = io.bool(spriteZeroOnNextLine);
+        evaluation.spritesFound = io.u8(evaluation.spritesFound);
+        evaluation.foundSpriteZero = io.bool(evaluation.foundSpriteZero);
         spriteZeroOnThisLine = io.bool(spriteZeroOnThisLine);
 
         // Where the count of sprites on the line used to be. The output units answer that for
         // themselves now: an empty slot is one whose counter never reaches a pattern worth drawing.
         io.skip(1);
 
-        io.bytes(spriteCounter);
-        io.bytes(spriteAttributes);
-        io.bytes(spritePatternLow);
-        io.bytes(spritePatternHigh);
-
-        for (var unit = 0; unit < spriteHalted.length; unit++) {
-            spriteHalted[unit] = io.bool(spriteHalted[unit]);
+        // One field across all eight units at a time, rather than one unit at a time. The order of
+        // this method is the file format, and these were five parallel arrays when it was settled.
+        for (var unit : spriteUnits) {
+            unit.counter = io.u8(unit.counter);
         }
 
-        openBus = io.u8(openBus);
-        io.longs(openBusRefreshedOn);
+        for (var unit : spriteUnits) {
+            unit.attributes = io.u8(unit.attributes);
+        }
+
+        for (var unit : spriteUnits) {
+            unit.patternLow = io.u8(unit.patternLow);
+        }
+
+        for (var unit : spriteUnits) {
+            unit.patternHigh = io.u8(unit.patternHigh);
+        }
+
+        for (var unit : spriteUnits) {
+            unit.halted = io.bool(unit.halted);
+        }
+
+        openBus.value = io.u8(openBus.value);
+        io.longs(openBus.refreshedOn);
 
         // The nametables, which live on the other side of the bus this chip owns. In here rather
         // than in a chunk of their own because nothing else can reach them.
@@ -2084,14 +2259,12 @@ public class PPU {
     /**
      * Reads a byte of OAM without side effects, for debug UIs.
      * <p>
-     * Unlike {@link #readOAM} this does not refresh the row, which is the whole point: a debugger
-     * that kept OAM alive by looking at it would hide the decay it was there to watch.
-     *
      * @param address a byte of OAM, 0 to 255.
      * @return the byte at that address.
+     * @see OAM#peek(int)
      */
     public int peekOAM(final int address) {
-        return oam[address & 0xFF];
+        return oam.peek(address);
     }
 
     /**
@@ -2109,9 +2282,6 @@ public class PPU {
         return vram.peek(address);
     }
 
-    /**
-     * What the sprite evaluation state machine is in the middle of doing.
-     */
     /**
      * Which byte of a sprite the evaluation is holding. Not which byte of OAM: a game that leaves
      * OAMADDR pointing into the middle of a sprite makes the two disagree, and every quirk this

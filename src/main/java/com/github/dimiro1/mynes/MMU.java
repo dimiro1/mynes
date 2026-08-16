@@ -61,19 +61,6 @@ public class MMU {
     // again, which is where DMA + $2002, DMA + $2007 and DMA + $4016 all come from.
 
     /**
-     * Which half of the CPU's clock this cycle is.
-     * <p>
-     * The 2A03 divides its clock in two and gives the transfer units alternate halves: reads happen
-     * on one and writes on the other. Which parity is which is a convention rather than a
-     * measurement -- nothing observable says whether cycle zero was a get or a put -- but it is
-     * <em>this</em> convention, because blargg's {@code 4-jitter} and the OAM transfer's 513 versus
-     * 514 cycles are both calibrated against it.
-     */
-    private static boolean isGetCycle(final long cpuCycle) {
-        return (cpuCycle & 1) != 0;
-    }
-
-    /**
      * True once RDY has gone low and stayed low: the CPU is off the bus.
      * <p>
      * Distinct from "a transfer is in progress", because the halt cycle itself is spent before it
@@ -498,6 +485,29 @@ public class MMU {
     }
 
     /**
+     * Hands the controllers a strobe written a cycle or two ago, if this is the cycle it lands on.
+     * <p>
+     * Nothing to do with the transfer engine, and here only because {@link #beginDMACycle} is the
+     * one thing on the CPU's path that is told the cycle counter -- and so the one place that knows
+     * which half of the clock this is. See {@link #pendingStrobe}.
+     */
+    private void settleControllerStrobe(final long cpuCycle) {
+        if (pendingStrobe < 0 || CPUBus.isGetCycle(cpuCycle)) {
+            return;
+        }
+
+        if (controller1 != null) {
+            controller1.setStrobe(pendingStrobe);
+        }
+
+        if (controller2 != null) {
+            controller2.setStrobe(pendingStrobe);
+        }
+
+        pendingStrobe = -1;
+    }
+
+    /**
      * Decides what one CPU cycle is for, and spends it if a transfer can use it.
      * <p>
      * A write to $4014 copies a whole page into OAM, and the DMC fetches one byte of its sample
@@ -525,16 +535,7 @@ public class MMU {
      * @return what the CPU should do with this cycle.
      */
     public CPUBus.DMACycle beginDMACycle(final long cpuCycle) {
-        if (pendingStrobe >= 0 && !isGetCycle(cpuCycle)) {
-            if (controller1 != null) {
-                controller1.setStrobe(pendingStrobe);
-            }
-            if (controller2 != null) {
-                controller2.setStrobe(pendingStrobe);
-            }
-
-            pendingStrobe = -1;
-        }
+        settleControllerStrobe(cpuCycle);
 
         var aborting = dmcAbortDelay > 0 && --dmcAbortDelay == 0;
 
@@ -565,7 +566,7 @@ public class MMU {
             if (dmcPrepared < DMC_PREPARATION_CYCLES) {
                 // Spent whatever else is going on: an OAM transfer underneath carries on using it.
                 dmcPrepared++;
-            } else if (isGetCycle(cpuCycle)) {
+            } else if (CPUBus.isGetCycle(cpuCycle)) {
                 var stopped = apu.finishDMCFetch(transferRead(apu.dmcFetchAddress()));
                 dmcFetching = false;
                 dmcPrepared = 0;
@@ -579,14 +580,14 @@ public class MMU {
         }
 
         if (dmaInProgress) {
-            if (dmaReadPhase && isGetCycle(cpuCycle)) {
+            if (dmaReadPhase && CPUBus.isGetCycle(cpuCycle)) {
                 dmaData = transferRead((dmaPage << 8) | dmaAddress);
                 dmaReadPhase = false;
 
                 return CPUBus.DMACycle.TRANSFER;
             }
 
-            if (!dmaReadPhase && !isGetCycle(cpuCycle)) {
+            if (!dmaReadPhase && !CPUBus.isGetCycle(cpuCycle)) {
                 ppu.write(0x04, dmaData); // Write to OAMDATA
                 dmaReadPhase = true;
                 dmaAddress++;
