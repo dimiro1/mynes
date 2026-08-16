@@ -193,8 +193,10 @@ class PPURegisterTests extends PPUFixture {
             ppu.write(OAMADDR, 0x00);
             ppu.write(OAMDATA, 0x11);
 
+            // Before dot 65, because from there the sprite evaluation owns OAMADDR and walks it
+            // wherever the sprites take it -- see theEvaluationTakesOverTheAddressAtDot65.
             ppu.write(PPUMASK, 0x08);
-            runTo(100, 100);
+            runTo(100, 10);
 
             ppu.write(OAMADDR, 0x00);
             ppu.write(OAMDATA, 0x99);
@@ -211,6 +213,34 @@ class PPURegisterTests extends PPUFixture {
 
             ppu.write(OAMADDR, 0x04);
             assertEquals(0x77, ppu.read(OAMDATA), "and the address had moved on by four, not one");
+        }
+
+        /**
+         * OAMADDR is not a register the CPU owns during rendering. From dot 65 it is the sprite
+         * evaluation's counter, which is why the value it holds at that dot decides which sprite
+         * gets treated as sprite zero -- and why a game that writes it mid-line finds something
+         * else there a dot later.
+         *
+         * @see <a href="https://www.nesdev.org/wiki/PPU_registers#Values_during_rendering">NESdev:
+         * OAMADDR values during rendering</a>
+         */
+        @Test
+        void theEvaluationTakesOverTheAddressAtDot65() {
+            // Every byte holds its own address, so what $2004 answers with says where in OAM the
+            // evaluation had got to.
+            for (var address = 0; address < 256; address++) {
+                ppu.write(OAMADDR, address);
+                ppu.write(OAMDATA, address);
+            }
+
+            ppu.write(PPUMASK, 0x08);
+            runTo(100, 40);
+            ppu.write(OAMADDR, 0x00);
+
+            runTo(100, 91);
+
+            assertNotEquals(0x00, ppu.read(OAMDATA),
+                    "the evaluation has walked the address up OAM, and $2004 follows it");
         }
 
         @Test

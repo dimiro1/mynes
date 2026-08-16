@@ -113,11 +113,7 @@ final class AccuracyCoinTests {
             entry("PPU Read Buffer", "PASS G"),
 
             entry("$2002 flag timing", "FAIL 1"),
-            entry("Arbitrary Sprite zero", "FAIL 3"),
-            entry("Misaligned OAM behavior", "FAIL 1"),
-            entry("Address $2004 behavior", "FAIL 8"),
-            entry("OAM Corruption", "FAIL 4"),
-            entry("INC $4014", "FAIL 2"),
+            entry("Address $2004 behavior", "PASS G"),
 
             entry("Stale BG Shift Registers", "FAIL 3"),
             entry("Stale Sprite Shift Regs", "FAIL 3"),
