@@ -322,6 +322,29 @@ the interrupt to land on an exact PPU dot, which needs the PPU to hold each fetc
 between accesses rather than only during them. `6-MMC3_alt` tests the revision A counter, which
 contradicts `5-MMC3` by design. No real chip passes both.
 
+**The whole console at once** runs 100thCoin's
+[AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), one NROM cartridge carrying 141 scored
+tests and vendored under `src/test/resources` like the rest. With the cursor on a page header, Start
+runs every one of them and draws the table below: a column per page of the menu and a tile per test,
+red with an error code on it where one failed, and a pale number where the ROM accepts more than one
+answer and that is which one came back. 134 pass.
+
+![AccuracyCoin's results table](shots/accuracycoin.png)
+
+`AccuracyCoinTests` runs the same 141 and holds each result against a table of what it currently
+reports, so a result that moves fails the build in either direction. A pass that became a failure is
+a regression; a failure that became a pass means the expected-failure list has outlived the bug it
+described, and the entry has to come out of it.
+
+The seven still red are three things between them. `ALE + Read`, `Hybrid Addresses` and the
+`$2007 Stress Test` want the PPU to hold each fetch address on its bus for both of the dots the read
+takes, so that a CPU access landing in the middle of one corrupts it — which is what
+`4-scanline_timing` above is waiting on as well. `APU Register Activation` and `Internal Data Bus`
+want the 2A03's two data buses kept apart: a read from $4015 updates the internal one and leaves the
+external one alone, and nothing else in the machine tells them apart. `$2004 Stress Test` and
+`BG Serial In` are each their own — what the OAM buffer holds while sprite evaluation runs OAMADDR
+past the end, and the bit the background shift registers clock in when nothing reloads them.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
