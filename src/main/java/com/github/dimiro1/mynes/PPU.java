@@ -320,12 +320,18 @@ public class PPU {
     private final int[] secondaryOAM = new int[32];
 
     /**
-     * Which sprite of the sixty four in OAM the evaluation is looking at, and which of its four
-     * bytes. The pair is a single counter on real hardware, and the fact that the overflow scan
-     * increments them independently is the whole of the sprite overflow bug.
+     * Where in OAM the evaluation has got to.
+     * <p>
+     * One address rather than a sprite number and a byte number, because that is what the hardware
+     * has -- and everything odd about sprite evaluation follows from its being one counter that
+     * different outcomes move by different amounts. A sprite that is wanted is copied a byte at a
+     * time, so four steps of one; a sprite that is not moves it on by four and then pulls the
+     * bottom two bits off, which is what re-aligns an address a game left pointing into the middle
+     * of a sprite. Only when secondary OAM is full does that re-alignment stop happening, and the
+     * counter then drifts a byte further out of step with every sprite it rejects: that, and not
+     * a separate scan with a separate bug in it, is the sprite overflow bug.
      */
-    private int evaluationSprite;
-    private int evaluationByte;
+    private int evaluationAddress;
 
     /**
      * Where in secondary OAM the next byte goes.
@@ -337,20 +343,17 @@ public class PPU {
      */
     private int evaluationLatch;
 
-    private EvaluationStep evaluationStep = EvaluationStep.FIND_SPRITE;
+    /**
+     * Which of a sprite's four bytes {@link #evaluationLatch} is holding.
+     */
+    private EvaluationStep evaluationStep = EvaluationStep.Y_POSITION;
 
     /**
-     * How many of the three bytes that follow an in-range sprite found by the overflow scan are
-     * still to be read.
+     * The address the evaluation started from, which is wherever OAMADDR pointed when the scanline
+     * reached dot 65. Sprite 0 hit is really "the first byte examined", not "sprite number zero",
+     * and the two only differ when a game leaves OAMADDR somewhere else.
      */
-    private int overflowReadsLeft;
-
-    /**
-     * The sprite the evaluation started from, which is whatever OAMADDR pointed at when the
-     * scanline reached dot 65. Sprite 0 hit is really "the first sprite examined", not "sprite
-     * number zero", and the two only differ when a game leaves OAMADDR somewhere else.
-     */
-    private int firstSpriteExamined;
+    private int firstAddressExamined;
 
     private int spritesFound;
 
@@ -777,15 +780,29 @@ public class PPU {
         }
 
         if ((dot & 1) == 1) {
-            evaluationLatch = readOAM(((evaluationSprite << 2) | evaluationByte) & 0xFF);
+            evaluationLatch = readOAM(evaluationAddress);
             return;
         }
 
+        if (evaluationStep == EvaluationStep.FINISHED) {
+            return;
+        }
+
+        // Once eight sprites are in hand nothing more is copied, but the hardware carries on
+        // reading, and it is what it does with the address between reads that goes wrong.
+        var full = spritesFound == 8;
+
+        if (!full) {
+            // Written before anyone knows whether the sprite is wanted. The slot is only kept if
+            // it turns out to be, so an unwanted Y coordinate is overwritten by the next one.
+            secondaryOAM[evaluationSlot] = evaluationLatch;
+        }
+
         switch (evaluationStep) {
-            case FIND_SPRITE -> findSprite();
-            case COPY_SPRITE -> copySprite();
-            case OVERFLOW_SCAN -> scanForOverflow();
-            case FINISHED -> nextSprite();
+            case Y_POSITION -> evaluateYPosition(full);
+            case TILE, ATTRIBUTES -> copyByte(full);
+            case X_POSITION -> evaluateXPosition(full);
+            case FINISHED -> { }
         }
     }
 
@@ -797,104 +814,127 @@ public class PPU {
             refreshOAMRow(row);
         }
 
-        firstSpriteExamined = oamAddress >> 2;
-        evaluationSprite = firstSpriteExamined;
-        evaluationByte = oamAddress & 3;
+        firstAddressExamined = oamAddress;
+        evaluationAddress = oamAddress;
         evaluationSlot = 0;
-        evaluationStep = EvaluationStep.FIND_SPRITE;
-        overflowReadsLeft = 0;
+        evaluationStep = EvaluationStep.Y_POSITION;
         spritesFound = 0;
         spriteZeroOnNextLine = false;
     }
 
     /**
-     * Looks at a sprite's Y coordinate. It is copied into the next free slot either way -- the
-     * hardware writes first and only keeps the slot if the sprite turned out to be wanted.
+     * Decides whether the sprite this byte is the Y coordinate of belongs on the next scanline.
      */
-    private void findSprite() {
-        if (spritesFound < 8) {
-            secondaryOAM[evaluationSlot] = evaluationLatch;
-        }
-
+    private void evaluateYPosition(final boolean full) {
         if (!isInRange(evaluationLatch)) {
-            nextSprite();
+            skipSprite(full);
             return;
         }
 
-        if (evaluationSlot == 0) {
-            spriteZeroOnNextLine = evaluationSprite == firstSpriteExamined;
-        }
-
-        evaluationSlot++;
-        evaluationByte = 1;
-        evaluationStep = EvaluationStep.COPY_SPRITE;
-    }
-
-    /**
-     * Copies the three bytes after the Y coordinate: tile, attributes and X.
-     */
-    private void copySprite() {
-        secondaryOAM[evaluationSlot++] = evaluationLatch;
-        evaluationByte++;
-
-        if (evaluationByte < 4) {
-            return;
-        }
-
-        evaluationByte = 0;
-        spritesFound++;
-        evaluationStep = spritesFound == 8 ? EvaluationStep.OVERFLOW_SCAN : EvaluationStep.FIND_SPRITE;
-
-        nextSprite();
-    }
-
-    /**
-     * The overflow scan, which is where the sprite overflow flag gets its reputation.
-     * <p>
-     * Once eight sprites have been found the hardware keeps looking, but the counter it uses to
-     * step through OAM is wrong: on a miss it increments the byte index as well as the sprite
-     * index, and the byte index does not carry. So after the first miss it is comparing a
-     * sprite's tile number against the scanline, then an attribute byte, then an X coordinate,
-     * and the flag ends up set or clear more or less at random. Games rely on the exact pattern,
-     * so the bug is reproduced rather than corrected.
-     */
-    private void scanForOverflow() {
-        if (overflowReadsLeft > 0) {
-            // The three bytes after an in-range hit, read with a properly carrying counter.
-            overflowReadsLeft--;
-            evaluationByte++;
-
-            if (evaluationByte == 4) {
-                evaluationByte = 0;
-                nextSprite();
+        if (full) {
+            // No room for it, which is the only thing the overflow flag actually reports.
+            spriteOverflow = true;
+        } else {
+            if (evaluationSlot == 0) {
+                spriteZeroOnNextLine = evaluationAddress == firstAddressExamined;
             }
 
-            return;
+            evaluationSlot++;
         }
 
-        if (isInRange(evaluationLatch)) {
-            spriteOverflow = true;
-            overflowReadsLeft = 3;
-            return;
-        }
-
-        // The bug: both counters move, and the byte index wraps on its own.
-        evaluationByte = (evaluationByte + 1) & 3;
-        nextSprite();
+        evaluationStep = EvaluationStep.TILE;
+        advance(1);
     }
 
     /**
-     * Moves to the next sprite, finishing the evaluation once the counter has been all the way
-     * round. Whatever is left of the scanline after that is spent reading the same byte over and
-     * over and throwing it away.
+     * The tile number and the attribute byte, which are copied without being looked at.
      */
-    private void nextSprite() {
-        evaluationSprite = (evaluationSprite + 1) & 0x3F;
-
-        if (evaluationSprite == 0) {
-            evaluationStep = EvaluationStep.FINISHED;
-            evaluationByte = 0;
+    private void copyByte(final boolean full) {
+        if (!full) {
+            evaluationSlot++;
         }
+
+        evaluationStep = evaluationStep == EvaluationStep.TILE
+                ? EvaluationStep.ATTRIBUTES
+                : EvaluationStep.X_POSITION;
+
+        advance(1);
+    }
+
+    /**
+     * The X coordinate, which is copied -- and then put through the same in-range test the Y
+     * coordinate was, for no reason anybody has ever found a use for.
+     * <p>
+     * An X that fails it moves the address on by one and then re-aligns, exactly as a rejected Y
+     * does but a byte rather than four. With aligned OAM the two are the same thing, because one
+     * more byte is where the next sprite starts anyway; it is only visible when a game has left
+     * OAMADDR pointing into the middle of a sprite.
+     */
+    private void evaluateXPosition(final boolean full) {
+        var inRange = isInRange(evaluationLatch);
+
+        if (!full) {
+            evaluationSlot++;
+            spritesFound++;
+        }
+
+        evaluationStep = EvaluationStep.Y_POSITION;
+
+        if (inRange) {
+            advance(1);
+        } else {
+            skipSprite(full, 1);
+        }
+    }
+
+    /**
+     * Moves past a sprite the scanline does not want.
+     */
+    private void skipSprite(final boolean full) {
+        skipSprite(full, 4);
+    }
+
+    /**
+     * @param full whether secondary OAM has no room left, which is what stops the address being
+     *             pulled back into alignment -- and makes it slip one byte further every time.
+     * @param by   how far past the byte just rejected the next sprite starts, when the address is
+     *             still being kept aligned. Four past a rejected Y coordinate, one past a rejected
+     *             X, which is the same place either way for an address that was aligned already.
+     */
+    private void skipSprite(final boolean full, final int by) {
+        if (!full) {
+            advance(by);
+            evaluationAddress &= 0xFC;
+
+            return;
+        }
+
+        // With nowhere to put anything the two halves of the address stop agreeing. The sprite
+        // number steps on, and so does the byte number -- but the byte number has no carry into
+        // the sprite number and simply wraps, so every rejected sprite leaves the address a byte
+        // further into the next one. What the hardware then tests as a Y coordinate is a tile
+        // number, and after that an attribute byte, and after that an X: the sprite overflow flag
+        // is answering a question about the wrong bytes, and games depend on which ones.
+        var nextSprite = (evaluationAddress & 0xFC) + 4;
+        var nextByte = (evaluationAddress + 1) & 3;
+
+        advance(nextSprite + nextByte - evaluationAddress);
+    }
+
+    /**
+     * Moves the address on, ending the evaluation if it runs off the end of OAM.
+     * <p>
+     * Whatever is left of the scanline after that is spent reading the last address over and over
+     * and throwing away what comes back.
+     */
+    private void advance(final int by) {
+        var next = evaluationAddress + by;
+
+        if (next > 0xFF) {
+            evaluationStep = EvaluationStep.FINISHED;
+        }
+
+        evaluationAddress = next & 0xFF;
     }
 
     /**
@@ -1605,13 +1645,20 @@ public class PPU {
         attributeShiftHigh = io.u16(attributeShiftHigh);
 
         io.bytes(secondaryOAM);
-        evaluationSprite = io.u8(evaluationSprite);
-        evaluationByte = io.u8(evaluationByte);
+        evaluationAddress = io.u8(evaluationAddress);
+
+        // A hole where the byte index used to be, before the sprite number and the byte number
+        // became the one address the hardware actually has.
+        io.skip(1);
+
         evaluationSlot = io.u8(evaluationSlot);
         evaluationLatch = io.u8(evaluationLatch);
         evaluationStep = io.enumeration(evaluationStep, EvaluationStep.class);
-        overflowReadsLeft = io.u8(overflowReadsLeft);
-        firstSpriteExamined = io.u8(firstSpriteExamined);
+
+        // And a second, where the overflow scan kept its own count of the bytes still to read.
+        io.skip(1);
+
+        firstAddressExamined = io.u8(firstAddressExamined);
         spritesFound = io.u8(spritesFound);
         spriteZeroOnNextLine = io.bool(spriteZeroOnNextLine);
         spriteZeroOnThisLine = io.bool(spriteZeroOnThisLine);
@@ -1776,27 +1823,20 @@ public class PPU {
     /**
      * What the sprite evaluation state machine is in the middle of doing.
      */
+    /**
+     * Which byte of a sprite the evaluation is holding. Not which byte of OAM: a game that leaves
+     * OAMADDR pointing into the middle of a sprite makes the two disagree, and every quirk this
+     * state machine has is a consequence of that.
+     */
     private enum EvaluationStep {
-        /**
-         * Reading a sprite's Y coordinate to see whether it belongs on the next scanline.
-         */
-        FIND_SPRITE,
+        Y_POSITION,
+        TILE,
+        ATTRIBUTES,
+        X_POSITION,
 
         /**
-         * Copying the three bytes after the Y coordinate of a sprite that does.
-         */
-        COPY_SPRITE,
-
-        /**
-         * Eight sprites have been found, so nothing more can be copied, but the hardware keeps
-         * reading OAM to decide whether to set the overflow flag -- with the counter bug that
-         * makes the answer famously unreliable.
-         */
-        OVERFLOW_SCAN,
-
-        /**
-         * All sixty four sprites have been looked at. Whatever is left of the scanline is spent
-         * reading OAM and discarding it.
+         * The address has run off the end of OAM. Whatever is left of the scanline is spent
+         * reading and discarding.
          */
         FINISHED,
     }
