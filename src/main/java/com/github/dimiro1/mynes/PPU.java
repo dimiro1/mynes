@@ -821,15 +821,18 @@ public class PPU {
             // the bytes -- the sprite's tile number came out of secondary OAM, not out of a
             // nametable -- but a mapper watching the address bus can see them, and so does a
             // $2007 read waiting for the next byte off the pipeline.
-            case 0, 2 -> vram.read(0x2000 | (v & 0x0FFF));
+            case 0 -> vram.read(0x2000 | (v & 0x0FFF));
 
             // The attribute latch and the X counter are loaded during the second of those two
             // reads, one on each of its dots.
-            case 3 -> spriteAttributes[unit] = secondaryOAM[unit * 4 + 2];
-            case 4 -> spriteCounter[unit] = secondaryOAM[unit * 4 + 3];
+            case 2 -> {
+                vram.read(0x2000 | (v & 0x0FFF));
+                spriteAttributes[unit] = secondaryOAM[unit * 4 + 2];
+            }
+            case 3 -> spriteCounter[unit] = secondaryOAM[unit * 4 + 3];
 
-            case 5 -> spritePatternLow[unit] = fetchSpritePattern(unit, 0);
-            case 7 -> spritePatternHigh[unit] = fetchSpritePattern(unit, 8);
+            case 4 -> spritePatternLow[unit] = fetchSpritePattern(unit, 0);
+            case 6 -> spritePatternHigh[unit] = fetchSpritePattern(unit, 8);
             default -> { /* the dots that only put an address out */ }
         }
     }
