@@ -320,20 +320,6 @@ public class PPU {
     private final int[] secondaryOAM = new int[32];
 
     /**
-     * Where in OAM the evaluation has got to.
-     * <p>
-     * One address rather than a sprite number and a byte number, because that is what the hardware
-     * has -- and everything odd about sprite evaluation follows from its being one counter that
-     * different outcomes move by different amounts. A sprite that is wanted is copied a byte at a
-     * time, so four steps of one; a sprite that is not moves it on by four and then pulls the
-     * bottom two bits off, which is what re-aligns an address a game left pointing into the middle
-     * of a sprite. Only when secondary OAM is full does that re-alignment stop happening, and the
-     * counter then drifts a byte further out of step with every sprite it rejects: that, and not
-     * a separate scan with a separate bug in it, is the sprite overflow bug.
-     */
-    private int evaluationAddress;
-
-    /**
      * Where in secondary OAM the next byte goes.
      */
     private int evaluationSlot;
@@ -780,7 +766,7 @@ public class PPU {
         }
 
         if ((dot & 1) == 1) {
-            evaluationLatch = readOAM(evaluationAddress);
+            evaluationLatch = readOAM(oamAddress);
             return;
         }
 
@@ -814,8 +800,10 @@ public class PPU {
             refreshOAMRow(row);
         }
 
+        // Wherever OAMADDR happens to be pointing. Evaluation walks it on from there and leaves it
+        // wherever it finished, which is why $2004 read during dots 65 to 256 follows the
+        // evaluation around rather than answering with whatever the CPU last asked for.
         firstAddressExamined = oamAddress;
-        evaluationAddress = oamAddress;
         evaluationSlot = 0;
         evaluationStep = EvaluationStep.Y_POSITION;
         spritesFound = 0;
@@ -836,7 +824,7 @@ public class PPU {
             spriteOverflow = true;
         } else {
             if (evaluationSlot == 0) {
-                spriteZeroOnNextLine = evaluationAddress == firstAddressExamined;
+                spriteZeroOnNextLine = oamAddress == firstAddressExamined;
             }
 
             evaluationSlot++;
@@ -904,7 +892,7 @@ public class PPU {
     private void skipSprite(final boolean full, final int by) {
         if (!full) {
             advance(by);
-            evaluationAddress &= 0xFC;
+            oamAddress &= 0xFC;
 
             return;
         }
@@ -915,10 +903,10 @@ public class PPU {
         // further into the next one. What the hardware then tests as a Y coordinate is a tile
         // number, and after that an attribute byte, and after that an X: the sprite overflow flag
         // is answering a question about the wrong bytes, and games depend on which ones.
-        var nextSprite = (evaluationAddress & 0xFC) + 4;
-        var nextByte = (evaluationAddress + 1) & 3;
+        var nextSprite = (oamAddress & 0xFC) + 4;
+        var nextByte = (oamAddress + 1) & 3;
 
-        advance(nextSprite + nextByte - evaluationAddress);
+        advance(nextSprite + nextByte - oamAddress);
     }
 
     /**
@@ -928,13 +916,13 @@ public class PPU {
      * and throwing away what comes back.
      */
     private void advance(final int by) {
-        var next = evaluationAddress + by;
+        var next = oamAddress + by;
 
         if (next > 0xFF) {
             evaluationStep = EvaluationStep.FINISHED;
         }
 
-        evaluationAddress = next & 0xFF;
+        oamAddress = next & 0xFF;
     }
 
     /**
@@ -1264,10 +1252,52 @@ public class PPU {
      * evaluation hardware is busy filling secondary OAM with $FF, and that is what a read sees.
      */
     private int readOAMData() {
-        var value = isClearingSecondaryOAM() ? 0xFF : readOAM(oamAddress);
+        var value = openOAMBus();
 
         refreshOpenBus(value, 0xFF);
         return value;
+    }
+
+    /**
+     * What $2004 answers with.
+     * <p>
+     * Outside rendering it is a plain read of OAM, and the address does not move -- that much is
+     * the register as documented. During rendering it is not a read of OAM at all: the register is
+     * wired to whatever the sprite hardware is doing with memory on that dot, and the CPU sees the
+     * traffic rather than a value it asked for. Micro Machines reads it for exactly that.
+     * <p>
+     * So the answer depends only on where the beam is. Dots 1 to 64 are the clear, which is
+     * implemented as a read that is forced to return $FF. Dots 65 to 256 are the evaluation,
+     * walking primary OAM from wherever OAMADDR was left. Dots 257 onwards are the fetch, which
+     * reads <em>secondary</em> OAM -- four bytes of a sprite, and then its X coordinate four times
+     * more while the pattern fetches happen. A game with nothing on the line reads $FF throughout
+     * that, because the clear put $FF there and evaluation found nothing to overwrite it with.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/PPU_sprite_evaluation">NESdev: sprite evaluation</a>
+     */
+    private int openOAMBus() {
+        if (!isRenderingEnabled() || !isRenderingLine()) {
+            return readOAM(oamAddress);
+        }
+
+        if (dot >= 1 && dot <= 64) {
+            return 0xFF;
+        }
+
+        if (dot >= 257 && dot <= 320) {
+            var slot = (dot - 257) >> 3;
+            var offset = Math.min((dot - 257) & 7, 3);
+
+            return secondaryOAM[(slot << 2) | offset];
+        }
+
+        // The tail of the line, where the background pipeline is being primed and the only thing
+        // still reading secondary OAM reads the first byte of it over and over.
+        if (dot > 320) {
+            return secondaryOAM[0];
+        }
+
+        return readOAM(oamAddress);
     }
 
     /**
@@ -1276,10 +1306,15 @@ public class PPU {
      * During rendering the sprite evaluation hardware owns OAM, so the byte is dropped -- but the
      * address still moves, and by four rather than one, because what the write actually clocks is
      * the sprite counter rather than the byte counter.
+     * <p>
+     * It also loses the byte counter on the way. NESdev has the increment bumping the high six
+     * bits and leaves the low two an open question; AccuracyCoin's Address $2004 behavior test 10
+     * answers it, and the answer is that they are cleared. Only a game that had left OAMADDR
+     * pointing into the middle of a sprite could tell the difference.
      */
     private void writeOAMData(final int value) {
         if (isRenderingEnabled() && isRenderingLine()) {
-            oamAddress = (oamAddress + 4) & 0xFF;
+            oamAddress = (oamAddress + 4) & 0xFC;
             return;
         }
 
@@ -1563,16 +1598,6 @@ public class PPU {
         return scanline < POST_RENDER_LINE || scanline == preRenderLine;
     }
 
-    /**
-     * @return true while the sprite evaluation hardware is filling secondary OAM with $FF, which
-     * is the one window where $2004 does not read OAM.
-     */
-    private boolean isClearingSecondaryOAM() {
-        return isRenderingEnabled()
-                && scanline < POST_RENDER_LINE
-                && dot >= 1 && dot <= 64;
-    }
-
     private void updateNMILine() {
         bus.setNMILine(vblankFlag && (ctrl & CTRL_NMI_ENABLE) != 0);
     }
@@ -1645,11 +1670,9 @@ public class PPU {
         attributeShiftHigh = io.u16(attributeShiftHigh);
 
         io.bytes(secondaryOAM);
-        evaluationAddress = io.u8(evaluationAddress);
-
-        // A hole where the byte index used to be, before the sprite number and the byte number
-        // became the one address the hardware actually has.
-        io.skip(1);
+        // A hole where the evaluation kept its own copy of the OAM address, and another where it
+        // kept a byte index, before the two became the one address the hardware actually has.
+        io.skip(2);
 
         evaluationSlot = io.u8(evaluationSlot);
         evaluationLatch = io.u8(evaluationLatch);
