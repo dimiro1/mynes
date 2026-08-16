@@ -249,7 +249,7 @@ public class APU {
         // Before anything else, because this is the edge the cycle starts on rather than work done
         // during it: a read that happened on the previous cycle has to have cleared the flag by the
         // time this cycle's own read of $4015 sees it.
-        if (frameIRQClearPending && isGetCycle(cycles)) {
+        if (frameIRQClearPending && CPUBus.isGetCycle(cycles)) {
             setFrameIRQFlag(false);
         }
 
@@ -499,19 +499,6 @@ public class APU {
     }
 
     /**
-     * Which half of the 2A03's divided clock a CPU cycle is, in the same convention
-     * {@link MMU#beginDMACycle} works in: the transfer units read on a get and write on a put.
-     * <p>
-     * Asked here of {@code cycles} at the top of {@link #tick}, where it has not been incremented
-     * yet and so still names the cycle about to run. That is one cycle earlier than the value seen
-     * from inside {@link #readStatus}, which is reached from the CPU's half of the same cycle --
-     * the chip is clocked before the processor is.
-     */
-    private static boolean isGetCycle(final long cpuCycle) {
-        return (cpuCycle & 1) != 0;
-    }
-
-    /**
      * Writes $4015: which channels are enabled.
      * <p>
      * Disabling a channel does not stop it politely, it zeroes its length counter, and the counter
@@ -602,10 +589,10 @@ public class APU {
     /**
      * Which half of the divided clock the cycle the CPU is part way through is, for code reached
      * from a bus access rather than from {@link #tick()}. One behind {@code cycles}, because the
-     * chip is clocked before the processor is. See {@link #isGetCycle}.
+     * chip is clocked before the processor is. See {@link CPUBus#isGetCycle}.
      */
     boolean isGetCycleNow() {
-        return isGetCycle(cycles - 1);
+        return CPUBus.isGetCycle(cycles - 1);
     }
 
     /**
@@ -921,7 +908,7 @@ public class APU {
 
             // Reached from the CPU's half of the cycle, by which time the chip has already been
             // clocked for it -- so the cycle doing the writing is the one before this count.
-            writeDelay = isGetCycle(cycles - 1)
+            writeDelay = CPUBus.isGetCycle(cycles - 1)
                     ? WRITE_DELAY_FROM_GET
                     : WRITE_DELAY_FROM_PUT;
         }
@@ -1765,7 +1752,7 @@ public class APU {
                 // number of CPU cycles the two land two cycles apart instead of together, which
                 // AccuracyCoin's Explicit DMA Abort reads straight off: it measures the fetch's
                 // position against code an abort has already shifted by an odd number of cycles.
-                loadDelay = LOAD_DELAY - (isGetCycle(cycles - 1) ? 0 : 1);
+                loadDelay = LOAD_DELAY - (CPUBus.isGetCycle(cycles - 1) ? 0 : 1);
             }
         }
 
