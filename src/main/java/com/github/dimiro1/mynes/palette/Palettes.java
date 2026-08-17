@@ -1,4 +1,4 @@
-package com.github.dimiro1.mynes.ui.palette;
+package com.github.dimiro1.mynes.palette;
 
 import com.github.dimiro1.mynes.Region;
 
@@ -17,7 +17,9 @@ import java.util.List;
  * goes for a missing resource.
  */
 public final class Palettes {
-    private static final Logger logger = System.getLogger("UI");
+    // "PALETTE" rather than "UI": both front ends load these, and the window is no longer the only
+    // thing that can be reading a palette file when one of them turns out to be unreadable.
+    private static final Logger logger = System.getLogger("PALETTE");
 
     /**
      * The NESdev set, and the one MyNES has always drawn with.

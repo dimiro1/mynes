@@ -1,8 +1,8 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.PPU;
-import com.github.dimiro1.mynes.ui.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.palette.NESPalette;
+import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import org.jetbrains.annotations.Nullable;
 

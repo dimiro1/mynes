@@ -12,7 +12,6 @@ import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
-import com.github.dimiro1.mynes.ui.palette.PaletteDialog;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;

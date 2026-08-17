@@ -1,4 +1,4 @@
-package com.github.dimiro1.mynes.ui.palette;
+package com.github.dimiro1.mynes.palette;
 
 /**
  * One measurement of the colours a 2C02 produces, in a shape the front end can draw with.

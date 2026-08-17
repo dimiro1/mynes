@@ -193,14 +193,15 @@ mynes/mappers/    mappers 0 to 4
 mynes/state/      save states and battery .sav files
 mynes/debug/      the disassembler and the breakpoints, shared by the window and the REPL
 mynes/video/      colour indices to pixels: the overscan crop and the frame renderer
+mynes/palette/    the measured RGB tables, and the loader that reads them out of /palettes
 mynes/headless/   the command line mode
-mynes/ui/         the Swing window, the palettes, the key bindings, the CHR viewer, the debugger
+mynes/ui/         the Swing window, the key bindings, the CHR viewer, the debugger
 ```
 
 The core knows nothing about the front end. `Cart.load` takes a `byte[]`, `NES` has no UI
 dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never RGB, because
 which RGB is a question about televisions. Keep it that way: nothing in `mynes` or `mynes/headless`
-should reach into `mynes/ui`, save for the palette tables.
+should reach into `mynes/ui`.
 
 `peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
 address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that

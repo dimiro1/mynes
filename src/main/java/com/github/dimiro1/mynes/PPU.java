@@ -1458,7 +1458,7 @@ public class PPU {
      * Both belong here rather than in the front end, because the hardware really does force the
      * index down and really does put those three bits on the wire. What the resulting signal looks
      * like on a television is somebody else's problem -- see
-     * {@code com.github.dimiro1.mynes.ui.palette.NESPalette}.
+     * {@code com.github.dimiro1.mynes.palette.NESPalette}.
      *
      * @return {@code emphasis << 6 | entry}, 0 to 511.
      */

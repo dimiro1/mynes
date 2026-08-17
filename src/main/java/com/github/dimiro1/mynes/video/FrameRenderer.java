@@ -15,7 +15,7 @@ import java.awt.image.DataBufferInt;
  * and not a common superclass.
  * <p>
  * The palette arrives as a plain {@code int[512]} rather than as a
- * {@link com.github.dimiro1.mynes.ui.palette.NESPalette}, so that drawing a picture does not oblige
+ * {@link com.github.dimiro1.mynes.palette.NESPalette}, so that drawing a picture does not oblige
  * a caller to know what a palette is made of, and so that this package depends on nothing but the
  * PPU and {@code java.awt.image}.
  */

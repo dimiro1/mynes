@@ -2,7 +2,7 @@ package com.github.dimiro1.mynes.ui.chrviewer;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.PPU;
-import com.github.dimiro1.mynes.ui.palette.NESPalette;
+import com.github.dimiro1.mynes.palette.NESPalette;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
 

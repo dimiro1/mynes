@@ -4,7 +4,7 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveStateException;
-import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.palette.Palettes;
 
 import java.io.BufferedReader;
 import java.io.IOException;

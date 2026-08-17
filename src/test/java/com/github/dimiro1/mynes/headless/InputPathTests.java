@@ -3,7 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
-import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

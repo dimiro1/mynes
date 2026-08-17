@@ -1,4 +1,4 @@
-package com.github.dimiro1.mynes.ui.palette;
+package com.github.dimiro1.mynes.palette;
 
 import com.github.dimiro1.mynes.Region;
 import org.junit.jupiter.api.Test;

@@ -1,4 +1,4 @@
-package com.github.dimiro1.mynes.ui.palette;
+package com.github.dimiro1.mynes.palette;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

@@ -1,7 +1,7 @@
 package com.github.dimiro1.mynes.video;
 
 import com.github.dimiro1.mynes.PPU;
-import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;

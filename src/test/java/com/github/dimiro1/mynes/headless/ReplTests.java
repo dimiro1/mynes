@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
-import com.github.dimiro1.mynes.ui.palette.Palettes;
+import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 

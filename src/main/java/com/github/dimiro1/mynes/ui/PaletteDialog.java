@@ -1,4 +1,7 @@
-package com.github.dimiro1.mynes.ui.palette;
+package com.github.dimiro1.mynes.ui;
+
+import com.github.dimiro1.mynes.palette.NESPalette;
+import com.github.dimiro1.mynes.palette.Palettes;
 
 import net.miginfocom.swing.MigLayout;
 
