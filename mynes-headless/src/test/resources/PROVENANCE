@@ -1,0 +1,15 @@
+Two cartridges, copied from mynes-core/src/test/resources, where the originals live alongside the
+readmes and expected-output logs that came with them.
+
+They are here rather than reached for across the module boundary because of what these tests do
+with them. Everything in the core reads a ROM off the classpath; the headless mode takes a --rom
+and opens it, so its tests have to hand it a path on disk. Surefire runs with the working directory
+set to the module, which makes src/test/resources/nestest/nestest.nes mean this copy -- the same
+string the core's tests use for theirs.
+
+The alternative is a test-jar from the core and a helper that unpacks a resource into a temporary
+directory before every run. Sixty-five kilobytes of cartridge that has not changed since 2005 is
+cheaper than that, and honest about being a copy.
+
+  nestest/nestest.nes         Kevtris, 2005. Draws its menu unprompted, which most games do not.
+  mmc3-test-2/1-clocking.nes  blargg. Mapper 4, so the report has a mapper with banking in it.

@@ -47,7 +47,7 @@ jobs:
 
       # Named without a path so that `sha256sum -c SHA256SUMS` works next to the downloaded zip.
       - name: Checksum
-        working-directory: target
+        working-directory: mynes-desktop/target
         run: |
           sha256sum mynes-*.zip > SHA256SUMS
           cat SHA256SUMS
@@ -61,5 +61,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
               --generate-notes \
-              target/mynes-*.zip \
-              target/SHA256SUMS
+              mynes-desktop/target/mynes-*.zip \
+              mynes-desktop/target/SHA256SUMS

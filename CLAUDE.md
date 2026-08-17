@@ -1,6 +1,7 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. `mvn -B test` runs everything.
+A NES emulator in Java 25, built with Maven. Three modules -- `mynes-core`, `mynes-headless`,
+`mynes-desktop` -- and `mvn -B test` at the root still runs everything.
 
 ## Seeing what the emulator does
 
@@ -12,16 +13,22 @@ Build the jar once, then run it as often as you like:
 
 ```sh
 mvn -B package -DskipTests
-JAR=target/mynes.jar
+JAR=mynes-desktop/target/mynes.jar
 
 java -jar $JAR --headless --rom ROM.nes --frames 900 \
     --input 60/40x3:start --screenshot 300,last --audio --dump ram
 ```
 
+The jar is under `mynes-desktop/` because that is the module with a main class in it, but it is
+still one file and still the whole emulator: the fat jar flattens all three modules and their
+dependencies into it.
+
 `java -jar $JAR --headless --help` lists every option. Maven can run it too --
-`mvn -q compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"` -- but it costs a
-couple of seconds a run against the jar's third of one, so build the jar for anything iterative.
-`mvn -q compile exec:exec` opens the window, which a cloud workspace has nowhere to put.
+`mvn -q -pl mynes-desktop -am compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"`
+-- but it costs a couple of seconds a run against the jar's third of one, so build the jar for
+anything iterative. `mvn -q -pl mynes-desktop -am compile exec:exec` opens the window, which a cloud
+workspace has nowhere to put. **The `-pl` is not optional**: without it Maven tries the goal in all
+three modules and the two with no main class fail first.
 
 ### What you get, and where
 
@@ -151,10 +158,10 @@ so `run.state.startedFromPowerOn` in the report is part of what to check before 
 
 ## What gets released
 
-`mvn package` also writes `target/mynes-<version>.zip` -- the jar, a launcher for each kind of shell,
-and the licences. `scripts/smoke-distribution.sh` unpacks it and runs a cartridge out of it, and both
-workflows call that, so a distribution somebody has broken fails on the pull request that broke it
-rather than at the moment a tag is pushed.
+`mvn package` also writes `mynes-desktop/target/mynes-<version>.zip` -- the jar, a launcher for each
+kind of shell, and the licences. `scripts/smoke-distribution.sh` unpacks it and runs a cartridge out
+of it, and both workflows call that, so a distribution somebody has broken fails on the pull request
+that broke it rather than at the moment a tag is pushed.
 
 Two things in there are counted rather than derived, and have to move when what they count does. The
 smoke test expects **12 palettes** -- `Palettes.NESDEV` plus the eleven under `/palettes` -- because a
@@ -163,7 +170,15 @@ build would notice one going missing. And `THIRD-PARTY.md` names the two librari
 carries, which is the file to write in if a third ever earns its place.
 
 Releasing is a tag and nothing else. `.github/workflows/release.yml` refuses one whose name disagrees
-with the pom, so the version in `pom.xml` moves first and `git tag v<version>` follows it.
+with the pom, so the version moves first and `git tag v<version>` follows it. There are four poms to
+move it in now, which is a job for the tool rather than for four edits:
+
+```sh
+mvn -B versions:set -DnewVersion=0.3.0 -DprocessAllModules -DgenerateBackupPoms=false
+```
+
+The workflow's check reads the root pom, and `help:evaluate` is an aggregator goal, so it still
+answers with one version rather than three.
 
 ## House style
 
@@ -187,21 +202,40 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
+Three Maven modules, and the arrows between them only point one way.
+
 ```
-mynes/            the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
-mynes/mappers/    mappers 0 to 4
-mynes/state/      save states and battery .sav files
-mynes/debug/      the disassembler and the breakpoints, shared by the window and the REPL
-mynes/video/      colour indices to pixels: the overscan crop and the frame renderer
-mynes/palette/    the measured RGB tables, and the loader that reads them out of /palettes
-mynes/headless/   the command line mode
-mynes/ui/         the Swing window, the key bindings, the CHR viewer, the debugger
+mynes-core/           depends on nothing
+  mynes/              the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
+  mynes/mappers/      mappers 0 to 4
+  mynes/state/        save states and battery .sav files
+  mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL
+  mynes/video/        colour indices to pixels: the overscan crop and the frame renderer
+  mynes/palette/      the measured RGB tables, and the loader that reads them out of /palettes
+
+mynes-headless/       depends on core
+  mynes/headless/     the command line mode
+
+mynes-desktop/        depends on core and headless; FlatLaf and MigLayout live here
+  mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger
 ```
 
-The core knows nothing about the front end. `Cart.load` takes a `byte[]`, `NES` has no UI
-dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never RGB, because
-which RGB is a question about televisions. Keep it that way: nothing in `mynes` or `mynes/headless`
-should reach into `mynes/ui`.
+The core knows nothing about the front end, and now it *cannot*: `Cart.load` takes a `byte[]`, `NES`
+has no UI dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never
+RGB, because which RGB is a question about televisions. What used to be a rule about imports is a
+rule about the class path. A chip that wants a window, or a REPL that wants a `JDialog`, does not
+compile.
+
+Which makes one check worth running when the dependencies change:
+
+```sh
+mvn dependency:tree -pl mynes-core       # nothing but the two test artifacts
+mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
+```
+
+The palettes are in the core rather than beside the window because both front ends draw with them
+and neither owns them. `NESPalette` is 512 packed integers and `Palettes` reads files; the one piece
+of Swing in that story, `PaletteDialog`, stayed behind in `mynes/ui/`.
 
 `peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
 address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that

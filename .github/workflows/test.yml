@@ -18,10 +18,13 @@ jobs:
 
       # ~1.4GB of Tom Harte fixtures. The committed subset covers every opcode without
       # this, so a cache miss that fails to download is not fatal to the test run.
+      #
+      # Inside the module because HarteCaseLoader resolves the path relative to wherever
+      # Surefire runs, which is the module rather than the checkout.
       - name: Cache 6502 test data
         uses: actions/cache@v6
         with:
-          path: testdata/nes6502
+          path: mynes-core/testdata/nes6502
           key: nes6502-${{ hashFiles('scripts/download-6502-tests.sh') }}
 
       - name: Download 6502 test data

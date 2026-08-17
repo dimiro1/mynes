@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Downloads the full Tom Harte SingleStepTests "nes6502/v1" set into testdata/.
+# Downloads the full Tom Harte SingleStepTests "nes6502/v1" set into
+# mynes-core/testdata/.
 #
 # Source: https://github.com/SingleStepTests/65x02 (the canonical home of the
 #         65x02 family sets; also mirrored under SingleStepTests/ProcessorTests).
@@ -9,9 +10,16 @@
 #          fetches it on demand into a gitignored directory.
 #
 # The set is 256 files (one per opcode), 10,000 cases each, ~1.4 GB total. A
-# 500-case-per-opcode subset lives in src/test/resources/harte/nes6502 and is
-# what plain `mvn test` uses; the test harness automatically prefers the full
-# set when this script has populated testdata/nes6502/v1.
+# 500-case-per-opcode subset lives in mynes-core/src/test/resources/harte/nes6502
+# and is what plain `mvn test` uses; the test harness automatically prefers the
+# full set when this script has populated mynes-core/testdata/nes6502/v1.
+#
+# Inside the module rather than at the root of the checkout, because that is
+# where HarteCaseLoader looks: it resolves a relative path, and Surefire runs
+# with the working directory set to the module being tested. Getting this wrong
+# is quiet rather than loud -- the loader simply falls back to the committed
+# subset -- so it is worth knowing that this path and that one are the same
+# decision written down twice.
 #
 # Idempotent: re-running is a no-op once the pinned commit is already unpacked.
 #
@@ -25,9 +33,9 @@ PINNED_SHA="2f6980a2d95757486c7bee24355c360e40e2a224"
 EXPECTED_FILES=256
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST_DIR="$ROOT_DIR/testdata/nes6502/v1"
-MARKER="$ROOT_DIR/testdata/nes6502/.commit"
-WORK_DIR="$ROOT_DIR/testdata/.65x02-checkout"
+DEST_DIR="$ROOT_DIR/mynes-core/testdata/nes6502/v1"
+MARKER="$ROOT_DIR/mynes-core/testdata/nes6502/.commit"
+WORK_DIR="$ROOT_DIR/mynes-core/testdata/.65x02-checkout"
 
 count_json() {
     if [ -d "$DEST_DIR" ]; then

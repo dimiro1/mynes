@@ -2,9 +2,10 @@
 #
 # Builds the committed subset of the Tom Harte nes6502/v1 test set.
 #
-# Takes the first N cases of each of the 256 opcode files from the full set in testdata/
-# (see download-6502-tests.sh) and writes them gzipped into src/test/resources, so that a
-# plain `mvn test` still exercises every opcode without a network fetch. The harness prefers
+# Takes the first N cases of each of the 256 opcode files from the full set in
+# mynes-core/testdata/ (see download-6502-tests.sh) and writes them gzipped into that module's
+# test resources, so that a plain `mvn test` still exercises every opcode without a network
+# fetch. The harness prefers
 # the full set whenever it is present, so this only has to be re-run when bumping the pinned
 # upstream commit or the sample size.
 #
@@ -13,9 +14,9 @@ set -euo pipefail
 SAMPLE_SIZE="${SAMPLE_SIZE:-500}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC_DIR="$ROOT_DIR/testdata/nes6502/v1"
-DEST_DIR="$ROOT_DIR/src/test/resources/harte/nes6502"
-MARKER="$ROOT_DIR/testdata/nes6502/.commit"
+SRC_DIR="$ROOT_DIR/mynes-core/testdata/nes6502/v1"
+DEST_DIR="$ROOT_DIR/mynes-core/src/test/resources/harte/nes6502"
+MARKER="$ROOT_DIR/mynes-core/testdata/nes6502/.commit"
 
 if [ ! -d "$SRC_DIR" ]; then
     echo "$SRC_DIR is missing -- run scripts/download-6502-tests.sh first." >&2

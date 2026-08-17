@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.dimiro1</groupId>
+        <artifactId>mynes</artifactId>
+        <version>0.2.0</version>
+    </parent>
+
+    <artifactId>mynes-core</artifactId>
+    <packaging>jar</packaging>
+
+    <name>mynes-core</name>
+    <description>The console: CPU, PPU, APU, the mappers, save states, and the picture it makes.</description>
+
+    <dependencies>
+        <!-- cpu.HarteCase and cpu.HarteCaseLoader read the Tom Harte SingleStepTests fixtures with
+             it. Nothing in src/main touches it, and nothing here has a compile dependency at all. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

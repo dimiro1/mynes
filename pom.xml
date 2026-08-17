@@ -7,16 +7,24 @@
     <groupId>com.github.dimiro1</groupId>
     <artifactId>mynes</artifactId>
     <version>0.2.0</version>
-    <packaging>jar</packaging>
+    <packaging>pom</packaging>
 
     <name>mynes</name>
     <description>mynes</description>
+
+    <!-- mynes-desktop depends on mynes-headless rather than the reverse because Main is the one way
+         into either mode, and running without a window is a mode of it. That is also why the jar
+         and the zip are built there: it is the module with a main class. -->
+    <modules>
+        <module>mynes-core</module>
+        <module>mynes-headless</module>
+        <module>mynes-desktop</module>
+    </modules>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
-        <main.class>com.github.dimiro1.mynes.ui.Main</main.class>
 
         <!-- Stamped on every entry of the jar and the zip, in place of the moment the build ran, so
              that two builds of the same source produce byte identical files and the SHA256 published
@@ -27,222 +35,120 @@
              so it is better forgotten than replaced with something that varies. -->
         <project.build.outputTimestamp>2026-08-14T00:00:00Z</project.build.outputTimestamp>
 
-        <!-- What `mvn compile exec:exec@headless` passes to the headless mode. Declared empty so
-             that leaving it off is an empty argument list rather than an uninterpolated
-             ${mynes.args} arriving as a flag nobody recognises. -->
-        <mynes.args></mynes.args>
+        <flatlaf.version>3.7.2</flatlaf.version>
+        <miglayout.version>11.4.3</miglayout.version>
+        <annotations.version>26.1.0</annotations.version>
+        <jackson.version>2.22.1</jackson.version>
+        <junit.version>6.1.3</junit.version>
     </properties>
 
+    <!-- Inherited by all three, because all three want them. Everything a single module needs is
+         declared by that module instead; the versions for those are managed below. -->
     <dependencies>
-        <!-- UI Dependencies -->
-        <dependency>
-            <groupId>com.formdev</groupId>
-            <artifactId>flatlaf</artifactId>
-            <version>3.7.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.miglayout</groupId>
-            <artifactId>miglayout-swing</artifactId>
-            <version>11.4.3</version>
-        </dependency>
-
         <!-- Annotations. Provided rather than compile: @Nullable is RetentionPolicy.CLASS, so it
              is read by javac and by an IDE and by nothing at run time, and a jar that shipped it
-             would be carrying a dependency it can never call. -->
+             would be carrying a dependency it can never call.
+
+             Provided scope does not travel between modules either, which is the other reason it is
+             here rather than in one of them: each module compiles against its own copy. -->
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
-            <version>26.1.0</version>
+            <version>${annotations.version}</version>
             <scope>provided</scope>
-        </dependency>
-
-        <!-- Test Dependencies -->
-
-        <!-- Parses the Tom Harte SingleStepTests fixtures the CPU is checked against, which is a
-             gigabyte and a half of JSON and the one job here worth a parser. The headless mode
-             writes its reports through com.github.dimiro1.mynes.headless.Json instead, so this
-             stays out of the distributed jar. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>2.22.1</version>
-            <scope>test</scope>
         </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-            <version>6.1.3</version>
+            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-params</artifactId>
-            <version>6.1.3</version>
+            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
-            <version>6.1.3</version>
+            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.formdev</groupId>
+                <artifactId>flatlaf</artifactId>
+                <version>${flatlaf.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.miglayout</groupId>
+                <artifactId>miglayout-swing</artifactId>
+                <version>${miglayout.version}</version>
+            </dependency>
+
+            <!-- Version only. Both the modules that use it declare test scope themselves, where a
+                 reader of that POM can see it: nothing ships Jackson, which is the whole point of
+                 com.github.dimiro1.mynes.headless.Json being a writer and not a parser. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.15.0</version>
+                    <configuration>
+                        <source>25</source>
+                        <target>25</target>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.6</version>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.5.1</version>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>3.5.1</version>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>3.8.0</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
         <plugins>
-            <!-- Maven Compiler Plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.15.0</version>
-                <configuration>
-                    <source>25</source>
-                    <target>25</target>
-                </configuration>
             </plugin>
-
-            <!-- Maven Surefire Plugin for running tests -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.6</version>
-            </plugin>
-
-            <!-- Maven Jar Plugin to create executable JAR -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.5.1</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>${main.class}</mainClass>
-                        </manifest>
-                    </archive>
-                </configuration>
-            </plugin>
-
-            <!-- Exec Maven Plugin, giving the emulator's two shapes one command each:
-
-                   mvn -q compile exec:exec               the window
-                   mvn -q compile exec:exec@headless -Dmynes.args="..."     no window
-
-                 Both forks of the same goal, and deliberately not exec:java for the second, which
-                 would be the obvious choice. exec:java cannot read this plugin's configuration at
-                 all: its own arguments parameter is a plain String array, so the <classpath/>
-                 element the window needs stops it before it starts.
-
-                 The headless side passes its flags as one interpolated string through
-                 <commandlineArgs>, which the plugin splits itself, honouring quotes. That is the
-                 only route a user's arguments can take: an <argument> is one argv element whatever
-                 whitespace is inside it, and setting the exec.args property instead would throw
-                 away the whole list it was meant to extend, %classpath included. -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.1</version>
-                <configuration>
-                    <executable>java</executable>
-                    <arguments>
-                        <!-- FlatLaf loads a native library, which the JDK warns about
-                             (and will block in a future release) unless access is granted. -->
-                        <argument>--enable-native-access=ALL-UNNAMED</argument>
-                        <argument>-classpath</argument>
-                        <classpath/>
-                        <argument>${main.class}</argument>
-                    </arguments>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>headless</id>
-                        <configuration>
-                            <!-- No native access to grant: nothing headless loads the look and
-                                 feel. java.awt.headless is set by Main itself, so that the jar and
-                                 this take the same route. -->
-                            <commandlineArgs>-classpath %classpath ${main.class} --headless ${mynes.args}</commandlineArgs>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!-- Maven Assembly Plugin, building the two things that get handed out: the jar that
-                 runs wherever a JDK does, and the zip that goes on the releases page.
-
-                 The order these two executions are written in is load bearing. Maven runs several
-                 executions of one plugin in the order the POM lists them, and the zip is packed out
-                 of the jar the execution above it has just made. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.8.0</version>
-                <configuration>
-                    <!-- Both of these are named rather than classified, which is a decision with a
-                         sharp edge on it: with appendAssemblyId off and no classifier given, the
-                         plugin does not attach a second artifact at all. It replaces the file
-                         behind the main one. Two such executions and `mvn install` would install
-                         the zip as the jar. Nothing here is deployed to a repository, so the honest
-                         answer is to attach neither and let both simply land in target/. -->
-                    <attach>false</attach>
-                    <appendAssemblyId>false</appendAssemblyId>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>make-assembly</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptorRefs>
-                                <descriptorRef>jar-with-dependencies</descriptorRef>
-                            </descriptorRefs>
-
-                            <!-- target/mynes.jar, and not target/mynes-0.1.0-jar-with-dependencies.jar.
-                                 The README, CLAUDE.md and the headless mode's own usage text all
-                                 name this file; a name with the version in it would stale every one
-                                 of them the next time the version moves. -->
-                            <finalName>mynes</finalName>
-
-                            <archive>
-                                <manifest>
-                                    <mainClass>${main.class}</mainClass>
-                                </manifest>
-
-                                <!-- The grant exec:exec passes on its command line, for the jar that
-                                     gets double clicked, where there is no command line to pass it
-                                     on. Without it FlatLaf's native library loads behind four lines
-                                     of warning, and stops loading at all once a future release
-                                     blocks what it currently only warns about, taking the system
-                                     file dialog with it.
-
-                                     It is also why the launcher in the distribution does not pass
-                                     the flag: the jar it runs is this one. -->
-                                <manifestEntries>
-                                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
-                                </manifestEntries>
-                            </archive>
-                        </configuration>
-                    </execution>
-
-                    <!-- target/mynes-<version>.zip: the jar above, a launcher for each kind of
-                         shell, and the licences. Built by every `mvn package` rather than behind a
-                         profile, which costs a fraction of a second and means the thing people
-                         download is exercised on every build instead of discovered broken at the
-                         moment somebody cuts a tag. -->
-                    <execution>
-                        <id>make-distribution</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/assembly/dist.xml</descriptor>
-                            </descriptors>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>
