@@ -34,7 +34,7 @@ You need Java 25 and Maven. Nothing else.
 ```sh
 git clone https://github.com/dimiro1/mynes.git
 cd mynes
-mvn -q -pl mynes-desktop -am compile exec:exec
+mvn -q compile exec:exec
 ```
 
 That opens the window. Or build a jar once and run that:
@@ -237,8 +237,7 @@ and a WAV into `target/headless`. Maven can run it too, and is shorter to type i
 once:
 
 ```sh
-mvn -q -pl mynes-desktop -am compile exec:exec@headless \
-    -Dmynes.args="--rom smb.nes --frames 900 --screenshot last"
+mvn -q compile exec:exec@headless -Dmynes.args="--rom smb.nes --frames 900 --screenshot last"
 ```
 
 The jar is worth building for anything you run more than a few times: Maven takes a couple of

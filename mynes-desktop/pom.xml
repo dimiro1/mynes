@@ -67,12 +67,12 @@
 
             <!-- Exec Maven Plugin, giving the emulator's two shapes one command each:
 
-                   mvn -q -pl mynes-desktop -am compile exec:exec
-                   mvn -q -pl mynes-desktop -am compile exec:exec@headless -Dmynes.args="..."
+                   mvn -q compile exec:exec
+                   mvn -q compile exec:exec@headless -Dmynes.args="..."
 
-                 The -pl is new with the modules and is not optional: run from the root without it,
-                 Maven would try the goal in every module, and the two that have no main class
-                 would fail before this one ran. -am builds what this depends on first.
+                 Run from the root and without naming a module, which is why the parent declares
+                 this same plugin and this same execution id skipped: the goal is invoked on every
+                 project in the reactor, and three of the four have no main class to give it.
 
                  Both forks of the same goal, and deliberately not exec:java for the second, which
                  would be the obvious choice. exec:java cannot read this plugin's configuration at
@@ -88,7 +88,18 @@
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <configuration>
+                    <!-- The parent skips this goal everywhere; this is the one place it runs. -->
+                    <skip>false</skip>
+
                     <executable>java</executable>
+
+                    <!-- The checkout, not this module, which is where the plugin would otherwise
+                         run. Every path a user types is relative to where they are standing, and
+                         that is the root: a ROM given as mynes-core/src/test/resources/... means
+                         what it looks like, and the default output directory is still the
+                         target/headless beside the other target directories. -->
+                    <workingDirectory>${project.parent.basedir}</workingDirectory>
+
                     <arguments>
                         <!-- FlatLaf loads a native library, which the JDK warns about
                              (and will block in a future release) unless access is granted. -->
@@ -102,6 +113,11 @@
                     <execution>
                         <id>headless</id>
                         <configuration>
+                            <!-- Again, and not redundantly: the parent declares this same execution
+                                 id skipped, and an inherited execution's configuration would
+                                 otherwise win over the plugin-level skip above. -->
+                            <skip>false</skip>
+
                             <!-- No native access to grant: nothing headless loads the look and
                                  feel. java.awt.headless is set by Main itself, so that the jar and
                                  this take the same route. -->

@@ -127,10 +127,20 @@
                     <version>3.5.1</version>
                 </plugin>
 
+                <!-- Skipped by default, and turned back on by mynes-desktop alone.
+
+                     `mvn compile exec:exec` invokes the goal on every project in the reactor, and
+                     three of the four have no main class to give it. Without this the command fails
+                     on the first of them before reaching the one that would have worked, and the
+                     only way to run the emulator would be to name the module on the command line.
+                     Skipping where there is nothing to run keeps the short command working. -->
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>exec-maven-plugin</artifactId>
                     <version>3.5.1</version>
+                    <configuration>
+                        <skip>true</skip>
+                    </configuration>
                 </plugin>
 
                 <plugin>
@@ -149,6 +159,41 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+
+            <!-- Declared here, rather than only managed above, so that the skip is inherited: a
+                 configuration in pluginManagement is not applied to a goal invoked straight from
+                 the command line, which is the only way this plugin is ever run.
+
+                 The empty execution matters as much as the plugin does. `exec:exec@headless` picks
+                 an execution by id, and on a project that has no execution of that name it runs
+                 with an empty configuration rather than with the plugin's, skip included. So the id
+                 has to exist everywhere the command might land, doing nothing. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+
+                <!-- Covers plain `exec:exec`, which Maven runs under the id default-cli.
+
+                     The executable is named as well as skipped, and both are needed. It is a
+                     required parameter, so Maven refuses the goal while injecting it, before the
+                     mojo has run far enough to notice it was told to skip; naming something real
+                     gets it past that, and the skip then makes it do nothing. `java` because the
+                     build is already running on one. -->
+                <configuration>
+                    <skip>true</skip>
+                    <executable>java</executable>
+                </configuration>
+
+                <executions>
+                    <execution>
+                        <id>headless</id>
+                        <configuration>
+                            <skip>true</skip>
+                            <executable>java</executable>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

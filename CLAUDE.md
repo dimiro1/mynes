@@ -24,11 +24,11 @@ still one file and still the whole emulator: the fat jar flattens all three modu
 dependencies into it.
 
 `java -jar $JAR --headless --help` lists every option. Maven can run it too --
-`mvn -q -pl mynes-desktop -am compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"`
--- but it costs a couple of seconds a run against the jar's third of one, so build the jar for
-anything iterative. `mvn -q -pl mynes-desktop -am compile exec:exec` opens the window, which a cloud
-workspace has nowhere to put. **The `-pl` is not optional**: without it Maven tries the goal in all
-three modules and the two with no main class fail first.
+`mvn -q compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"` -- but it costs a
+couple of seconds a run against the jar's third of one, so build the jar for anything iterative.
+`mvn -q compile exec:exec` opens the window, which a cloud workspace has nowhere to put. Neither
+needs a `-pl`: the modules that have no main class declare the goal skipped, and it runs from the
+root of the checkout, so a `--rom` path means what it looks like.
 
 ### What you get, and where
 
