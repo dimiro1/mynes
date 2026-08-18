@@ -32,3 +32,6 @@ testdata/
 
 # Editor
 .idea
+
+# Finder, which leaves one of these in every directory it is asked to look at
+.DS_Store

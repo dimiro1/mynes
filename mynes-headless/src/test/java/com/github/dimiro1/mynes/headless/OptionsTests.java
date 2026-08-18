@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,6 +32,20 @@ class OptionsTests {
     @Test
     void aRomIsRequired() {
         assertTrue(refused("--frames", "10").getMessage().contains("--rom"));
+    }
+
+    @Test
+    void patchesAreKeptInTheOrderTheyWereNamed() {
+        var options = parse("--rom", "x.nes", "--patch", "first.ips", "--patch", "second.ips");
+
+        assertEquals(
+                List.of(Path.of("first.ips"), Path.of("second.ips")),
+                options.patches());
+    }
+
+    @Test
+    void aRunWithNoPatchesHasNone() {
+        assertTrue(parse("--rom", "x.nes").patches().isEmpty());
     }
 
     @Test

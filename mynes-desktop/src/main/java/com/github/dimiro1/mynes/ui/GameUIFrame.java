@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
@@ -70,6 +71,13 @@ public class GameUIFrame extends JFrame {
      */
     private final SystemFileChooser fileChooser;
 
+    /**
+     * The Open with Patch dialog's second half, kept apart from {@link #fileChooser} so that each
+     * remembers its own folder: a patch and the cartridge it is for are hardly ever in the same
+     * place, since one was downloaded this afternoon and the other has been on the disk for years.
+     */
+    private final SystemFileChooser patchChooser;
+
     private final ScreenComponent screen = new ScreenComponent();
     private final KeyboardInput keyboardInput;
 
@@ -127,6 +135,12 @@ public class GameUIFrame extends JFrame {
     private Path romPath;
 
     /**
+     * The patch applied to it on the way in, or null. Kept because it is half of what the machine
+     * running is: {@link #gamePath} names this game's files after it, and the title says so.
+     */
+    private Path patchPath;
+
+    /**
      * Which slot the two quick items use. Whichever was last picked from either submenu, so the pair
      * of keys and the menus are one setting rather than two.
      */
@@ -145,6 +159,11 @@ public class GameUIFrame extends JFrame {
         fileChooser = new SystemFileChooser();
         fileChooser.addChoosableFileFilter(filter);
         fileChooser.setFileFilter(filter);
+
+        var patchFilter = new SystemFileChooser.FileNameExtensionFilter("IPS patch", "ips");
+        patchChooser = new SystemFileChooser();
+        patchChooser.addChoosableFileFilter(patchFilter);
+        patchChooser.setFileFilter(patchFilter);
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
@@ -170,6 +189,11 @@ public class GameUIFrame extends JFrame {
         JMenuItem fileMenuOpen = new JMenuItem("Open...", KeyEvent.VK_O);
         fileMenuOpen.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, command));
         fileMenu.add(fileMenuOpen);
+
+        JMenuItem fileMenuOpenPatched = new JMenuItem("Open with Patch...", KeyEvent.VK_P);
+        fileMenuOpenPatched.setAccelerator(
+                KeyStroke.getKeyStroke(KeyEvent.VK_O, command | InputEvent.SHIFT_DOWN_MASK));
+        fileMenu.add(fileMenuOpenPatched);
 
         // A function key, for the reasons the two quick state items are on function keys: it is in
         // the same physical place on every keyboard layout, it is the key every emulator since ZSNES
@@ -313,11 +337,22 @@ public class GameUIFrame extends JFrame {
 
         fileMenuOpen.addActionListener(e -> {
             if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
-                try {
-                    loadRom(fileChooser.getSelectedFile());
-                } catch (IOException ex) {
-                    logger.log(Level.ERROR, "failed to load rom", ex);
-                }
+                open(fileChooser.getSelectedFile(), null);
+            }
+        });
+
+        // Two dialogs, the cartridge first and the patch second, which is the order the two are
+        // thought about in: a romhack is a patch for a particular game rather than a thing you
+        // choose first and find a game for.
+        fileMenuOpenPatched.addActionListener(e -> {
+            if (fileChooser.showOpenDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+                return;
+            }
+
+            var rom = fileChooser.getSelectedFile();
+
+            if (patchChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
+                open(rom, patchChooser.getSelectedFile());
             }
         });
 
@@ -682,7 +717,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = Screenshots.pathFor(romPath, LocalDateTime.now());
+        var path = Screenshots.pathFor(gamePath(), LocalDateTime.now());
 
         try {
             ImageIO.write(image, "png", path.toFile());
@@ -730,7 +765,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = BatteryRAM.pathFor(romPath);
+        var path = BatteryRAM.pathFor(gamePath());
 
         try {
             var read = BatteryRAM.read(nes, path);
@@ -762,7 +797,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = BatteryRAM.pathFor(romPath);
+        var path = BatteryRAM.pathFor(gamePath());
 
         try {
             BatteryRAM.write(nes, path);
@@ -796,7 +831,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = BatteryRAM.pathFor(romPath);
+        var path = BatteryRAM.pathFor(gamePath());
 
         try {
             BatteryRAM.write(nes, path);
@@ -941,7 +976,7 @@ public class GameUIFrame extends JFrame {
      * Where a slot lives: beside the ROM, numbered, with {@code .mn} for "MyNES".
      */
     private Path slotPath(final int slot) {
-        return SaveState.slotPath(romPath, slot);
+        return SaveState.slotPath(gamePath(), slot);
     }
 
     /**
@@ -974,26 +1009,70 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * The menu's way in: load a cartridge, and tell the player if it will not load.
+     * <p>
+     * A dialog rather than a log line, because the player has just picked the file out of a chooser
+     * and is owed an answer about it. Everything {@link Cart#load} and {@link IPSPatch#read} throw is
+     * unchecked, so the two are caught together and the machine already running is left alone.
+     */
+    private void open(final File rom, final File patch) {
+        try {
+            loadRom(rom, patch);
+        } catch (IOException | RuntimeException e) {
+            report("Could not load " + rom.getName(), e);
+        }
+    }
+
+    /**
      * Loads a ROM and starts running it, replacing whatever was running before.
      * <p>
      * The cartridge is parsed before the running machine is touched, so a file that turns out not
      * to be a ROM leaves the current game playing.
+     *
+     * @param patchFile an IPS patch to apply to the ROM first, or null. It is applied to the bytes
+     *                  on their way in and nowhere else: the file the player owns is never written
+     *                  to, and closing the emulator leaves no patched copy of it behind.
      */
-    private void loadRom(final File selectedFile) throws IOException {
+    private void loadRom(final File selectedFile, final File patchFile) throws IOException {
         logger.log(Level.INFO, "loading rom " + selectedFile.getName());
 
-        Cart loaded;
+        byte[] image;
         try (var rom = new FileInputStream(selectedFile)) {
-            loaded = Cart.load(rom.readAllBytes(), selectedFile.getName());
+            image = rom.readAllBytes();
         }
 
-        // Where the file came from, which the Cart is only told the name of. The slots and the
-        // battery file are named from this, so a game keeps its saves beside it.
-        romPath = selectedFile.toPath().toAbsolutePath();
+        if (patchFile != null) {
+            // Before Cart.load rather than after, since a patch is entitled to rewrite the header
+            // and so to change the mapper, the size of the banks, or anything else it decides.
+            var patch = IPSPatch.read(Files.readAllBytes(patchFile.toPath()), patchFile.getName());
 
-        startMachine(loaded);
+            image = patch.applyTo(image);
+
+            logger.log(Level.INFO, "applied " + patch.records() + " records from "
+                    + patchFile.getName());
+        }
+
+        var loaded = Cart.load(image, selectedFile.getName());
+
+        startMachine(
+                loaded,
+                selectedFile.toPath().toAbsolutePath(),
+                patchFile == null ? null : patchFile.toPath().toAbsolutePath());
 
         logger.log(Level.INFO, "loaded rom " + selectedFile.getName());
+    }
+
+    /**
+     * What this game's own files are named after: the patch when there is one, the ROM otherwise.
+     * <p>
+     * A hack is a different game from the cartridge it was cut against, and it has to be for the one
+     * reason that matters: fifty hours of the original's battery save must not be overwritten by an
+     * afternoon with a romhack that happens to have been loaded from the same {@code .nes}. Naming
+     * them apart is what stops that, and a save state carries the cartridge's digest anyway, so one
+     * that did wander across is refused rather than loaded.
+     */
+    private Path gamePath() {
+        return patchPath == null ? romPath : patchPath;
     }
 
     /**
@@ -1002,10 +1081,31 @@ public class GameUIFrame extends JFrame {
      * the cartridge is new.
      */
     private void startMachine(final Cart cart) {
+        startMachine(cart, romPath, patchPath);
+    }
+
+    /**
+     * The same, for a cartridge that has just been loaded from somewhere.
+     *
+     * @param rom   where the .nes file was, which is what the Cart is not told.
+     * @param patch the IPS patch applied to it, or null.
+     */
+    private void startMachine(final Cart cart, final Path rom, final Path patch) {
         // Before the outgoing machine is let go of, and while its runner is stopped so it is safe to
         // read from here. Both changing cartridges and cycling the power come through here, and a
         // power cycle that lost the last hour of a game would be a cruel way to find that out.
+        //
+        // Above the two lines below for the same reason it is above the rest of this method: the
+        // fields still name the outgoing game, and saving after they had moved would write the
+        // outgoing game's RAM into the incoming game's .sav -- which the incoming game would then
+        // read back as its own progress.
         saveBattery();
+
+        // The slots, the battery file and the screenshots are named from these two, so a game keeps
+        // its saves beside it -- and a hack keeps its own beside the patch, rather than writing over
+        // the original's.
+        romPath = rom;
+        patchPath = patch;
 
         if (runner != null) {
             runner.stop();
@@ -1108,7 +1208,17 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        setTitle("MyNES - " + cart.filename() + machineKind() + machineState());
+        setTitle("MyNES - " + cart.filename() + patched() + machineKind() + machineState());
+    }
+
+    /**
+     * Which hack is playing, when one is.
+     * <p>
+     * The cartridge's own name is still first: a patched game is that game plus a patch, and a title
+     * bar naming only the patch would leave nothing to say which ROM it was applied to.
+     */
+    private String patched() {
+        return patchPath == null ? "" : " + " + patchPath.getFileName();
     }
 
     /**

@@ -20,6 +20,8 @@ import java.util.TreeSet;
  * What the command line asked for.
  *
  * @param rom              the cartridge to run.
+ * @param patches          IPS patches to apply to it, in the order they were named, before it is
+ *                         read as a cartridge at all.
  * @param frames           how many frames to run, when nothing stops it sooner.
  * @param timeout          how much real time to allow.
  * @param resetAt          frames to press the console's Reset button at the start of.
@@ -54,6 +56,7 @@ import java.util.TreeSet;
  */
 public record Options(
         Path rom,
+        List<Path> patches,
         long frames,
         Duration timeout,
         List<Long> resetAt,
@@ -138,6 +141,12 @@ public record Options(
 
             Cartridge and length
               --rom FILE            The .nes file to run. Required.
+              --patch FILE          Apply an IPS patch to it before running it, which is how a
+                                    romhack is handed out. Repeatable, and applied in the order
+                                    given. Nothing is written back: the .nes file on disk is left
+                                    exactly as it was, and only the copy in memory is patched. The
+                                    cart.sha256 in the report is the digest of the patched image,
+                                    since that is what actually ran.
               --frames N            Stop after N completed frames. Default 600, which is ten
                                     seconds of emulated time and about a second of real time.
               --timeout SECONDS     Give up after this much real time and write what there is so
@@ -256,6 +265,7 @@ public record Options(
      */
     public static Options parse(final String[] args) {
         Path rom = null;
+        var patches = new ArrayList<Path>();
         var frames = DEFAULT_FRAMES;
         var timeout = DEFAULT_TIMEOUT;
         var resetAt = new ArrayList<Long>();
@@ -293,6 +303,7 @@ public record Options(
                 case "--help", "-h" -> help = true;
                 case "--list-palettes" -> listPalettes = true;
                 case "--rom" -> rom = Path.of(value(args, ++i, flag));
+                case "--patch" -> patches.add(Path.of(value(args, ++i, flag)));
                 case "--frames" -> frames = positive(value(args, ++i, flag), flag);
                 case "--timeout" -> timeout = Duration.ofSeconds(
                         positive(value(args, ++i, flag), flag));
@@ -344,6 +355,7 @@ public record Options(
 
         return new Options(
                 rom,
+                List.copyOf(patches),
                 frames,
                 timeout,
                 List.copyOf(resetAt),

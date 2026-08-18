@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.imageio.ImageIO;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -31,8 +33,63 @@ class HeadlessRunTests {
     private static final String ROM = "src/test/resources/nestest/nestest.nes";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * Where nestest's PRG-ROM and CHR-ROM start in the file: after the sixteen byte header, and
+     * after the one 16KB bank of program that follows it. Patch offsets count from the front of the
+     * file, header included, which is what these two are here to say out loud.
+     */
+    private static final int PRG_AT = 16;
+    private static final int CHR_AT = PRG_AT + 0x4000;
+
     @TempDir
     private Path out;
+
+    /**
+     * An .ips file, assembled here because a patch for a vendored ROM is not something to vendor.
+     * Every number in the format is big endian.
+     */
+    private final class Patch {
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+        private Patch() {
+            bytes.writeBytes("PATCH".getBytes(StandardCharsets.US_ASCII));
+        }
+
+        private Patch record(final int offset, final int... data) {
+            offset(offset);
+            bytes.write(data.length >> 8);
+            bytes.write(data.length);
+
+            for (var value : data) {
+                bytes.write(value);
+            }
+
+            return this;
+        }
+
+        private Patch run(final int offset, final int count, final int value) {
+            offset(offset);
+            bytes.write(0);
+            bytes.write(0);
+            bytes.write(count >> 8);
+            bytes.write(count);
+            bytes.write(value);
+
+            return this;
+        }
+
+        private Path write(final String name) throws IOException {
+            bytes.writeBytes("EOF".getBytes(StandardCharsets.US_ASCII));
+
+            return Files.write(out.resolve(name), bytes.toByteArray());
+        }
+
+        private void offset(final int offset) {
+            bytes.write(offset >> 16);
+            bytes.write(offset >> 8);
+            bytes.write(offset);
+        }
+    }
 
     private JsonNode reportAt(final Path path) throws IOException {
         return MAPPER.readTree(Files.readString(path));
@@ -176,6 +233,106 @@ class HeadlessRunTests {
     void anExpectationThatHoldsDoesNot() throws Exception {
         assertEquals(Headless.EXIT_OK, run("--expect-motion", "1"));
         assertTrue(report().get("expectations").get(0).get("passed").asBoolean());
+    }
+
+    /**
+     * The bytes a patch writes are the bytes the machine runs.
+     * <p>
+     * The record lands on the front of nestest's CHR-ROM, which the PPU sees at $0000 and
+     * {@code --dump chr} hands straight back -- so this follows a patch all the way through the
+     * emulator rather than stopping at the report's word for it.
+     */
+    @Test
+    void aPatchReachesTheMachineThatRuns() throws Exception {
+        var patch = new Patch().record(CHR_AT, 0xAB, 0xCD).write("one.ips");
+
+        assertEquals(Headless.EXIT_OK, run("--patch", patch.toString(), "--dump", "chr"));
+
+        var chr = Files.readAllBytes(out.resolve("chr.bin"));
+
+        assertEquals((byte) 0xAB, chr[0]);
+        assertEquals((byte) 0xCD, chr[1]);
+    }
+
+    @Test
+    void patchesAreAppliedInTheOrderTheyWereNamed() throws Exception {
+        var first = new Patch().record(CHR_AT, 0x11).write("first.ips");
+        var second = new Patch().record(CHR_AT, 0x22).write("second.ips");
+
+        run("--patch", first.toString(), "--patch", second.toString(), "--dump", "chr");
+        assertEquals((byte) 0x22, Files.readAllBytes(out.resolve("chr.bin"))[0]);
+
+        run("--patch", second.toString(), "--patch", first.toString(), "--dump", "chr");
+        assertEquals((byte) 0x11, Files.readAllBytes(out.resolve("chr.bin"))[0]);
+    }
+
+    /**
+     * The point of patching at load: the ROM somebody owns is still the ROM they own afterwards.
+     */
+    @Test
+    void theRomOnDiskIsLeftAlone() throws Exception {
+        var before = Files.readAllBytes(Path.of(ROM));
+
+        run();
+        var unpatched = report().at("/cart/sha256").asText();
+
+        run("--patch", new Patch().record(CHR_AT, 0xAB).write("one.ips").toString());
+
+        assertArrayEquals(before, Files.readAllBytes(Path.of(ROM)));
+        assertNotEquals(unpatched, report().at("/cart/sha256").asText(),
+                "the digest is of the image that ran, which is the patched one");
+    }
+
+    @Test
+    void theReportNamesEveryPatchAndWhatItHeld() throws Exception {
+        var patch = new Patch().record(CHR_AT, 0xAB, 0xCD).run(CHR_AT + 16, 32, 0xFF)
+                .write("one.ips");
+
+        run("--patch", patch.toString());
+
+        var patches = report().at("/cart/patches");
+
+        assertEquals(1, patches.size());
+        assertEquals(patch.toString(), patches.get(0).get("path").asText());
+        assertEquals(2, patches.get(0).get("records").asInt());
+        assertEquals(34, patches.get(0).get("bytes").asInt());
+    }
+
+    @Test
+    void aRunWithoutPatchesSaysSoRatherThanLeavingTheKeyOut() throws Exception {
+        run();
+
+        assertTrue(report().at("/cart/patches").isArray());
+        assertEquals(0, report().at("/cart/patches").size());
+    }
+
+    /**
+     * Patching happens before the cartridge is read, which is the whole reason it happens where it
+     * does: this one rewrites the iNES header into a 32KB single-bank cartridge with no CHR-ROM at
+     * all, and the emulator builds that cartridge rather than nestest.
+     */
+    @Test
+    void aPatchThatRewritesTheHeaderChangesTheCartridge() throws Exception {
+        var patch = new Patch()
+                .record(4, 0x02)
+                .record(5, 0x00)
+                .run(PRG_AT + 0x4000, 0x4000, 0xEA)
+                .write("bigger.ips");
+
+        assertEquals(Headless.EXIT_OK, run("--patch", patch.toString()));
+
+        assertEquals(32768, report().at("/cart/prgROMBytes").asInt());
+        assertEquals(0, report().at("/cart/chrROMBytes").asInt());
+    }
+
+    @Test
+    void aFileThatIsNotAPatchExitsFive() {
+        assertEquals(Headless.EXIT_ROM, run("--patch", "README.md"));
+    }
+
+    @Test
+    void aPatchThatIsNotThereExitsFiveToo() {
+        assertEquals(Headless.EXIT_ROM, run("--patch", out.resolve("nowhere.ips").toString()));
     }
 
     @Test

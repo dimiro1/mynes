@@ -14,9 +14,13 @@
 
     <!-- mynes-desktop depends on mynes-headless rather than the reverse because Main is the one way
          into either mode, and running without a window is a mode of it. That is also why the jar
-         and the zip are built there: it is the module with a main class. -->
+         and the zip are built there: it is the module with a main class.
+
+         mynes-patch depends on nothing, mynes-core included: IPS says nothing about what it patches,
+         so the front ends are what join the two together. -->
     <modules>
         <module>mynes-core</module>
+        <module>mynes-patch</module>
         <module>mynes-headless</module>
         <module>mynes-desktop</module>
     </modules>
@@ -130,7 +134,7 @@
                 <!-- Skipped by default, and turned back on by mynes-desktop alone.
 
                      `mvn compile exec:exec` invokes the goal on every project in the reactor, and
-                     three of the four have no main class to give it. Without this the command fails
+                     four of the five have no main class to give it. Without this the command fails
                      on the first of them before reaching the one that would have worked, and the
                      only way to run the emulator would be to name the module on the command line.
                      Skipping where there is nothing to run keeps the short command working. -->

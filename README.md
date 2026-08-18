@@ -44,9 +44,10 @@ mvn -B package -DskipTests
 java -jar mynes-desktop/target/mynes.jar
 ```
 
-One jar, whichever way: it is three Maven modules -- `mynes-core` for the console, `mynes-headless`
-for the command line, `mynes-desktop` for the window -- flattened into one file with its
-dependencies. The core depends on nothing at all, which is the point of it being separate.
+One jar, whichever way: it is four Maven modules -- `mynes-core` for the console, `mynes-patch` for
+IPS patches, `mynes-headless` for the command line, `mynes-desktop` for the window -- flattened into
+one file with its dependencies. The core depends on nothing at all, which is the point of it being
+separate, and neither does the patcher.
 
 The same `mvn package` also writes the release zip into `mynes-desktop/target/`, so what the releases
 page carries is never anything a build here has not already made.
@@ -155,6 +156,12 @@ are also toggles to hide the background or the sprite layer without the game not
 
 All of it is in headless mode too — `break`, `watch`, `step` and `disasm` are commands in the
 interactive session, so the same questions can be asked from a script.
+
+**IPS patches**, from **File > Open with Patch...**, which is how a romhack is handed out. The patch
+is applied to the bytes on their way into the emulator, so the ROM on disk is left exactly as it was
+and there is no patched copy of it to keep anywhere. A patched game keeps its own save states and
+battery file, named after the patch rather than the ROM, so an afternoon with a hack cannot write
+over fifty hours of the original. `--patch` does the same thing from the command line.
 
 **Save states and battery saves**, and a **headless mode** for running with no window at all. Both
 have a section of their own below.
@@ -265,6 +272,10 @@ seconds to start up, the jar about a third of one.
 - **`--save-state` and `--load-state`** cut the wait when the same two hundred frames of title
   screen are in the way of every run. `--sram-in` and `--sram-out` do the same for battery RAM, in
   the `.sav` format other emulators read.
+- **`--patch`** applies an IPS patch to the ROM before it is read as a cartridge, so a romhack can be
+  run without a patched file existing anywhere. The report's `cart.patches` says how many records
+  each one held, and `cart.sha256` is the digest of the patched image rather than the file on disk —
+  a patch that turns out to hold no records is one cut against a different dump of the game.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
   lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what

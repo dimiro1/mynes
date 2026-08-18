@@ -1,7 +1,7 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. Three modules -- `mynes-core`, `mynes-headless`,
-`mynes-desktop` -- and `mvn -B test` at the root still runs everything.
+A NES emulator in Java 25, built with Maven. Four modules -- `mynes-core`, `mynes-patch`,
+`mynes-headless`, `mynes-desktop` -- and `mvn -B test` at the root still runs everything.
 
 ## Seeing what the emulator does
 
@@ -156,6 +156,32 @@ exit 2.
 so `run.state.startedFromPowerOn` in the report is part of what to check before diffing two of them.
 `--sram-in`/`--sram-out` do the same for battery RAM, in the `.sav` format other emulators read.
 
+### Running a romhack
+
+`--patch FILE` applies an IPS patch to the ROM before anything reads it as a cartridge. Repeatable,
+applied in the order given.
+
+```sh
+java -jar $JAR --headless --rom ROM.nes --patch hack.ips --frames 120 --screenshot last
+```
+
+**Nothing is written back.** The patch happens to the copy in memory, so the `.nes` on disk is
+untouched and there is no patched file to tidy up afterwards. Two consequences worth knowing. The
+patch is applied *before* `Cart.load`, so it may rewrite the iNES header and change the mapper, the
+bank count or the size of the cartridge. And `cart.sha256` in the report is the digest of the
+**patched** image, since that is what ran -- so a patched run and an unpatched one are two different
+cartridges as far as the report and a save state are concerned, which is the answer that keeps a
+hack's save states out of the original.
+
+`cart.patches` lists each one with the number of records it held. **Zero records is the thing to
+look for**: a patch cut against a different dump of the same game applies without complaining and
+changes nothing anybody can see. So does one cut against a headerless dump, which will write
+everything sixteen bytes early instead -- offsets count from the front of the file, header included.
+
+`RomHackTests` is the worked example: a public-domain hello-world cartridge, a checked-in `.ips` that
+rewrites the string it draws, and the two pictures compared. `src/test/resources/PROVENANCE` says
+where the cartridge came from and why that one.
+
 ## What gets released
 
 `mvn package` also writes `mynes-desktop/target/mynes-<version>.zip` -- the jar, a launcher for each
@@ -170,8 +196,8 @@ build would notice one going missing. And `THIRD-PARTY.md` names the two librari
 carries, which is the file to write in if a third ever earns its place.
 
 Releasing is a tag and nothing else. `.github/workflows/release.yml` refuses one whose name disagrees
-with the pom, so the version moves first and `git tag v<version>` follows it. There are four poms to
-move it in now, which is a job for the tool rather than for four edits:
+with the pom, so the version moves first and `git tag v<version>` follows it. There are five poms to
+move it in now, which is a job for the tool rather than for five edits:
 
 ```sh
 mvn -B versions:set -DnewVersion=0.3.0 -DprocessAllModules -DgenerateBackupPoms=false
@@ -202,7 +228,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
-Three Maven modules, and the arrows between them only point one way.
+Four Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
@@ -213,12 +239,21 @@ mynes-core/           depends on nothing
   mynes/video/        colour indices to pixels: the overscan crop and the frame renderer
   mynes/palette/      the measured RGB tables, and the loader that reads them out of /palettes
 
-mynes-headless/       depends on core
+mynes-patch/          depends on nothing either, core included
+  mynes/patch/        IPS patches, applied to a byte[] before anyone reads it as a cartridge
+
+mynes-headless/       depends on core and patch
   mynes/headless/     the command line mode
 
-mynes-desktop/        depends on core and headless; FlatLaf and MigLayout live here
+mynes-desktop/        depends on core, patch and headless; FlatLaf and MigLayout live here
   mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger
 ```
+
+`mynes-patch` is beside the console rather than inside it because IPS says nothing about what it
+patches -- a ROM, a save file, a disk image -- and a patcher that could see a `Cart` would sooner or
+later be handed one. It is the front ends that join the two together, both by reading the file,
+patching the bytes and handing the result to `Cart.load`. A patch is entitled to rewrite the iNES
+header, so it has to be applied *before* the cartridge is parsed rather than after.
 
 The core knows nothing about the front end, and now it *cannot*: `Cart.load` takes a `byte[]`, `NES`
 has no UI dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never
@@ -230,6 +265,7 @@ Which makes one check worth running when the dependencies change:
 
 ```sh
 mvn dependency:tree -pl mynes-core       # nothing but the two test artifacts
+mvn dependency:tree -pl mynes-patch      # nothing but JUnit
 mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
 ```
 
