@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.patch.IPSPatch;
+import com.github.dimiro1.mynes.patch.InvalidPatchException;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.palette.Palettes;
@@ -91,16 +93,34 @@ public final class Headless {
             return EXIT_ROM;
         }
 
+        final Patched patched;
+
+        try {
+            patched = patch(options, image);
+        } catch (IOException e) {
+            System.err.println("a patch could not be read: " + e.getMessage());
+            return EXIT_ROM;
+        } catch (InvalidPatchException e) {
+            System.err.println(e.getMessage());
+            return EXIT_ROM;
+        }
+
         final Cart cart;
 
         try {
-            cart = Cart.load(image, options.rom().toString());
+            cart = Cart.load(patched.image(), options.rom().toString());
         } catch (RuntimeException e) {
             // Everything Cart.load throws is unchecked, and a file that is not a cartridge can
             // fail in several ways -- a bad magic number, a mapper nobody has written, a truncated
             // image that runs the buffer out. They are all the same answer to the caller.
             System.err.println(options.rom() + " is not a cartridge this can run: " + e);
             return EXIT_ROM;
+        }
+
+        if (!patched.applied().isEmpty()) {
+            // The digest is of the patched image, so it names what ran rather than the file on disk.
+            // Worth saying out loud, since it is the number somebody comparing two runs reads first.
+            logger.log(Level.INFO, "running a patched image, sha256 " + cart.sha256());
         }
 
         var region = options.regionFor(cart);
@@ -187,6 +207,7 @@ public final class Headless {
                             outcome.stoppedBecause(),
                             wallClockMillis,
                             startedAt,
+                            patched.applied(),
                             outcome.screenshots(),
                             dumps,
                             expectations,
@@ -207,6 +228,38 @@ public final class Headless {
      */
     private record Outcome(
             long frames, Report.StoppedBecause stoppedBecause, List<Long> screenshots) {
+    }
+
+    /**
+     * A ROM image with whatever {@code --patch} asked for already in it, and what to say about how
+     * it got that way.
+     */
+    private record Patched(byte[] image, List<Report.Patch> applied) {
+    }
+
+    /**
+     * Applies the patches, in the order they were named.
+     * <p>
+     * Before the cartridge is parsed rather than after, because a patch may change the header: one
+     * that adds a bank moves the mapper number, the PRG count and everything downstream of them. The
+     * file on disk is never opened for writing -- the whole point of patching here is that the ROM
+     * somebody owns stays the ROM they own, and a run leaves nothing behind to clean up.
+     */
+    private static Patched patch(final Options options, final byte[] image) throws IOException {
+        var patched = image;
+        var applied = new ArrayList<Report.Patch>();
+
+        for (var path : options.patches()) {
+            var patch = IPSPatch.read(Files.readAllBytes(path), path.toString());
+
+            patched = patch.applyTo(patched);
+            applied.add(new Report.Patch(path, patch.records(), patch.bytes()));
+
+            logger.log(Level.INFO, "applied " + patch.records() + " records from "
+                    + path.getFileName() + ", leaving " + patched.length + " bytes");
+        }
+
+        return new Patched(patched, List.copyOf(applied));
     }
 
     /**

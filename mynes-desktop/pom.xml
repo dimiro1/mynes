@@ -40,6 +40,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Named here as well as by mynes-headless, since Open with Patch uses it directly. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-patch</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.formdev</groupId>
             <artifactId>flatlaf</artifactId>
@@ -72,7 +79,7 @@
 
                  Run from the root and without naming a module, which is why the parent declares
                  this same plugin and this same execution id skipped: the goal is invoked on every
-                 project in the reactor, and three of the four have no main class to give it.
+                 project in the reactor, and four of the five have no main class to give it.
 
                  Both forks of the same goal, and deliberately not exec:java for the second, which
                  would be the obvious choice. exec:java cannot read this plugin's configuration at
@@ -130,8 +137,8 @@
             <!-- Maven Assembly Plugin, building the two things that get handed out: the jar that
                  runs wherever a JDK does, and the zip that goes on the releases page.
 
-                 The fat jar it packs is the other two modules and their dependencies flattened into
-                 one file, so `java -jar mynes-desktop/target/mynes.jar` is the whole emulator.
+                 The fat jar it packs is the other three modules and their dependencies flattened
+                 into one file, so `java -jar mynes-desktop/target/mynes.jar` is the whole emulator.
 
                  The order these two executions are written in is load bearing. Maven runs several
                  executions of one plugin in the order the POM lists them, and the zip is packed out

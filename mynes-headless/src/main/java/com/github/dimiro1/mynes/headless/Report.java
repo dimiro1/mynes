@@ -54,6 +54,14 @@ public final class Report {
     public record Dump(String what, Path path, int bytes) {
     }
 
+    /**
+     * A patch that was applied, and what it turned out to contain. The counts are here because a
+     * patch cut against a different dump of the same game applies without complaint and does nothing
+     * useful, and "0 records" is the only sign of it the report can offer.
+     */
+    public record Patch(Path path, int records, int bytes) {
+    }
+
     public record Expectation(String name, boolean passed, String detail) {
     }
 
@@ -64,6 +72,7 @@ public final class Report {
      * @param stoppedBecause  why it stopped.
      * @param wallClockMillis how long that took in real time.
      * @param startedAt       when it started.
+     * @param patches         the patches applied to the ROM image before it was read as a cartridge.
      * @param screenshots     the frames photographed.
      * @param dumps           the memories written out.
      * @param expectations    what was asked of the run, and whether it held.
@@ -74,6 +83,7 @@ public final class Report {
             StoppedBecause stoppedBecause,
             long wallClockMillis,
             Instant startedAt,
+            List<Patch> patches,
             List<Long> screenshots,
             List<Dump> dumps,
             List<Expectation> expectations,
@@ -132,7 +142,20 @@ public final class Report {
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());
         cartridge.put("name", Path.of(cart.filename()).getFileName().toString());
+
+        // Of the image the machine actually ran, which is the patched one when anything below this
+        // is non-empty. It names what ran rather than what is on disk, which is what a digest in
+        // this document is for.
         cartridge.put("sha256", cart.sha256());
+
+        var patches = cartridge.putArray("patches");
+        for (var patch : outcome.patches()) {
+            var node = patches.addObject();
+            node.put("path", patch.path().toString());
+            node.put("records", patch.records());
+            node.put("bytes", patch.bytes());
+        }
+
         cartridge.put("mapper", cart.mapperNumber());
         cartridge.put("prgROMBytes", cart.prgROM().length);
         cartridge.put("chrROMBytes", cart.chrROM().length);

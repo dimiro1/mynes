@@ -23,6 +23,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- The patch flag applies one to the file before Cart.load sees it. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-patch</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- The tests read back the reports Json writes, which is how they assert on one without
              growing a parser on the side that ships. -->
         <dependency>
