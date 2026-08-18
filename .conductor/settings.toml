@@ -15,6 +15,6 @@ icon = "gamepad-2"
 # anything else, run the headless mode by hand; see CLAUDE.md. What it is worth is proving the
 # emulator works where the button above is greyed out.
 [scripts.run.headless]
-command = "mvn -q compile exec:exec@headless -Dmynes.args=\"--rom src/test/resources/nestest/nestest.nes --frames 300 --screenshot last --expect-not-blank\""
+command = "mvn -q compile exec:exec@headless -Dmynes.args=\"--rom mynes-core/src/test/resources/nestest/nestest.nes --frames 300 --screenshot last --expect-not-blank\""
 available_in = [ "local", "cloud" ]
 icon = "terminal"

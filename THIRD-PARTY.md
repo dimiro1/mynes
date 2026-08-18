@@ -35,4 +35,5 @@ writes its own reports rather than borrowing it.
 
 The palettes bundled under `/palettes` in the jar are data rather than software, and are neither
 FlatLaf's nor MigLayout's. Their sources, terms and credits are in the `PROVENANCE` file beside them,
-which is inside `mynes.jar` and also in the repository at `src/main/resources/palettes/PROVENANCE`.
+which is inside `mynes.jar` and also in the repository at
+`mynes-core/src/main/resources/palettes/PROVENANCE`.

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.dimiro1</groupId>
+        <artifactId>mynes</artifactId>
+        <version>0.2.0</version>
+    </parent>
+
+    <artifactId>mynes-desktop</artifactId>
+    <packaging>jar</packaging>
+
+    <name>mynes-desktop</name>
+    <description>The Swing window, and the Main that is the one way into either mode.</description>
+
+    <properties>
+        <main.class>com.github.dimiro1.mynes.ui.Main</main.class>
+
+        <!-- What `mvn compile exec:exec@headless` passes to the headless mode. Declared empty so
+             that leaving it off is an empty argument list rather than an uninterpolated
+             ${mynes.args} arriving as a flag nobody recognises. -->
+        <mynes.args></mynes.args>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Main dispatches the headless flag to Headless.run, which is what lets one jar be both
+             things. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-headless</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.miglayout</groupId>
+            <artifactId>miglayout-swing</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Maven Jar Plugin to create executable JAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${main.class}</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+
+            <!-- Exec Maven Plugin, giving the emulator's two shapes one command each:
+
+                   mvn -q compile exec:exec
+                   mvn -q compile exec:exec@headless -Dmynes.args="..."
+
+                 Run from the root and without naming a module, which is why the parent declares
+                 this same plugin and this same execution id skipped: the goal is invoked on every
+                 project in the reactor, and three of the four have no main class to give it.
+
+                 Both forks of the same goal, and deliberately not exec:java for the second, which
+                 would be the obvious choice. exec:java cannot read this plugin's configuration at
+                 all: its own arguments parameter is a plain String array, so the <classpath/>
+                 element the window needs stops it before it starts.
+
+                 The headless side passes its flags as one interpolated string through
+                 <commandlineArgs>, which the plugin splits itself, honouring quotes. That is the
+                 only route a user's arguments can take: an <argument> is one argv element whatever
+                 whitespace is inside it, and setting the exec.args property instead would throw
+                 away the whole list it was meant to extend, %classpath included. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <configuration>
+                    <!-- The parent skips this goal everywhere; this is the one place it runs. -->
+                    <skip>false</skip>
+
+                    <executable>java</executable>
+
+                    <!-- The checkout, not this module, which is where the plugin would otherwise
+                         run. Every path a user types is relative to where they are standing, and
+                         that is the root: a ROM given as mynes-core/src/test/resources/... means
+                         what it looks like, and the default output directory is still the
+                         target/headless beside the other target directories. -->
+                    <workingDirectory>${project.parent.basedir}</workingDirectory>
+
+                    <arguments>
+                        <!-- FlatLaf loads a native library, which the JDK warns about
+                             (and will block in a future release) unless access is granted. -->
+                        <argument>--enable-native-access=ALL-UNNAMED</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${main.class}</argument>
+                    </arguments>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>headless</id>
+                        <configuration>
+                            <!-- Again, and not redundantly: the parent declares this same execution
+                                 id skipped, and an inherited execution's configuration would
+                                 otherwise win over the plugin-level skip above. -->
+                            <skip>false</skip>
+
+                            <!-- No native access to grant: nothing headless loads the look and
+                                 feel. java.awt.headless is set by Main itself, so that the jar and
+                                 this take the same route. -->
+                            <commandlineArgs>-classpath %classpath ${main.class} --headless ${mynes.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Maven Assembly Plugin, building the two things that get handed out: the jar that
+                 runs wherever a JDK does, and the zip that goes on the releases page.
+
+                 The fat jar it packs is the other two modules and their dependencies flattened into
+                 one file, so `java -jar mynes-desktop/target/mynes.jar` is the whole emulator.
+
+                 The order these two executions are written in is load bearing. Maven runs several
+                 executions of one plugin in the order the POM lists them, and the zip is packed out
+                 of the jar the execution above it has just made. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <!-- Both of these are named rather than classified, which is a decision with a
+                         sharp edge on it: with appendAssemblyId off and no classifier given, the
+                         plugin does not attach a second artifact at all. It replaces the file
+                         behind the main one. Two such executions and `mvn install` would install
+                         the zip as the jar. Nothing here is deployed to a repository, so the honest
+                         answer is to attach neither and let both simply land in target/. -->
+                    <attach>false</attach>
+                    <appendAssemblyId>false</appendAssemblyId>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+
+                            <!-- target/mynes.jar, and not target/mynes-desktop-0.2.0-jar-with-dependencies.jar.
+                                 The README, CLAUDE.md and the headless mode's own usage text all
+                                 name this file; a name with the version in it would stale every one
+                                 of them the next time the version moves. -->
+                            <finalName>mynes</finalName>
+
+                            <archive>
+                                <manifest>
+                                    <mainClass>${main.class}</mainClass>
+                                </manifest>
+
+                                <!-- The grant exec:exec passes on its command line, for the jar that
+                                     gets double clicked, where there is no command line to pass it
+                                     on. Without it FlatLaf's native library loads behind four lines
+                                     of warning, and stops loading at all once a future release
+                                     blocks what it currently only warns about, taking the system
+                                     file dialog with it.
+
+                                     It is also why the launcher in the distribution does not pass
+                                     the flag: the jar it runs is this one. -->
+                                <manifestEntries>
+                                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
+
+                    <!-- target/mynes-<version>.zip: the jar above, a launcher for each kind of
+                         shell, and the licences. Built by every `mvn package` rather than behind a
+                         profile, which costs a fraction of a second and means the thing people
+                         download is exercised on every build instead of discovered broken at the
+                         moment somebody cuts a tag. -->
+                    <execution>
+                        <id>make-distribution</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/dist.xml</descriptor>
+                            </descriptors>
+
+                            <!-- Spelled out, because the default is ${project.build.finalName} and
+                                 this module is called mynes-desktop. Without this the zip ships as
+                                 mynes-desktop-0.2.0.zip: a name that agrees with neither the
+                                 directory inside it nor the glob smoke-distribution.sh looks for,
+                                 and that tells whoever downloads it they have only got part of
+                                 something. -->
+                            <finalName>mynes-${project.version}</finalName>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

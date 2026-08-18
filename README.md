@@ -41,11 +41,15 @@ That opens the window. Or build a jar once and run that:
 
 ```sh
 mvn -B package -DskipTests
-java -jar target/mynes.jar
+java -jar mynes-desktop/target/mynes.jar
 ```
 
-The same `mvn package` also writes the release zip into `target/`, so what the releases page carries
-is never anything a build here has not already made.
+One jar, whichever way: it is three Maven modules -- `mynes-core` for the console, `mynes-headless`
+for the command line, `mynes-desktop` for the window -- flattened into one file with its
+dependencies. The core depends on nothing at all, which is the point of it being separate.
+
+The same `mvn package` also writes the release zip into `mynes-desktop/target/`, so what the releases
+page carries is never anything a build here has not already made.
 
 ## Controls
 
@@ -224,7 +228,7 @@ on a machine with no display, or for a coding agent that cannot look at a window
 
 ```sh
 mvn -B package -DskipTests
-java -jar target/mynes.jar --headless \
+java -jar mynes-desktop/target/mynes.jar --headless \
     --rom smb.nes --frames 900 --input 60/40x3:start --screenshot 300,last --audio
 ```
 
@@ -285,7 +289,7 @@ the exact per-cycle bus traffic. nestest passes as well.
 For the full 10,000 cases per opcode, fetch the upstream set once:
 
 ```sh
-./scripts/download-6502-tests.sh   # ~1.4GB into the gitignored testdata/
+./scripts/download-6502-tests.sh   # ~1.4GB into the gitignored mynes-core/testdata/
 mvn test                           # picks the full set up automatically
 ```
 
@@ -296,8 +300,8 @@ mvn test -Dgroups=bus-trace
 mvn test -DexcludedGroups=bus-trace
 ```
 
-**The PPU** runs blargg's test ROMs, vendored under `src/test/resources` together with the readme
-that came with each suite: `ppu-vbl-nmi` (VBlank and NMI timing to a single PPU clock),
+**The PPU** runs blargg's test ROMs, vendored under `mynes-core/src/test/resources` together with
+the readme that came with each suite: `ppu-vbl-nmi` (VBlank and NMI timing to a single PPU clock),
 `ppu-sprite-hit`, `ppu-sprite-overflow`, `oam` (`oam_read` and `oam_stress`), `ppu-open-bus`,
 `ppu-read-buffer` and `ppu-tests-2005` (palette RAM, VRAM access, sprite RAM, VBlank clear time).
 
@@ -324,10 +328,10 @@ contradicts `5-MMC3` by design. No real chip passes both.
 
 **The whole console at once** runs 100thCoin's
 [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin), one NROM cartridge carrying 141 scored
-tests and vendored under `src/test/resources` like the rest. With the cursor on a page header, Start
-runs every one of them and draws the table below: a column per page of the menu and a tile per test,
-red with an error code on it where one failed, and a pale number where the ROM accepts more than one
-answer and that is which one came back. 134 pass.
+tests and vendored under `mynes-core/src/test/resources` like the rest. With the cursor on a page
+header, Start runs every one of them and draws the table below: a column per page of the menu and a
+tile per test, red with an error code on it where one failed, and a pale number where the ROM accepts
+more than one answer and that is which one came back. 134 pass.
 
 ![AccuracyCoin's results table](shots/accuracycoin.png)
 

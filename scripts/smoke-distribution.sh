@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Unpacks target/mynes-*.zip somewhere temporary and runs the emulator out of it, the way somebody
+# Unpacks mynes-desktop/target/mynes-*.zip somewhere temporary and runs the emulator out of it, the way somebody
 # who downloaded it from the releases page would. Run it after `mvn -B package -DskipTests`. Both
 # workflows call this rather than spelling it out, so there is one copy of the check to keep right.
 #
@@ -16,7 +16,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Committed, so this needs no network and no ROM of anybody's own. nestest draws its menu unprompted,
 # which most cartridges do not: Super Mario Bros. and Tetris would sit on a title screen here and
 # pass just as well without ever having run a frame of anything.
-ROM="$ROOT_DIR/src/test/resources/nestest/nestest.nes"
+ROM="$ROOT_DIR/mynes-core/src/test/resources/nestest/nestest.nes"
 FRAMES=60
 
 # Palettes.NESDEV is compiled in; the other eleven are read out of /palettes inside the jar.
@@ -27,11 +27,11 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 shopt -s nullglob
-zips=("$ROOT_DIR"/target/mynes-*.zip)
+zips=("$ROOT_DIR"/mynes-desktop/target/mynes-*.zip)
 shopt -u nullglob
 
 if [ ${#zips[@]} -ne 1 ]; then
-    echo "expected one target/mynes-*.zip and found ${#zips[@]}; run mvn package first." >&2
+    echo "expected one mynes-desktop/target/mynes-*.zip and found ${#zips[@]}; run mvn package first." >&2
     exit 1
 fi
 

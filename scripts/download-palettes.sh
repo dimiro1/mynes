@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Fetches the palettes MyNES draws with into src/main/resources/palettes.
+# Fetches the palettes MyNES draws with into mynes-core/src/main/resources/palettes.
 #
 # Source:  https://www.firebrandx.com/nespalette.html (the standalone zips) and
 #          https://www.firebrandx.com/downloads/Novemeber-2017-Palettes.zip (the bundle --
@@ -35,7 +35,7 @@ PAL_BYTES=1536
 PAL_SHA1="3955a5f2685e94bda1a539e39fd98d468fe0e56e"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST_DIR="$ROOT_DIR/src/main/resources/palettes"
+DEST_DIR="$ROOT_DIR/mynes-core/src/main/resources/palettes"
 WORK_DIR="$(mktemp -d)"
 
 trap 'rm -rf "$WORK_DIR"' EXIT
