@@ -46,6 +46,7 @@ public final class Repl {
             read-ppu ADDR [COUNT]      PPU bus: pattern tables and nametables
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
+            hack NAME on|off           unlimited-sprites, which --hack also switches on
             save-state PATH            write the whole machine to a file
             load-state PATH            put one back, from this same ROM
             audio                      peak, RMS and silence since the last audio command
@@ -162,6 +163,7 @@ public final class Repl {
             case "read", "read-ppu" -> read(name, words);
             case "oam" -> oam(words);
             case "dump" -> dump(words);
+            case "hack" -> hack(words);
             case "save-state" -> saveState(words);
             case "load-state" -> loadState(words);
             case "audio" -> audio();
@@ -463,6 +465,43 @@ public final class Repl {
             node.put("what", what);
             node.put("path", path.toString());
             node.put("bytes", bytes.length);
+        });
+    }
+
+    /**
+     * Switches one of the things the console does not do on or off, mid-session.
+     * <p>
+     * Worth having as a command rather than only as a flag because the difference a hack makes is
+     * something to look at: run to the frame the sprites flicker on, turn it on, take a screenshot,
+     * turn it off, take another. Nothing about the machine changes, so the two pictures are of the
+     * same moment.
+     */
+    private void hack(final String[] words) {
+        if (words.length < 3) {
+            throw new UsageException(
+                    "hack wants a name and on or off, as in \"hack "
+                            + Options.UNLIMITED_SPRITES + " on\".");
+        }
+
+        var name = words[1].toLowerCase(Locale.ROOT);
+
+        var on = switch (words[2].toLowerCase(Locale.ROOT)) {
+            case "on" -> true;
+            case "off" -> false;
+            default -> throw new UsageException(
+                    "hack is switched on or off, not \"" + words[2] + "\".");
+        };
+
+        switch (name) {
+            case Options.UNLIMITED_SPRITES -> session.nes().getPPU().setUnlimitedSprites(on);
+            default -> throw new UsageException(
+                    "hack does not know \"" + words[1] + "\". It knows "
+                            + String.join(", ", Options.HACKS) + ".");
+        }
+
+        reply("hack", node -> {
+            node.put("hack", name);
+            node.put("on", on);
         });
     }
 

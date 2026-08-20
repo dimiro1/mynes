@@ -1,5 +1,6 @@
 Two cartridges copied from mynes-core/src/test/resources, where the originals live alongside the
-readmes and expected-output logs that came with them, and one that has no original here.
+readmes and expected-output logs that came with them, one that has no original here, and one with no
+original anywhere.
 
 They are here rather than reached for across the module boundary because of what these tests do
 with them. Everything in the core reads a ROM off the classpath; the headless mode takes a --rom
@@ -29,3 +30,28 @@ quietly tracking somebody else's.
                               of "Hello World!" at 0x398 to "MyNES Patch!". A real patch file rather
                               than one the test builds, since the file format is half of what is
                               being tested.
+
+The fourth was written here, because nothing anybody has shipped does what it does. It puts all
+sixty four sprites on one scanline, which is the overflow --hack unlimited-sprites exists to undo --
+and a real game is written to avoid exactly that, so a collection of them is no help: Punch-Out!!'s
+first fight peaks at seven sprites on a line and Battletoads' first level at eight.
+
+It is checked in three times over, which is a duplication on purpose, because the three are for
+different readers. The .nes is what the tests run, since handing the headless mode a path is the
+point of this directory. The Java beside it is what builds that file, so the bytes are accounted for
+without an assembler in the build. And the .s is the program as a program, for the next person to
+change it. Only the first two can drift, and a test stops them.
+
+  sprite-limit/sprite-limit.nes  Written here, no licence to worry about. NROM, 24592 bytes: one
+                                 row of sixty four sprites on one scanline, which is the overflow
+                                 --hack unlimited-sprites undoes.
+  SpriteLimitROM.java            In this module's test sources, and the assembler: it emits the
+                                 bytes above, with the disassembly beside each instruction, and its
+                                 main rewrites the file. SpriteLimitTests asserts the two agree and
+                                 its failure says the command, so the binary cannot outlive the
+                                 code that explains it.
+  sprite-limit/sprite-limit.s    The same program for asm6, which nothing in the build reads and
+                                 nothing here has run -- it is reference, checked against the .nes
+                                 instruction for instruction through the emulator's own
+                                 disassembler rather than by assembling it. Nothing enforces that,
+                                 so a change to the program has to be made here as well by hand.

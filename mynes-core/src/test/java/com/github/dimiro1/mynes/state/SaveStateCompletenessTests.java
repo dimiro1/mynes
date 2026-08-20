@@ -63,6 +63,11 @@ class SaveStateCompletenessTests {
                     "a debug switch belonging to whoever is watching, not to the machine"),
             Map.entry("PPU.spriteLayerVisible",
                     "the same, and restoring it would contradict the Debug menu's tick"),
+            Map.entry("ExtraSprites.enabled",
+                    "whether anybody asked for the sprite limit to be lifted, which is the Hacks"
+                            + " menu's tick rather than anything the machine holds. The units it"
+                            + " loads do travel, so a state taken mid-scanline still draws the rest"
+                            + " of that line the way running straight through would have"),
             Map.entry("MMU.writeListener",
                     "where a debugger's watchpoints wire in -- whoever is watching the machine"
                             + " rather than the machine, and a state that put one back would be"
@@ -156,6 +161,7 @@ class SaveStateCompletenessTests {
         run(original, 5);
         original.getController1().setButtons(Controller.BUTTON_START | Controller.BUTTON_B);
         original.getPPU().setBackgroundLayerVisible(false);
+        original.getPPU().setUnlimitedSprites(true);
 
         var state = save(original);
 
@@ -163,6 +169,7 @@ class SaveStateCompletenessTests {
         run(other, 20);
         other.getController1().setButtons(0);
         other.getPPU().setBackgroundLayerVisible(true);
+        other.getPPU().setUnlimitedSprites(false);
 
         SaveState.read(other, new ByteArrayInputStream(state));
 
@@ -172,6 +179,8 @@ class SaveStateCompletenessTests {
                 "the buttons came across, and the release will never arrive");
         assertEquals("true", fields.get("PPU.backgroundLayerVisible"),
                 "a state overrode the Debug menu");
+        assertEquals("false", fields.get("ExtraSprites.enabled"),
+                "and a state overrode the Hacks menu");
     }
 
     /**
@@ -265,9 +274,14 @@ class SaveStateCompletenessTests {
 
     /**
      * What to call the {@code i}th element of an array of the emulator's own objects.
+     * <p>
+     * Named after the field rather than after the class, because the PPU now holds two arrays of
+     * {@code SpriteUnit} -- its own eight and the fifty six the sprite limit hack draws with -- and
+     * a label taken from the class would give both the same eight names. The second walked would
+     * overwrite the first, and eight units would go silently uncompared.
      */
     private static String elementLabel(final java.lang.reflect.Field field, final int i) {
-        return field.getType().getComponentType().getSimpleName() + "[" + i + "]";
+        return field.getName() + "[" + i + "]";
     }
 
     /**

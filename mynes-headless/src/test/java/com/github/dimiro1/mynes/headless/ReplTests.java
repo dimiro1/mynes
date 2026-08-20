@@ -216,6 +216,38 @@ class ReplTests {
     }
 
     @Test
+    void aHackCanBeSwitchedOnAndOffMidSession() throws Exception {
+        var replies = session(
+                "run 5",
+                "hack unlimited-sprites on",
+                "hack unlimited-sprites off",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals("unlimited-sprites", replies.get(1).get("hack").asText());
+        assertTrue(replies.get(1).get("on").asBoolean());
+        assertFalse(replies.get(2).get("on").asBoolean());
+    }
+
+    @Test
+    void aHackThatIsMisspeltOrHalfTypedIsAnError() throws Exception {
+        var replies = session(
+                "hack",
+                "hack unlimited-sprites",
+                "hack infinite-lives on",
+                "hack unlimited-sprites maybe",
+                "quit");
+
+        for (var i = 0; i < 4; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean(), replies.get(i).toString());
+        }
+
+        assertTrue(replies.get(2).get("error").asText().contains("infinite-lives"));
+        assertTrue(replies.get(3).get("error").asText().contains("maybe"));
+    }
+
+    @Test
     void blankLinesAndCommentsAreIgnored() throws Exception {
         var replies = session("", "# a note", "run 5", "quit");
 

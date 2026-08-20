@@ -173,6 +173,51 @@ class PPUAddressBusTests extends PPUFixture {
             ppu.write(PPUMASK, mask);
             run(4);
         }
+
+        /**
+         * The sprite limit hack draws sprites the chip never fetched, and it has to do it without
+         * the cartridge noticing: MMC3 counts the rises of A12 in this traffic to decide when to
+         * raise its scanline interrupt, so one extra pattern read would move a game's status bar.
+         * <p>
+         * Compared as a whole sequence rather than counted, because the failure this guards against
+         * is an address in the wrong <em>place</em> as much as one too many. Two scanlines of it:
+         * the one whose fetch window loads the output units, and the one they are drawn across,
+         * which is the whole of where the hack does anything.
+         */
+        @Test
+        void extraSpriteFetchesPutNoAddressOnTheBus() {
+            var withoutTheHack = addressesAroundNineSpritesOnALine(false);
+            var withIt = addressesAroundNineSpritesOnALine(true);
+
+            assertEquals(withoutTheHack, withIt, "the cartridge saw a different scanline");
+        }
+
+        private List<Integer> addressesAroundNineSpritesOnALine(final boolean unlimited) {
+            recorder = new RecordingMapper();
+            createPPU(recorder);
+            warmUp();
+
+            // Nine sprites on scanline 11, which is one more than the hardware has units for.
+            for (var i = 0; i < 9; i++) {
+                ppu.write(OAMADDR, i * 4);
+                ppu.write(OAMDATA, 10);
+                ppu.write(OAMDATA, 1);
+                ppu.write(OAMDATA, 0);
+                ppu.write(OAMDATA, i * 8);
+            }
+
+            ppu.setUnlimitedSprites(unlimited);
+            enableRendering(0x00, 0x1E);
+
+            // Scanline 10 is where the units for scanline 11 are loaded, and 11 is where they are
+            // drawn. A second frame first, so the scroll counters have settled.
+            renderFrames(2);
+            runTo(10, 0);
+            recorder.clear();
+            runTo(12, 0);
+
+            return List.copyOf(recorder.addresses());
+        }
     }
 
     @Nested

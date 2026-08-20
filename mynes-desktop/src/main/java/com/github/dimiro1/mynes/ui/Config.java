@@ -43,6 +43,7 @@ public final class Config {
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
+    private static final String UNLIMITED_SPRITES_KEY = "hacks.unlimited-sprites";
 
     private static final String HEADER = """
             # MyNES settings.
@@ -92,6 +93,13 @@ public final class Config {
             # is sound switched on.
             """;
 
+    private static final String HACKS_HEADER = """
+            # Things the console does not do, from the Hacks menu. All of them off unless this
+            # says true; anything that is not true is off. Unlimited sprites draws the sprites the
+            # chip would have dropped, so a scanline holding more than eight of them stops
+            # flickering -- which is a change to the picture and to nothing the game can see.
+            """;
+
     private KeyBindings keyBindings;
     private NESPalette palette;
     private NESPalette palPalette;
@@ -100,6 +108,7 @@ public final class Config {
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
+    private boolean unlimitedSprites;
 
     private Config(
             final KeyBindings keyBindings,
@@ -109,7 +118,8 @@ public final class Config {
             final ScreenScale screenshotScale,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
-            final boolean muted) {
+            final boolean muted,
+            final boolean unlimitedSprites) {
         this.keyBindings = keyBindings;
         this.palette = palette;
         this.palPalette = palPalette;
@@ -118,6 +128,7 @@ public final class Config {
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
+        this.unlimitedSprites = unlimitedSprites;
     }
 
     /**
@@ -151,16 +162,17 @@ public final class Config {
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
-                mutedFrom(properties));
+                flagFrom(properties, MUTED_KEY),
+                flagFrom(properties, UNLIMITED_SPRITES_KEY));
     }
 
     /**
-     * Whether the sound is off. Unlike the other entries there is nothing to fall back to and
-     * nothing to warn about: anything that is not {@code true} is somebody who wants to hear the
-     * game, which is also what a missing entry means.
+     * One of the plain yes-or-no entries. Unlike the others there is nothing to fall back to and
+     * nothing to warn about: anything that is not {@code true} is somebody who wants the ordinary
+     * behaviour, which is also what a missing entry means.
      */
-    private static boolean mutedFrom(final Properties properties) {
-        return Boolean.parseBoolean(properties.getProperty(MUTED_KEY, "").trim());
+    private static boolean flagFrom(final Properties properties, final String key) {
+        return Boolean.parseBoolean(properties.getProperty(key, "").trim());
     }
 
     private static NESPalette paletteFrom(
@@ -259,6 +271,12 @@ public final class Config {
                 .append(MUTED_KEY)
                 .append('=')
                 .append(muted)
+                .append("\n\n");
+
+        text.append(HACKS_HEADER)
+                .append(UNLIMITED_SPRITES_KEY)
+                .append('=')
+                .append(unlimitedSprites)
                 .append("\n\n");
 
         keyBindings.appendTo(text);
@@ -364,5 +382,18 @@ public final class Config {
 
     public void setMuted(final boolean muted) {
         this.muted = muted;
+    }
+
+    /**
+     * Whether Hacks &gt; Unlimited Sprites is on. Remembered for the reason Mute is: it is a
+     * preference about how the emulator should behave rather than something a particular game did,
+     * and somebody who wants the flicker gone wants it gone tomorrow as well.
+     */
+    public boolean unlimitedSprites() {
+        return unlimitedSprites;
+    }
+
+    public void setUnlimitedSprites(final boolean unlimitedSprites) {
+        this.unlimitedSprites = unlimitedSprites;
     }
 }

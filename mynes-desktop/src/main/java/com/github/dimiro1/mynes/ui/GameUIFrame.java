@@ -95,6 +95,8 @@ public class GameUIFrame extends JFrame {
     private final JCheckBoxMenuItem machineMenuMute = new JCheckBoxMenuItem("Mute");
     private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
     private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
+    private final JCheckBoxMenuItem hacksMenuUnlimitedSprites =
+            new JCheckBoxMenuItem("Unlimited Sprites");
 
     /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
@@ -277,6 +279,16 @@ public class GameUIFrame extends JFrame {
         debugMenuSprites.setMnemonic(KeyEvent.VK_S);
         debugMenu.add(debugMenuSprites);
 
+        // Not gated on a machine, unlike Debug: these are preferences that are remembered and
+        // re-applied to whatever runs next, so there is something to change before a ROM is open.
+        // Mnemonic A rather than H, which is Help's.
+        JMenu hacksMenu = new JMenu("Hacks");
+        hacksMenu.setMnemonic(KeyEvent.VK_A);
+
+        hacksMenuUnlimitedSprites.setMnemonic(KeyEvent.VK_U);
+        hacksMenuUnlimitedSprites.setSelected(config.unlimitedSprites());
+        hacksMenu.add(hacksMenuUnlimitedSprites);
+
         JMenu settingsMenu = new JMenu("Settings");
         settingsMenu.setMnemonic(KeyEvent.VK_S);
 
@@ -298,6 +310,7 @@ public class GameUIFrame extends JFrame {
         menuBar.add(fileMenu);
         menuBar.add(machineMenu);
         menuBar.add(debugMenu);
+        menuBar.add(hacksMenu);
         menuBar.add(settingsMenu);
         menuBar.add(helpMenu);
 
@@ -444,6 +457,19 @@ public class GameUIFrame extends JFrame {
                 var ppu = nes.getPPU();
                 var visible = debugMenuSprites.isSelected();
                 runner.post(() -> ppu.setSpriteLayerVisible(visible));
+            }
+        });
+
+        // Remembered between runs, unlike the two layer switches above: those are a debug view of
+        // the machine that is running, and this is how somebody wants their games to look.
+        hacksMenuUnlimitedSprites.addActionListener(e -> {
+            config.setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
+            saveConfig();
+
+            if (runner != null) {
+                var ppu = nes.getPPU();
+                var unlimited = hacksMenuUnlimitedSprites.isSelected();
+                runner.post(() -> ppu.setUnlimitedSprites(unlimited));
             }
         });
 
@@ -1134,10 +1160,11 @@ public class GameUIFrame extends JFrame {
         // palette is chosen, because this is the one moment the kind of machine can change.
         screen.setPalette(config.palette(nes.getRegion()));
 
-        // A fresh PPU has both layers on, but the menu remembers what the last one was told.
-        // The runner has not started yet, so the machine is still this thread's to touch.
+        // A fresh PPU has both layers on and no hacks, but the menus remember what the last one was
+        // told. The runner has not started yet, so the machine is still this thread's to touch.
         nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
         nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
+        nes.getPPU().setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
 
         // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
         // window as the two lines above: the runner does not exist yet, so this thread owns it.
