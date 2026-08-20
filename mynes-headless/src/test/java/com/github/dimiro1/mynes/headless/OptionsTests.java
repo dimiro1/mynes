@@ -222,6 +222,40 @@ class OptionsTests {
     }
 
     @Test
+    void noGameGenieCodeIsInUnlessOneIsGiven() {
+        assertTrue(parse("--rom", "x.nes").genie().isEmpty(), "the cartridge slot is the default");
+    }
+
+    @Test
+    void aGameGenieCodeIsDecodedWhileTheCommandLineIsBeingRead() {
+        var codes = parse("--rom", "x.nes", "--genie", "SXIOPO").genie();
+
+        assertEquals(1, codes.size());
+        assertEquals(0x91D9, codes.getFirst().address());
+        assertEquals(0xAD, codes.getFirst().value());
+    }
+
+    @Test
+    void codesCanBeCommaSeparatedOrRepeated() {
+        var together = parse("--rom", "x.nes", "--genie", "SXIOPO,ZEXPYGLA").genie();
+        var apart = parse("--rom", "x.nes", "--genie", "SXIOPO", "--genie", "ZEXPYGLA").genie();
+
+        assertEquals(together, apart);
+        assertEquals(2, together.size());
+    }
+
+    /**
+     * Decoded here rather than when the machine is built, so that a mistyped code is a bad command
+     * line rather than a run that quietly cheated at nothing. Eight letters from an alphabet with no
+     * B, C, D or R in it is not a remote thing to get wrong.
+     */
+    @Test
+    void aCodeThatIsNotOneIsRejected() {
+        assertTrue(refused("--rom", "x.nes", "--genie", "GOSSIB").getMessage().contains("B"));
+        assertTrue(refused("--rom", "x.nes", "--genie", "SXIOP").getMessage().contains("six"));
+    }
+
+    @Test
     void helpDoesNotNeedARom() {
         assertTrue(parse("--help").help());
     }

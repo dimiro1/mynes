@@ -159,6 +159,15 @@ chip would have dropped, so a scanline holding more than eight of them stops fli
 cannot tell, since the overflow flag still rises and the cartridge still sees the same address bus.
 It is off unless it is ticked, and the tick is remembered.
 
+**Game Genie codes**, from **Hacks > Game Genie...**, which is the other thing in that menu and the
+one thing in it the console really did do. Six letters or eight, from the sixteen a code is spelled
+with; eight-letter codes carry a byte the cartridge has to answer with before they fire, which is
+what pins one to a single bank. Nothing is patched — the device sat between the cartridge and the
+console and answered the bus in its place, and so does this, which is why the cartridge's digest is
+the same with codes in as without. They take effect as they are typed, they survive a power cycle,
+and they are forgotten when another cartridge goes in, since a code written for one game is an
+arbitrary byte written over the next. `--genie` does the same thing from the command line.
+
 All of it is in headless mode too — `break`, `watch`, `step` and `disasm` are commands in the
 interactive session, so the same questions can be asked from a script.
 
@@ -205,6 +214,13 @@ running with.
 ### The controller dialog
 
 ![The controller dialog](shots/controller-dialog.png)
+
+### The Game Genie dialog
+
+Each code is listed with what it actually does, because six letters say nothing about themselves and
+a mistyped one is a perfectly valid code for somewhere else entirely.
+
+![The Game Genie dialog](shots/genie-dialog.png)
 
 ## Saving
 
@@ -287,6 +303,11 @@ seconds to start up, the jar about a third of one.
   observe changes — the overflow flag still rises and the cartridge sees the same address bus — but
   the picture is not the one the hardware would have produced, so `run.hacks` in the report is part
   of what to check before diffing two of them.
+- **`--genie CODE`** puts a Game Genie code in the cartridge slot. Repeatable, and comma separated.
+  Unlike `--patch` the cartridge is not modified at all — the device answered the bus in its place —
+  so `cart.sha256` is the plain one and `run.genie` is the only thing in the report that tells a
+  cheated run from an honest one. Which also means a save state taken with codes in will load into a
+  machine with them out, without a word of complaint.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
   lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what

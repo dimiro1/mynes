@@ -247,6 +247,69 @@ class ReplTests {
         assertTrue(replies.get(3).get("error").asText().contains("maybe"));
     }
 
+    /**
+     * Which is what the command is for: run to the frame that matters, put the code in, look, take it
+     * out, look again. The cartridge underneath never changed, so the two are of the same moment.
+     */
+    @Test
+    void aCodeCanBePutInAndTakenOutMidSession() throws Exception {
+        var replies = session(
+                "genie SXIOPO",
+                "genie",
+                "ungenie SXIOPO",
+                "genie",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals(0x91D9, replies.getFirst().get("address").asInt());
+        assertEquals(0xAD, replies.getFirst().get("value").asInt());
+        assertTrue(replies.getFirst().get("compare").isNull(), "six letters name no bank");
+
+        assertEquals(List.of("SXIOPO"), codes(replies.get(1)));
+        assertEquals(List.of(), codes(replies.get(3)));
+    }
+
+    @Test
+    void clearingTakesTheLotOut() throws Exception {
+        var replies = session("genie SXIOPO", "genie ZEXPYGLA", "genie clear", "quit");
+
+        assertEquals(List.of("SXIOPO", "ZEXPYGLA"), codes(replies.get(1)));
+        assertEquals(List.of(), codes(replies.get(2)));
+    }
+
+    /**
+     * One address holds one code, the way the cartridge port does -- and the reply says which one was
+     * pushed out, since silently holding two would be the confusing answer.
+     */
+    @Test
+    void aSecondCodeForOneAddressReplacesTheFirst() throws Exception {
+        var replies = session("genie SXIOPO", "genie SXIOPO", "quit");
+
+        assertTrue(replies.getFirst().get("replaced").isNull());
+        assertEquals("SXIOPO", replies.get(1).get("replaced").asText());
+        assertEquals(List.of("SXIOPO"), codes(replies.get(1)));
+    }
+
+    @Test
+    void aCodeThatIsMisspeltOrHalfTypedIsAnError() throws Exception {
+        var replies = session("genie GOSSIB", "genie SXIOP", "ungenie", "ungenie GOSSIP", "quit");
+
+        for (var i = 0; i < 4; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean(), replies.get(i).toString());
+        }
+
+        assertTrue(replies.get(3).get("error").asText().contains("GOSSIP"), "and it says which");
+    }
+
+    private static List<String> codes(final JsonNode reply) {
+        var out = new ArrayList<String>();
+
+        reply.get("codes").forEach(code -> out.add(code.asText()));
+
+        return out;
+    }
+
     @Test
     void blankLinesAndCommentsAreIgnored() throws Exception {
         var replies = session("", "# a note", "run 5", "quit");

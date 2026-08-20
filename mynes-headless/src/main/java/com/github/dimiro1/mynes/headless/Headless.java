@@ -154,6 +154,24 @@ public final class Headless {
             session.nes().getPPU().setUnlimitedSprites(
                     options.hacks().contains(Options.UNLIMITED_SPRITES));
 
+            // And a Game Genie is not machine state either, for the same reason and one more: the
+            // cartridge it is plugged into is untouched, so a state taken with codes in has nothing
+            // in it to say so.
+            for (var code : options.genie()) {
+                var replaced = session.genie().add(code);
+
+                if (replaced != null) {
+                    logger.log(Level.WARNING, code + " replaces " + replaced
+                            + ", since one address holds one code");
+                }
+            }
+
+            if (!options.genie().isEmpty()) {
+                logger.log(Level.INFO, "put " + options.genie().size() + " Game Genie codes in;"
+                        + " the cartridge is unchanged, so run.genie rather than cart.sha256 is"
+                        + " what tells this run from a plain one");
+            }
+
             // The cartridge RAM first and the save state second, because a state carries its own copy
             // of that RAM and is the more specific answer of the two.
             if (options.sramIn() != null) {

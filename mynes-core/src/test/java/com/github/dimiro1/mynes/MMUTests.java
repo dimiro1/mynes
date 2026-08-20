@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes;
 
+import com.github.dimiro1.mynes.cheat.GameGenie;
+import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.mappers.Mapper0;
 import com.github.dimiro1.mynes.mappers.Mirroring;
 import org.junit.jupiter.api.BeforeEach;
@@ -187,6 +189,245 @@ public class MMUTests {
             mmu.write(0x0100, 0x22);
 
             assertEquals(List.of("0100=11"), seen);
+        }
+    }
+
+    /**
+     * The seam a Game Genie hangs off, which is the read side of the same idea.
+     * <p>
+     * The codes below are real published ones rather than records built by hand, so that the scramble
+     * in {@code GameGenieCodeTests} and the wiring here are checked against each other: a shift moved
+     * in one of them and these stop firing at the address the other expects.
+     * <p>
+     * The cartridge is one 16KB bank, which makes $8000 and $C000 the same bytes, and its PRG is
+     * stamped so that every byte says where it came from.
+     */
+    @Nested
+    class GameGenieCodes {
+        /** $91D9 = $AD, no compare: Super Mario Bros. infinite lives. */
+        private static final String LIVES = "SXIOPO";
+
+        /** $94A7 = $02, but only where the cartridge answers $03. */
+        private static final String BANKED = "ZEXPYGLA";
+
+        private static final int LIVES_AT = 0x91D9;
+        private static final int BANKED_AT = 0x94A7;
+
+        private NES nes;
+        private MMU bus;
+        private GameGenie genie;
+
+        @BeforeEach
+        void plugIn() {
+            nes = new NES(Cart.load(stamped(), "genie.nes"));
+            bus = nes.getMemory();
+            genie = new GameGenie();
+            genie.attach(nes);
+        }
+
+        @Test
+        void theCartridgeAnswersForItselfUntilThereIsACodeIn() {
+            assertEquals(0xD9, bus.read(LIVES_AT), "the stamp, which is the low byte of the offset");
+        }
+
+        @Test
+        void aCodeAnswersInsteadOfTheCartridge() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            assertEquals(0xAD, bus.read(LIVES_AT));
+        }
+
+        @Test
+        void everyOtherAddressIsLeftAlone() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            assertEquals(0xD8, bus.read(LIVES_AT - 1));
+            assertEquals(0xDA, bus.read(LIVES_AT + 1));
+        }
+
+        /**
+         * The device is a pass-through on /ROMSEL, so fifteen address bits is all it sees and there is
+         * no code for anywhere below $8000. Cartridge RAM and the console's own memory are unreachable
+         * by construction rather than by a check.
+         */
+        @Test
+        void nothingBelowProgramRomIsReachableByACode() {
+            genie.add(GameGenieCode.decode(LIVES));
+            bus.write(0x0100, 0x11);
+
+            assertEquals(0x11, bus.read(0x0100));
+            assertEquals(0, bus.read(0x6000), "this cartridge has no RAM, and a code cannot add one");
+        }
+
+        /**
+         * A code names a CPU address, not an offset into the ROM. This cartridge answers with the same
+         * byte at $91D9 and at $D1D9 because one bank is mirrored into both halves, and a code on the
+         * first must not fire on the second.
+         */
+        @Test
+        void aCodeIsPinnedToTheAddressItNamesEvenWhereTheCartridgeMirrorsItself() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            assertEquals(0xAD, bus.read(LIVES_AT));
+            assertEquals(0xD9, bus.read(LIVES_AT | 0x4000), "the same ROM byte, the other address");
+        }
+
+        @Test
+        void aCompareCodeFiresOnTheByteItWasWrittenFor() {
+            genie.add(GameGenieCode.decode(BANKED));
+
+            assertEquals(0x03, stampedByteAt(BANKED_AT), "the cartridge is answering what it expects");
+            assertEquals(0x02, bus.read(BANKED_AT));
+        }
+
+        @Test
+        void aCompareCodeLeavesEveryOtherBankAlone() {
+            genie.add(new GameGenieCode(BANKED, BANKED_AT, 0x02, 0x7B));
+
+            assertEquals(0x03, bus.read(BANKED_AT), "the cartridge answered $03, and the code wants $7B");
+        }
+
+        /**
+         * It is the Genie driving the data pins and not the cartridge, so what it put out is what the
+         * pins keep -- and $4020 is a window nothing answers to, which reads back off them.
+         */
+        @Test
+        void theSubstitutedByteIsWhatTheOpenBusKeeps() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            bus.read(LIVES_AT);
+
+            assertEquals(0xAD, bus.read(0x4020), "not $D9, which is what the cartridge said");
+        }
+
+        /**
+         * A disassembly of the substituted byte is a listing of the instructions that actually run,
+         * which is the only reading of it worth showing anybody.
+         */
+        @Test
+        void lookingWithoutReadingSeesTheSubstitutionToo() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            assertEquals(0xAD, bus.peek(LIVES_AT));
+        }
+
+        @Test
+        void lookingIsStillNotABusCycle() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            bus.read(0x0100);
+            var onThePins = bus.read(0x4020);
+
+            bus.peek(LIVES_AT);
+
+            assertEquals(onThePins, bus.read(0x4020), "peeking must not have refreshed them");
+        }
+
+        /**
+         * The hook is in the bus decode rather than in the processor's read, so a transfer picks the
+         * substitutions up as well. The device cannot tell which unit inside the 2A03 is driving the
+         * address, and neither should this.
+         */
+        @Test
+        void aSpriteDmaOutOfProgramRomCarriesTheSubstitutions() {
+            genie.add(GameGenieCode.decode(LIVES));
+
+            bus.write(OAM_DMA, LIVES_AT >> 8);
+
+            for (var cycle = 0; cycle < 600 && stallCycle(bus, cycle); cycle++) {
+                // Every one of the 256 copies.
+            }
+
+            assertEquals(0xAD, readOAM(LIVES_AT & 0xFF), "the byte the code answers with");
+            assertEquals(0xD8, readOAM((LIVES_AT - 1) & 0xFF), "and the cartridge's either side of it");
+        }
+
+        @Test
+        void takingTheLastCodeAwayPutsTheCartridgeBack() {
+            var code = GameGenieCode.decode(LIVES);
+
+            genie.add(code);
+            assertEquals(0xAD, bus.read(LIVES_AT));
+
+            assertTrue(genie.remove(code));
+            assertEquals(0xD9, bus.read(LIVES_AT));
+        }
+
+        @Test
+        void clearingDoesTheSameForTheLot() {
+            genie.add(GameGenieCode.decode(LIVES));
+            genie.add(GameGenieCode.decode(BANKED));
+
+            genie.clear();
+
+            assertTrue(genie.isEmpty());
+            assertEquals(0xD9, bus.read(LIVES_AT));
+            assertEquals(0x03, bus.read(BANKED_AT));
+        }
+
+        /**
+         * The real device answers the bus in the time it has and does not get a second look, so it
+         * cannot hold two codes for one address. Neither does this: the newer one wins outright rather
+         * than stacking behind the older.
+         */
+        @Test
+        void oneAddressHoldsOneCode() {
+            var first = GameGenieCode.decode(LIVES);
+            var second = new GameGenieCode("SECOND", LIVES_AT, 0x60, GameGenieCode.NO_COMPARE);
+
+            genie.add(first);
+            var replaced = genie.add(second);
+
+            assertEquals(first, replaced);
+            assertEquals(List.of(second), genie.codes());
+            assertEquals(0x60, bus.read(LIVES_AT));
+        }
+
+        /**
+         * Which order the two happen in is not the front end's problem: the window holds its codes
+         * across a power cycle and hands them to whichever machine is built next.
+         */
+        @Test
+        void codesPutInBeforeTheMachineArrivesStillFire() {
+            var waiting = new GameGenie();
+            waiting.add(GameGenieCode.decode(LIVES));
+
+            var second = new NES(Cart.load(stamped(), "genie.nes"));
+            waiting.attach(second);
+
+            assertEquals(0xAD, second.getMemory().read(LIVES_AT));
+        }
+
+        private int readOAM(final int address) {
+            bus.write(0x2003, address);
+            return nes.getPPU().read(OAM_DATA_REGISTER);
+        }
+
+        private int stampedByteAt(final int address) {
+            return Byte.toUnsignedInt(stamped()[16 + (address & 0x3FFF)]);
+        }
+
+        /**
+         * One 16KB bank, every byte of it saying which offset it came from -- so a read that answers
+         * with the wrong address is visible rather than merely wrong. The one exception is the byte
+         * {@link #BANKED} compares against, which is made to be the $03 that code was published for.
+         */
+        private byte[] stamped() {
+            var image = new byte[16 + 0x4000];
+
+            image[0] = 'N';
+            image[1] = 'E';
+            image[2] = 'S';
+            image[3] = 0x1A;
+            image[4] = 1;  // one PRG bank, mirrored into both $8000 and $C000. No CHR, so CHR RAM.
+
+            for (var i = 0; i < 0x4000; i++) {
+                image[16 + i] = (byte) i;
+            }
+
+            image[16 + (BANKED_AT & 0x3FFF)] = 0x03;
+
+            return image;
         }
     }
 

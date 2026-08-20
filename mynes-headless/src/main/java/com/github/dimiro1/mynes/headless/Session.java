@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
@@ -81,6 +82,13 @@ public final class Session {
      */
     private final Debugger debugger = new Debugger();
 
+    /**
+     * The Game Genie in the cartridge slot, which starts out holding no codes and so costing the
+     * machine nothing. Beside the debugger rather than inside the console for the same reason it is:
+     * a code belongs to whoever is playing, and a save state carries none of them.
+     */
+    private final GameGenie genie = new GameGenie();
+
     private final short[] samples = new short[AUDIO_BUFFER_SAMPLES];
 
     /**
@@ -113,6 +121,7 @@ public final class Session {
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
         debugger.attach(nes);
+        genie.attach(nes);
     }
 
     public NES nes() {
@@ -121,6 +130,10 @@ public final class Session {
 
     public Debugger debugger() {
         return debugger;
+    }
+
+    public GameGenie genie() {
+        return genie;
     }
 
     public long frame() {

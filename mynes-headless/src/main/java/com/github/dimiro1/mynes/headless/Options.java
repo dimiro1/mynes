@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.cheat.GameGenieCode;
+import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -40,6 +42,7 @@ import java.util.TreeSet;
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
  * @param hacks            which of the things the hardware does not do to switch on.
+ * @param genie            Game Genie codes to put in the cartridge slot, already decoded.
  * @param dumps            which memories to write out when the run ends.
  * @param loadState        a save state to start from instead of power on, or null.
  * @param saveState        where to write a save state when the run ends, or null.
@@ -75,6 +78,7 @@ public record Options(
         NESPalette palette,
         boolean audio,
         Set<String> hacks,
+        List<GameGenieCode> genie,
         List<String> dumps,
         Path loadState,
         Path saveState,
@@ -233,6 +237,22 @@ public record Options(
                                                           still rises and the cartridge sees the
                                                           same address bus.
 
+            Game Genie, which is a thing the console did do
+              --genie CODE[,CODE..] Put a code in the cartridge slot. Repeatable. Six letters or
+                                    eight, from APZLGITYEOXUKSVN -- there is no B, C, D or R in a
+                                    code, whatever it looks like. Eight-letter codes carry a byte the
+                                    cartridge has to answer with before they fire, which is what
+                                    pins one to a single bank.
+                                      --genie SXIOPO           infinite lives in Super Mario Bros.
+                                      --genie IKAEAUAK,PNAEPLIV
+                                    Nothing is written back and the cartridge is not modified in any
+                                    way, so cart.sha256 in the report is the same with codes in as
+                                    without -- unlike --patch, which really does make a different
+                                    image. run.genie is the only thing that tells two such runs
+                                    apart, and a save state taken from one will load into the other
+                                    without complaining. The real cartridge held three codes; this
+                                    holds as many as you type.
+
             Memory, dumped once the run has finished
               --dump LIST           Comma separated, from: ram (2KB), oam (256B), palette (32B),
                                     nametables (4KB), prgram (8KB), chr (8KB), or all. Raw binary,
@@ -309,6 +329,7 @@ public record Options(
         NESPalette palette = null;
         var audio = false;
         var hacks = new LinkedHashSet<String>();
+        var genie = new ArrayList<GameGenieCode>();
         var dumps = new LinkedHashSet<String>();
         Path loadState = null;
         Path saveState = null;
@@ -352,6 +373,7 @@ public record Options(
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--audio" -> audio = true;
                 case "--hack" -> parseHacks(value(args, ++i, flag), hacks);
+                case "--genie" -> parseGenie(value(args, ++i, flag), genie);
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
                 case "--load-state" -> loadState = Path.of(value(args, ++i, flag));
                 case "--save-state" -> saveState = Path.of(value(args, ++i, flag));
@@ -401,6 +423,7 @@ public record Options(
                 palette,
                 audio,
                 Set.copyOf(hacks),
+                List.copyOf(genie),
                 List.copyOf(dumps),
                 loadState,
                 saveState,
@@ -571,6 +594,34 @@ public record Options(
             }
 
             hacks.add(trimmed);
+        }
+    }
+
+    /**
+     * Reads a list of Game Genie codes, decoding each one as it goes.
+     * <p>
+     * Decoded here rather than when the machine is built, so that a misspelled code is a bad command
+     * line and exits 2. The argument {@link #parseHacks} makes applies with more force to these: a
+     * hack is one of two names and a code is eight letters from an alphabet with no B, C, D or R in
+     * it, so getting one wrong is not a remote possibility -- and a run that quietly happened without
+     * the cheat somebody asked for looks exactly like one that worked.
+     * <p>
+     * A code that is already in the list is put in again rather than refused, because
+     * {@code GameGenie.add} is the one place that decides what two codes for one address mean.
+     */
+    private static void parseGenie(final String text, final List<GameGenieCode> genie) {
+        for (var token : text.split(",")) {
+            var trimmed = token.trim();
+
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+
+            try {
+                genie.add(GameGenieCode.decode(trimmed));
+            } catch (InvalidGameGenieCodeException e) {
+                throw new UsageException("--genie " + e.getMessage());
+            }
         }
     }
 
