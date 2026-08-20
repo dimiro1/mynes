@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes;
 
+import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.state.StateIO;
 
@@ -149,6 +150,23 @@ public class MMU {
      */
     private MemoryWriteListener writeListener;
 
+    /**
+     * The Game Genie plugged in between the cartridge and the console, or null when there is none --
+     * which, as with {@link #writeListener}, is nearly always, and is why this is a reference to check
+     * rather than a do-nothing device always installed. Every instruction the CPU fetches comes
+     * through the branch that reads it.
+     * <p>
+     * <strong>Null rather than always present, for a second reason worth knowing.</strong>
+     * {@code SaveStateCompletenessTests} walks the console reflectively and vandalises every primitive
+     * array it can reach; a field holding null is recorded and stepped over, where one holding a
+     * device would be walked into and every table inside it scrambled. So a nullable field is what
+     * keeps a cheat device out of the save state without owing the exclusion list an entry per field.
+     * <p>
+     * Not in {@link #serialize}, and named in {@code NOT_IN_THE_STATE}: a code belongs to whoever is
+     * playing rather than to the machine, the same as the PPU's layer switches.
+     */
+    private GameGenie genie;
+
     public MMU(
             final PPU ppu,
             final APU apu,
@@ -209,8 +227,17 @@ public class MMU {
             return dataBus = mapper.prgRAMRead(addr);
         }
 
-        // PRG ROM ($8000-$FFFF) - mapper controlled
-        return dataBus = mapper.prgRead(addr);
+        // PRG ROM ($8000-$FFFF) - mapper controlled, and the one window a Game Genie can reach.
+        //
+        // The substituted byte is what lands on dataBus, because it is the Genie driving the pins and
+        // not the cartridge: open bus keeps what was last put out, and AccuracyCoin executes from it.
+        // Here rather than in read(), so that an OAM transfer out of a PRG page and a DMC sample fetch
+        // both see it -- the device sits on /ROMSEL and has no idea which unit is driving the address.
+        var fromTheCartridge = mapper.prgRead(addr);
+
+        return dataBus = genie == null
+                ? fromTheCartridge
+                : genie.substitute(addr, fromTheCartridge);
     }
 
     /**
@@ -223,6 +250,11 @@ public class MMU {
      * <p>
      * Unmapped space reads back as {@link #dataBus}, which is what the CPU would find there. That
      * is an observation rather than a bus cycle: looking does not refresh it.
+     * <p>
+     * A Game Genie's substitutions <em>are</em> shown, because the device is on the console side of
+     * the cartridge and its byte is the one the CPU executes -- a disassembly that showed the
+     * cartridge's would be a listing of instructions that never run. The consequence is that there is
+     * no way to read the cartridge underneath through this: {@code Cart.prgROM} is where it is.
      */
     public int peek(final int address) {
         int addr = address & 0xFFFF;
@@ -243,7 +275,11 @@ public class MMU {
             return mapper.prgRAMRead(addr);
         }
 
-        return mapper.prgRead(addr);
+        // Spelled out rather than shared with busRead, which assigns dataBus on its way past. Looking
+        // is not a bus cycle and must not refresh the pins.
+        var fromTheCartridge = mapper.prgRead(addr);
+
+        return genie == null ? fromTheCartridge : genie.substitute(addr, fromTheCartridge);
     }
 
     /**
@@ -671,6 +707,19 @@ public class MMU {
      */
     public int[] getInternalRAM() {
         return internalRAM;
+    }
+
+    /**
+     * Plugs a Game Genie in between the cartridge and the console, or unplugs one when given null.
+     * <p>
+     * Null when it holds no codes rather than merely empty, which is what keeps every read of PRG ROM
+     * on a machine nobody is cheating on down to a null check. {@link GameGenie} does that itself as
+     * its first code arrives and its last one goes, so nothing outside has to remember to.
+     *
+     * @see GameGenie
+     */
+    public void setGameGenie(final GameGenie genie) {
+        this.genie = genie;
     }
 
     /**

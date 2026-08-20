@@ -1,5 +1,8 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.cheat.GameGenie;
+import com.github.dimiro1.mynes.cheat.GameGenieCode;
+import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Disassembler;
 import com.github.dimiro1.mynes.state.SaveStateException;
@@ -47,6 +50,9 @@ public final class Repl {
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
             hack NAME on|off           unlimited-sprites, which --hack also switches on
+            genie [CODE]               list the Game Genie codes, or put one in
+            ungenie CODE               take one out
+            genie clear                take them all out
             save-state PATH            write the whole machine to a file
             load-state PATH            put one back, from this same ROM
             audio                      peak, RMS and silence since the last audio command
@@ -164,6 +170,7 @@ public final class Repl {
             case "oam" -> oam(words);
             case "dump" -> dump(words);
             case "hack" -> hack(words);
+            case "genie", "ungenie" -> genie(name, words);
             case "save-state" -> saveState(words);
             case "load-state" -> loadState(words);
             case "audio" -> audio();
@@ -503,6 +510,91 @@ public final class Repl {
             node.put("hack", name);
             node.put("on", on);
         });
+    }
+
+    /**
+     * Puts a Game Genie code in or takes one out, mid-session.
+     * <p>
+     * The shape of {@code break}/{@code unbreak}/{@code points clear} rather than of {@code hack},
+     * because a code is a thing put down and picked up rather than a two-position switch on a fixed
+     * set of names. And for the same reason {@code hack} is worth having as a command: the difference
+     * a code makes is something to look at, so run to the frame that matters, put it in, take a
+     * screenshot, take it out, take another -- two pictures of the same moment.
+     * <p>
+     * {@code clear} cannot be mistaken for a code. There is no C or R in the sixteen letters, and it
+     * is five long where a code is six or eight.
+     */
+    private void genie(final String name, final String[] words) {
+        var device = session.genie();
+
+        if (name.equals("ungenie")) {
+            if (words.length < 2) {
+                throw new UsageException(
+                        "ungenie wants a code to take out, as in \"ungenie SXIOPO\".");
+            }
+
+            var code = decode(words[1]);
+
+            if (!device.remove(code)) {
+                throw new UsageException(code.text() + " is not one of the codes that are in.");
+            }
+
+            reply("ungenie", node -> {
+                node.put("code", code.text());
+                putCodes(node, device);
+            });
+
+            return;
+        }
+
+        if (words.length > 1 && words[1].equalsIgnoreCase("clear")) {
+            device.clear();
+        } else if (words.length > 1) {
+            var code = decode(words[1]);
+            var replaced = device.add(code);
+
+            reply("genie", node -> {
+                node.put("code", code.text());
+                node.put("address", code.address());
+                node.put("value", code.value());
+
+                if (code.hasCompare()) {
+                    node.put("compare", code.compare());
+                } else {
+                    node.putNull("compare");
+                }
+
+                // One address holds one code, the way the cartridge does, so saying which one this
+                // pushed out is more use than silently having two of them.
+                if (replaced == null) {
+                    node.putNull("replaced");
+                } else {
+                    node.put("replaced", replaced.text());
+                }
+
+                putCodes(node, device);
+            });
+
+            return;
+        }
+
+        reply("genie", node -> putCodes(node, device));
+    }
+
+    private static GameGenieCode decode(final String word) {
+        try {
+            return GameGenieCode.decode(word);
+        } catch (InvalidGameGenieCodeException e) {
+            throw new UsageException(e.getMessage());
+        }
+    }
+
+    private static void putCodes(final Json.Object node, final GameGenie device) {
+        var codes = node.putArray("codes");
+
+        for (var code : device.codes()) {
+            codes.add(code.text());
+        }
     }
 
     /**

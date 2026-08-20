@@ -4,6 +4,8 @@ import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.cheat.GameGenie;
+import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.state.BatteryRAM;
@@ -34,6 +36,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+// Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
+import java.util.List;
 import java.util.function.IntConsumer;
 
 public class GameUIFrame extends JFrame {
@@ -99,6 +103,14 @@ public class GameUIFrame extends JFrame {
             new JCheckBoxMenuItem("Unlimited Sprites");
 
     /**
+     * The one item in the Hacks menu that needs a cartridge. The menu as a whole is deliberately not
+     * gated, because everything else in it is a remembered preference with something to change before
+     * a ROM is open -- and a code is written for one particular game, so there is nothing to type
+     * until there is a game to type it for.
+     */
+    private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
+
+    /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
      * the ones with nothing in them.
      */
@@ -123,6 +135,24 @@ public class GameUIFrame extends JFrame {
      * each one in {@link #startMachine}.
      */
     private final Debugger debugger = new Debugger();
+
+    /**
+     * The device in the cartridge slot, which outlives the machines for the reason the breakpoints
+     * do: a power cycle is exactly when somebody wants to watch a code take effect from the reset
+     * vector. Only ever touched on the emulation thread, or in the window inside
+     * {@link #startMachine} where the runner does not exist yet.
+     */
+    private final GameGenie genie = new GameGenie();
+
+    /**
+     * What the dialog is seeded from, and the one copy this thread may read.
+     * <p>
+     * Two fields for one idea, and deliberately: the device above is read by the emulation thread on
+     * every instruction the processor fetches, so reading its list here would be a race. This is the
+     * authority, {@link #startMachine} replays it into whatever machine is built next, and the two
+     * are only ever written together.
+     */
+    private List<GameGenieCode> genieCodes = List.of();
 
     private CHRViewerFrame chrViewerFrame;
     private DebuggerFrame debuggerFrame;
@@ -279,8 +309,9 @@ public class GameUIFrame extends JFrame {
         debugMenuSprites.setMnemonic(KeyEvent.VK_S);
         debugMenu.add(debugMenuSprites);
 
-        // Not gated on a machine, unlike Debug: these are preferences that are remembered and
-        // re-applied to whatever runs next, so there is something to change before a ROM is open.
+        // Not gated on a machine, unlike Debug: mostly these are preferences that are remembered and
+        // re-applied to whatever runs next, so there is something to change before a ROM is open. The
+        // Game Genie is the exception and gates itself, being written for one particular game.
         // Mnemonic A rather than H, which is Help's.
         JMenu hacksMenu = new JMenu("Hacks");
         hacksMenu.setMnemonic(KeyEvent.VK_A);
@@ -288,6 +319,10 @@ public class GameUIFrame extends JFrame {
         hacksMenuUnlimitedSprites.setMnemonic(KeyEvent.VK_U);
         hacksMenuUnlimitedSprites.setSelected(config.unlimitedSprites());
         hacksMenu.add(hacksMenuUnlimitedSprites);
+
+        hacksMenuGameGenie.setMnemonic(KeyEvent.VK_G);
+        hacksMenuGameGenie.setEnabled(false);
+        hacksMenu.add(hacksMenuGameGenie);
 
         JMenu settingsMenu = new JMenu("Settings");
         settingsMenu.setMnemonic(KeyEvent.VK_S);
@@ -472,6 +507,22 @@ public class GameUIFrame extends JFrame {
                 runner.post(() -> ppu.setUnlimitedSprites(unlimited));
             }
         });
+
+        // Not remembered between runs, unlike the tick above: a code is written for one cartridge and
+        // would be nonsense applied to the next one, so there is nowhere sensible to keep it. The
+        // whole list goes over on every change and is replayed onto the device, which keeps the rule
+        // about what two codes for one address mean in the device rather than agreed between two.
+        hacksMenuGameGenie.addActionListener(e ->
+                new GameGenieDialog(this, genieCodes, updated -> {
+                    genieCodes = updated;
+
+                    if (runner != null) {
+                        runner.post(() -> {
+                            genie.clear();
+                            updated.forEach(genie::add);
+                        });
+                    }
+                }).setVisible(true));
 
         // The viewer reads the mapper's character memory and the PPU's palette RAM from this
         // thread while the emulation thread runs. Deliberately unsynchronised: reading an array
@@ -1149,6 +1200,11 @@ public class GameUIFrame extends JFrame {
         if (!sameCartridge) {
             debugger.clear();
             destroyDebuggerFrame();
+
+            // And the codes go with it, for the stronger version of the same reason: a breakpoint on
+            // the wrong game is merely useless, where a code written for one cartridge is an
+            // arbitrary byte written over another one.
+            genieCodes = List.of();
         }
 
         this.cart = cart;
@@ -1169,6 +1225,13 @@ public class GameUIFrame extends JFrame {
         // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
         // window as the two lines above: the runner does not exist yet, so this thread owns it.
         debugger.attach(nes);
+
+        // And so does the cartridge slot. Replayed from the window's own list rather than left to
+        // whatever the device happened to be holding, so that there is one answer to what the codes
+        // are: attach first, so a code put in here reaches this machine's MMU and not the last one's.
+        genie.attach(nes);
+        genie.clear();
+        genieCodes.forEach(genie::add);
 
         // The cartridge finds its battery already charged, which is what a real one did. In the same
         // window as the two lines above: the runner does not exist yet, so this thread owns the
@@ -1205,6 +1268,7 @@ public class GameUIFrame extends JFrame {
         machineMenu.setEnabled(true);
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
+        hacksMenuGameGenie.setEnabled(true);
         updateTitle();
     }
 

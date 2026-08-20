@@ -138,6 +138,28 @@ public final class Report {
         var hacks = run.putObject("hacks");
         hacks.put("unlimitedSprites", ppu.isUnlimitedSprites());
 
+        // And which Game Genie codes were in, which is the fourth -- and the one that matters most,
+        // because it is the only one of the four a digest cannot stand in for. A patched run has its
+        // own cart.sha256; a run with codes in has the cartridge's, since the cartridge really is
+        // untouched. So this array is the whole of what tells it apart from a plain one.
+        //
+        // An array rather than one key per code: the set is open ended, so the key-for-key comparison
+        // that run.hacks is shaped for cannot be had here. Empty rather than absent when there are
+        // none, so two reports still line up.
+        var codes = run.putArray("genie");
+        for (var code : session.genie().codes()) {
+            var node = codes.addObject();
+            node.put("code", code.text());
+            node.put("address", code.address());
+            node.put("value", code.value());
+
+            if (code.hasCompare()) {
+                node.put("compare", code.compare());
+            } else {
+                node.putNull("compare");
+            }
+        }
+
         // Where the run started, which decides whether it is comparable with another one at all. A
         // run that began from a save state and one that began at power on are not two measurements
         // of the same thing, and telling them apart is the whole job of this document.

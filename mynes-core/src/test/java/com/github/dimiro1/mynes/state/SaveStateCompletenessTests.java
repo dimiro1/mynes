@@ -72,6 +72,13 @@ class SaveStateCompletenessTests {
                     "where a debugger's watchpoints wire in -- whoever is watching the machine"
                             + " rather than the machine, and a state that put one back would be"
                             + " restoring the debugger"),
+            Map.entry("MMU.genie",
+                    "the Game Genie plugged in between the cartridge and the console, which belongs"
+                            + " to whoever is playing rather than to the machine -- and a state that"
+                            + " put one back would be restoring the cheat rather than the game. Null"
+                            + " here whenever there are no codes, which is also what keeps the walk"
+                            + " below out of the device: a field holding null is stepped over, where"
+                            + " one holding a device would have its tables vandalised"),
             Map.entry("APU.sampleRing",
                     "the queue between the chip and the sound card rather than the chip. Both real"
                             + " drivers drain it at the end of every frame, so a state taken through"

@@ -123,8 +123,8 @@ own 1 back, so read `exitCode` out of the report if you need to tell them apart.
 They are not one machine at two speeds: 312 scanlines against 262, 3.2 dots to a CPU cycle against
 3, 50.0070 frames a second against 60.0988, and a different APU table for everything counted in CPU
 cycles. So **a PAL run and an NTSC run of the same ROM are not comparable** -- `run.region` in the
-report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`
-and `run.hacks`.
+report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`,
+`run.hacks` and `run.genie`.
 
 `run.hacks` is the third thing in that list, and it is there for the same reason: `--hack
 unlimited-sprites` draws the sprites the chip would have dropped, so a scanline holding more than
@@ -197,6 +197,45 @@ everything sixteen bytes early instead -- offsets count from the front of the fi
 rewrites the string it draws, and the two pictures compared. `src/test/resources/PROVENANCE` says
 where the cartridge came from and why that one.
 
+### Running a Game Genie code
+
+`--genie CODE` puts one in the cartridge slot. Repeatable, comma separated, six letters or eight from
+`APZLGITYEOXUKSVN` -- and note what is *not* in that alphabet, because a code read off a website with
+a B, a C, a D or an R in it has been mistranscribed.
+
+```sh
+java -jar $JAR --headless --rom SMB.nes --genie SXIOPO --frames 900 --input 60/40x3:start
+```
+
+**This is not a patch, and the difference is the whole of why it exists.** A patch rewrites the image
+before `Cart.load` sees it. A code rewrites nothing: the device sat between the cartridge and the
+console, and `MMU` asks it what the console reads after the mapper has answered -- so the
+substitution happens per bus cycle, through whatever bank is switched in at that moment. Eight-letter
+codes carry a compare byte for exactly that reason, and only fire where the cartridge answers with
+it.
+
+Three consequences, in the order they will bite:
+
+- **`cart.sha256` is the plain cartridge's**, since the cartridge really is untouched. So
+  `run.genie` is the only thing in the whole report that tells a cheated run from an honest one --
+  where `--patch` gives a hack its own digest and a save state of its own, `--genie` cannot, and a
+  state taken with codes in **will load into a machine with them out without complaining**.
+- **One address holds one code.** The real device answers the bus in the time it has and does not get
+  a second look, so a second code for an address replaces the first rather than stacking behind it.
+  Deliberately unlike `IPSPatch.applyTo`, where two records may overlap and the later one wins.
+- **A code can only reach $8000-$FFFF.** Fifteen address bits and /ROMSEL is all the cartridge port
+  carries, so there is no code for cartridge RAM, for the console's own memory, or for anything else.
+
+`genie CODE`, `ungenie CODE` and `genie clear` do the same inside an interactive session -- the shape
+of `break`/`unbreak`/`points clear` rather than of `hack`, because a code is put down and picked up
+rather than switched. That is how to take the same frame twice and diff the pictures. The cartridge
+held three codes; this holds as many as are typed.
+
+`GameGenieRunTests` is the worked example, and it is worth reading before changing any of this: it
+makes **the same edit twice**, once as the `.ips` above and once as ten codes at the equivalent CPU
+addresses, and asserts the two draw byte-identical pictures. That works because the hello-world
+cartridge is 32KB of PRG and so unmirrored, which makes file offset `n` exactly CPU `$8000 + (n-16)`.
+
 ## What gets released
 
 `mvn package` also writes `mynes-desktop/target/mynes-<version>.zip` -- the jar, a launcher for each
@@ -251,6 +290,7 @@ mynes-core/           depends on nothing
   mynes/mappers/      mappers 0 to 4
   mynes/state/        save states and battery .sav files
   mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL
+  mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
   mynes/video/        colour indices to pixels: the overscan crop and the frame renderer
   mynes/palette/      the measured RGB tables, and the loader that reads them out of /palettes
 
@@ -269,6 +309,16 @@ patches -- a ROM, a save file, a disk image -- and a patcher that could see a `C
 later be handed one. It is the front ends that join the two together, both by reading the file,
 patching the bytes and handing the result to `Cart.load`. A patch is entitled to rewrite the iNES
 header, so it has to be applied *before* the cartridge is parsed rather than after.
+
+`mynes/cheat/` is inside the console for the opposite reason. A Game Genie code says `$8000`, says
+"the NES CPU address map", and cannot be decoded without one -- so unlike IPS there is nothing
+general about it to keep at arm's length. It is also not applied to anything: `GameGenie` is asked by
+`MMU` on every read of $8000-$FFFF, and holds the `MMU` back so it can put its own hook down as the
+first code arrives and take it up as the last one goes. **The field on `MMU` is null when there are
+no codes, and that is load-bearing twice over**: it is what keeps a machine nobody is cheating on to
+a null check on the hottest line in the emulator, and it is what keeps `SaveStateCompletenessTests`
+out of the device -- a field holding null is recorded and stepped over, where one holding an object
+would be walked into and every array inside it scrambled.
 
 The core knows nothing about the front end, and now it *cannot*: `Cart.load` takes a `byte[]`, `NES`
 has no UI dependency, `nes.tick()` is the only clock, and the PPU emits colour *indices* -- never
