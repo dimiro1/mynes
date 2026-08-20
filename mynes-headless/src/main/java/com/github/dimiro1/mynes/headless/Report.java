@@ -163,10 +163,16 @@ public final class Report {
         // Where the run started, which decides whether it is comparable with another one at all. A
         // run that began from a save state and one that began at power on are not two measurements
         // of the same thing, and telling them apart is the whole job of this document.
+        //
+        // And how much of it was played twice, for the same reason: a session that went back thirty
+        // frames and ran them again visited those frames with the machine in a state the frame
+        // counter no longer describes, so its frameChanges and its sound are not the straight run's.
+        // Always present and 0 when nobody rewound, so two reports still compare key for key.
         var state = run.putObject("state");
         state.put("startedFromPowerOn", options.loadState() == null);
         put(state, "loadedFrom", options.loadState());
         put(state, "savedTo", options.saveState());
+        state.put("framesRewound", session.framesRewound());
 
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());

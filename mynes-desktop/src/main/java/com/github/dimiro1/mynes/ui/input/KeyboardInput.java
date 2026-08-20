@@ -8,6 +8,7 @@ import java.awt.KeyEventDispatcher;
 import java.awt.Window;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.util.function.Consumer;
 
 /**
  * The keyboard, wired to player one's controller.
@@ -47,6 +48,27 @@ public final class KeyboardInput implements KeyEventDispatcher {
      */
     private int pressed;
 
+    /**
+     * The key that runs the game backwards while it is held, or {@link KeyBindings#UNBOUND}.
+     * <p>
+     * Beside the bindings rather than in them, because it is not a button: the controller port has
+     * no wire for it and no game can be told it was pressed. What it drives is the loop that clocks
+     * the machine, which is why it goes somewhere else entirely.
+     */
+    private int rewindKey = KeyBindings.UNBOUND;
+
+    /**
+     * Where "the rewind key is down" is sent, which is the emulation thread's own switch. Null
+     * whenever there is no machine to rewind.
+     */
+    private @Nullable Consumer<Boolean> rewind;
+
+    /**
+     * Whether {@link #rewind} was last told true. The guard on a key that auto-repeats, and the
+     * thing that lets {@link #releaseAll()} know whether it has anything to let go of.
+     */
+    private boolean rewinding;
+
     public KeyboardInput(final Window gameWindow, final KeyBindings bindings) {
         this.gameWindow = gameWindow;
         this.bindings = bindings;
@@ -70,14 +92,44 @@ public final class KeyboardInput implements KeyEventDispatcher {
     }
 
     /**
+     * Which key runs the game backwards. Read from the config file once at startup, since there is
+     * no dialog that can change it.
+     */
+    public void setRewindKey(final int keyCode) {
+        rewindKey = keyCode;
+        releaseAll();
+    }
+
+    /**
+     * Points rewind at a machine's emulation loop, or at nothing when {@code rewind} is null. Called
+     * every time a ROM is loaded, since each machine brings its own loop and its own history.
+     */
+    public void setRewind(final @Nullable Consumer<Boolean> rewind) {
+        releaseAll();
+        this.rewind = rewind;
+    }
+
+    /**
      * Lets go of everything. Wired to the game window losing focus, so that cmd-tabbing away in
      * the middle of a jump does not leave the button held down for as long as the window is gone.
+     * <p>
+     * Rewind goes with the buttons, and for a sharper version of the same reason: a held button
+     * costs a life, where a rewind key stuck down empties the whole history and leaves the game
+     * sitting half a minute in the past.
      */
     public void releaseAll() {
         pressed = 0;
 
         if (controller != null) {
             controller.setButtons(0);
+        }
+
+        if (rewinding) {
+            rewinding = false;
+
+            if (rewind != null) {
+                rewind.accept(false);
+            }
         }
     }
 
@@ -99,7 +151,9 @@ public final class KeyboardInput implements KeyEventDispatcher {
 
         var button = bindings.buttonFor(e.getKeyCode());
         if (button == null) {
-            return false;
+            // Asked second, so a key somebody has put a controller button on stays that button.
+            // Rewind is the emulator's key rather than the game's, and the game wins.
+            return dispatchRewind(e);
         }
 
         switch (e.getID()) {
@@ -122,6 +176,52 @@ public final class KeyboardInput implements KeyEventDispatcher {
         }
 
         target.setButtons(withoutOpposingDirections(pressed));
+
+        return true;
+    }
+
+    /**
+     * The rewind key, which is held down rather than pressed.
+     * <p>
+     * Told only on the edges. The key repeats while it is down and the switch on the far side is a
+     * {@code volatile boolean}, so the repeats would be harmless -- but the flag has to be kept
+     * anyway for {@link #releaseAll()}, and once it is kept there is nothing to gain from telling
+     * the emulation thread the same thing thirty times a second.
+     *
+     * @return whether the keystroke was rewind's, and so must go no further.
+     */
+    private boolean dispatchRewind(final KeyEvent e) {
+        var sink = rewind;
+
+        if (sink == null || rewindKey == KeyBindings.UNBOUND || e.getKeyCode() != rewindKey) {
+            return false;
+        }
+
+        switch (e.getID()) {
+            case KeyEvent.KEY_PRESSED -> {
+                if ((e.getModifiersEx() & SHORTCUT_MODIFIERS) != 0) {
+                    // Cmd-Backspace stays Cmd-Backspace, the same as it would for a button.
+                    return false;
+                }
+
+                if (!rewinding) {
+                    rewinding = true;
+                    sink.accept(true);
+                }
+            }
+            // Taken whatever else is held down, so reaching for Fast Forward mid-rewind -- which is
+            // how the game runs backwards at speed -- cannot leave the key stuck on the way out.
+            case KeyEvent.KEY_RELEASED -> {
+                if (rewinding) {
+                    rewinding = false;
+                    sink.accept(false);
+                }
+            }
+            // KEY_TYPED carries a character and no key code.
+            default -> {
+                return false;
+            }
+        }
 
         return true;
     }

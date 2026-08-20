@@ -378,6 +378,106 @@ class ReplTests {
 
         assertTrue(help.contains("save-state"));
         assertTrue(help.contains("load-state"));
+        assertTrue(help.contains("rewind on"));
+        assertTrue(help.contains("rewind off"));
+    }
+
+    // ==================================================================================== rewind
+
+    /**
+     * The mirror of {@link #aStateGoesBackToWhereItWasTaken}, and the claim is the stronger one: a
+     * bookmark goes back to a moment somebody chose in advance, where this goes back to a moment
+     * nobody thought about until it had already passed.
+     */
+    @Test
+    void rewindGoesBackToWhereTheMachineWas() throws Exception {
+        var replies = session("rewind on", "run 90", "rewind 30", "quit");
+        var straight = session("run 60", "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals(90, replies.get(1).get("frame").asLong());
+        assertEquals(30, replies.get(2).get("framesRewound").asInt());
+        assertEquals(60, replies.get(2).get("frame").asLong());
+        assertEquals(
+                straight.getFirst().get("hash").asText(),
+                replies.get(2).get("hash").asText(),
+                "a rewound machine is the machine that never went forward");
+    }
+
+    /**
+     * Thirty seconds is what the window keeps, so the default here is thirty seconds too -- and on
+     * this machine that is 1803 frames rather than 1800, because a frame is not a sixtieth.
+     */
+    @Test
+    void rewindKeepsThirtySecondsUnlessToldOtherwise() throws Exception {
+        var replies = session("rewind on", "run 10", "rewind", "quit");
+
+        assertTrue(replies.getFirst().get("on").asBoolean());
+        assertEquals(1803, replies.getFirst().get("capacity").asInt());
+        assertEquals(10, replies.get(2).get("rewindable").asInt(),
+                "ten frames run and the power-on state under them");
+    }
+
+    @Test
+    void rewindIsClampedToWhatWasKept() throws Exception {
+        var replies = session("rewind on 10", "run 50", "rewind 99", "quit");
+
+        assertEquals(10, replies.getFirst().get("capacity").asInt());
+        assertEquals(9, replies.get(2).get("framesRewound").asInt(), "nine kept, not ninety-nine");
+        assertEquals(41, replies.get(2).get("frame").asLong());
+        assertEquals(0, replies.get(2).get("rewindable").asInt(), "parked on the oldest it kept");
+    }
+
+    @Test
+    void rewindReportsItsStatus() throws Exception {
+        var replies = session("rewind", "rewind on 60", "rewind", "rewind off", "rewind", "quit");
+
+        assertFalse(replies.getFirst().get("on").asBoolean());
+        assertFalse(replies.getFirst().has("capacity"), "nothing to say about a ring that is not there");
+
+        assertTrue(replies.get(2).get("on").asBoolean());
+        assertEquals(60, replies.get(2).get("capacity").asInt());
+
+        assertFalse(replies.get(4).get("on").asBoolean());
+    }
+
+    /**
+     * Answered rather than fatal, like every other bad command -- and it has to be told apart from a
+     * history that has simply run out, which also moves no frames.
+     */
+    @Test
+    void rewindBeforeOnIsAnError() throws Exception {
+        var replies = session("run 10", "rewind 5", "run 10", "quit");
+
+        assertFalse(replies.get(1).get("ok").asBoolean());
+        assertTrue(replies.get(1).get("error").asText().contains("rewind on"), "and says what to do");
+        assertEquals(20, replies.get(2).get("frame").asLong(), "the session carried on regardless");
+    }
+
+    @Test
+    void rewindThatIsMisspeltOrTooSmallToWorkIsAnError() throws Exception {
+        var replies = session("rewind on 1", "rewind wibble", "rewind on", "rewind on", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean(), "one state can never rewind");
+        assertFalse(replies.get(1).get("ok").asBoolean());
+        assertTrue(replies.get(2).get("ok").asBoolean());
+        assertFalse(replies.get(3).get("ok").asBoolean(), "arming twice would drop the history");
+    }
+
+    /**
+     * Turning it off and on again starts the history from here rather than resuming the old one,
+     * which is the only honest thing it could do with frames nobody was keeping.
+     */
+    @Test
+    void switchingItOffForgetsTheHistory() throws Exception {
+        var replies = session(
+                "rewind on", "run 30", "rewind off", "run 30", "rewind on", "rewind 5", "quit");
+
+        assertFalse(replies.get(2).get("on").asBoolean());
+        assertEquals(0, replies.get(4).get("rewindable").asInt(), "a fresh ring");
+        assertEquals(0, replies.get(5).get("framesRewound").asInt());
+        assertEquals(60, replies.get(5).get("frame").asLong(), "and nowhere to go from");
     }
 
     @Test

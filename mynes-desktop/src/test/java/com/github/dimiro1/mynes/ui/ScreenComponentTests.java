@@ -11,6 +11,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for the half of the picture that used to be the PPU's job: turning the colour indices in
@@ -29,9 +30,10 @@ class ScreenComponentTests {
     private static final int OVERSCAN_TOP = FrameRenderer.OVERSCAN_TOP;
 
     /**
-     * Paints the component at 1:1 and reads a pixel back, in framebuffer coordinates.
+     * Paints the component at 1:1, which is the only way to see what it would put on screen without
+     * reaching inside it.
      */
-    private static int painted(final ScreenComponent screen, final int x, final int y) {
+    private static BufferedImage paint(final ScreenComponent screen) {
         var target = new BufferedImage(
                 PPU.SCREEN_WIDTH, VISIBLE_HEIGHT, BufferedImage.TYPE_INT_RGB);
 
@@ -44,7 +46,35 @@ class ScreenComponentTests {
             g.dispose();
         }
 
-        return target.getRGB(x, y - OVERSCAN_TOP) & 0xFFFFFF;
+        return target;
+    }
+
+    /**
+     * Paints the component at 1:1 and reads a pixel back, in framebuffer coordinates.
+     */
+    private static int painted(final ScreenComponent screen, final int x, final int y) {
+        return paint(screen).getRGB(x, y - OVERSCAN_TOP) & 0xFFFFFF;
+    }
+
+    /**
+     * How many pixels of a painted region are not the flat colour the frame was filled with, which
+     * is how anything drawn <em>over</em> the picture is found without naming where it is.
+     */
+    private static int drawnOver(
+            final BufferedImage image,
+            final int left, final int top, final int right, final int bottom,
+            final int colour) {
+        var count = 0;
+
+        for (var y = top; y < bottom; y++) {
+            for (var x = left; x < right; x++) {
+                if ((image.getRGB(x, y) & 0xFFFFFF) != colour) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
     }
 
     private static int[] frameOf(final int entry) {
@@ -132,6 +162,68 @@ class ScreenComponentTests {
 
         assertEquals(colour, target.getRGB(0, 0) & 0xFFFFFF, "top left");
         assertEquals(colour, target.getRGB(size.width - 1, size.height - 1) & 0xFFFFFF, "bottom right");
+    }
+
+    /**
+     * A flat frame paints flat, so anything that is not the fill colour is the marker -- which is
+     * both halves of what the marker has to be: visible, and only where it is meant to be.
+     * <p>
+     * The top half is checked separately and has to be untouched. That is where a NES game keeps
+     * its score and its lives, and a marker sitting on Super Mario Bros.'s timer would be a marker
+     * in the way.
+     */
+    @Test
+    void theRewindMarkerIsDrawnOverTheBottomCornerOfThePicture() {
+        var screen = new ScreenComponent();
+        var colour = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
+
+        screen.present(frameOf(0x21));
+
+        assertEquals(
+                0,
+                drawnOver(paint(screen), 0, 0, PPU.SCREEN_WIDTH, VISIBLE_HEIGHT, colour),
+                "nothing over it yet");
+
+        screen.setRewinding(true);
+
+        var image = paint(screen);
+
+        assertTrue(
+                drawnOver(image, 0, VISIBLE_HEIGHT / 2, PPU.SCREEN_WIDTH / 3, VISIBLE_HEIGHT, colour)
+                        > 0,
+                "the marker belongs in the bottom left");
+        assertEquals(
+                0,
+                drawnOver(image, 0, 0, PPU.SCREEN_WIDTH, VISIBLE_HEIGHT / 2, colour),
+                "and nowhere near the top, where the game keeps its score");
+
+        screen.setRewinding(false);
+
+        assertEquals(
+                0,
+                drawnOver(paint(screen), 0, 0, PPU.SCREEN_WIDTH, VISIBLE_HEIGHT, colour),
+                "and it goes away again");
+    }
+
+    /**
+     * Over the picture rather than in it. A marker that reached the framebuffer would turn up in
+     * screenshots and in the frame hashes the headless mode compares runs with, where it would be a
+     * lie about what the machine drew.
+     */
+    @Test
+    void theRewindMarkerStaysOutOfScreenshots() {
+        var screen = new ScreenComponent();
+        var colour = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
+
+        screen.present(frameOf(0x21));
+        screen.setRewinding(true);
+
+        var snapshot = screen.snapshot(ScreenScale.ONE_TIMES);
+
+        assertEquals(
+                0,
+                drawnOver(snapshot, 0, 0, PPU.SCREEN_WIDTH, VISIBLE_HEIGHT, colour),
+                "a screenshot is of the machine, and the machine drew none of this");
     }
 
     @Test

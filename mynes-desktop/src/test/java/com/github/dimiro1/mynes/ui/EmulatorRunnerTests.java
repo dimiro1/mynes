@@ -9,12 +9,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongPredicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * The emulation thread with a debugger attached to it.
@@ -47,6 +49,13 @@ class EmulatorRunnerTests {
     private static final int STA = 0x8002;
     private static final int SPIN = 0x8005;
 
+    /**
+     * How much history the rewind tests below give the machine. Small, because the point is to watch
+     * the frame counter move rather than to hold anything for long -- and because every entry is a
+     * whole save state.
+     */
+    private static final int REWIND_FRAMES = 120;
+
     private NES nes;
     private Debugger debugger;
     private EmulatorRunner runner;
@@ -59,7 +68,7 @@ class EmulatorRunnerTests {
         debugger.attach(nes);
         stops = new ArrayBlockingQueue<>(16);
 
-        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger);
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, REWIND_FRAMES);
         runner.setStopListener(stops::add);
     }
 
@@ -175,14 +184,85 @@ class EmulatorRunnerTests {
     void aMachineWithNothingArmedRunsFrames() {
         runner.start();
 
+        waitFor(frame -> frame >= 3, "the ordinary path should still run");
+
+        assertNull(stops.poll(), "and nothing should have stopped it");
+    }
+
+    /**
+     * The frame counter going down is the whole of the feature, and it is the one thing no other
+     * test can see: {@code RewindTests} proves the ring lands on the right machine, and this proves
+     * the loop actually asks it to, one frame per tick, for as long as the key is held.
+     */
+    @Test
+    void holdingRewindRunsTheMachineBackwards() {
+        runner.start();
+
+        var played = waitFor(frame -> frame >= 30, "the machine never got going");
+
+        runner.setRewinding(true);
+
+        // Going back, rather than merely holding still -- which is what a pause would look like
+        // from out here, and what a rewind that loaded the entry it was already standing on would
+        // look like too.
+        var rewound = waitFor(frame -> frame <= played - 10, "the machine never went backwards");
+
+        runner.setRewinding(false);
+
+        waitFor(frame -> frame > rewound, "and it plays on from wherever the rewind stopped");
+    }
+
+    /**
+     * {@code rewind.seconds=0} builds no ring, and the key then has nothing to do rather than
+     * something to refuse.
+     */
+    @Test
+    void aMachineKeepingNoHistoryIgnoresTheRewindKey() {
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0);
+        runner.start();
+        runner.setRewinding(true);
+
+        waitFor(frame -> frame >= 5, "it should have carried on forwards");
+    }
+
+    /**
+     * Pause is looked at first, so a frozen machine stays frozen. Two ideas about what the screen is
+     * showing is worse than a key that does nothing.
+     */
+    @Test
+    void aPausedMachineIsNotRewound() throws Exception {
+        runner.start();
+
+        var played = waitFor(frame -> frame >= 20, "the machine never got going");
+
+        runner.setPaused(true);
+
+        // Long enough for the loop to have gone round a few dozen times had it been rewinding.
+        Thread.sleep(200);
+
+        runner.setRewinding(true);
+        Thread.sleep(200);
+
+        assertTrue(nes.getPPU().getFrame() >= played, "a paused machine holds where it is");
+    }
+
+    /**
+     * Waits for the frame counter to do something, and says where it got to when it does not.
+     */
+    private long waitFor(final LongPredicate condition, final String message) {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(PATIENCE_SECONDS);
 
-        while (nes.getPPU().getFrame() < 3 && System.nanoTime() < deadline) {
+        while (System.nanoTime() < deadline) {
+            var frame = nes.getPPU().getFrame();
+
+            if (condition.test(frame)) {
+                return frame;
+            }
+
             Thread.onSpinWait();
         }
 
-        assertTrue(nes.getPPU().getFrame() >= 3, "the ordinary path should still run");
-        assertNull(stops.poll(), "and nothing should have stopped it");
+        return fail(message + ", and it is on frame " + nes.getPPU().getFrame());
     }
 
     private Debugger.Stop waitForStop() throws InterruptedException {

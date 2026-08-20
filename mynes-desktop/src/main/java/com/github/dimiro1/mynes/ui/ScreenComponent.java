@@ -30,6 +30,22 @@ import java.awt.image.DataBufferInt;
  * where the reason for it is written down.
  */
 public class ScreenComponent extends JComponent {
+
+    /**
+     * How tall the rewind marker is as a fraction of the picture, and how small it is allowed to get
+     * before the fraction stops applying -- at 1x an eighteenth of the picture is twelve pixels, and
+     * anything under about six stops reading as a triangle at all.
+     */
+    private static final int MARKER_HEIGHT_DIVISOR = 18;
+    private static final int MARKER_MINIMUM = 6;
+
+    /**
+     * Translucent, because it sits over a game somebody is trying to see. White reads against nearly
+     * every NES palette entry; the shadow is what carries it over the few it does not.
+     */
+    private static final Color MARKER_FILL = new Color(255, 255, 255, 210);
+    private static final Color MARKER_SHADOW = new Color(0, 0, 0, 140);
+
     private final Object frameLock = new Object();
     private final BufferedImage image = new BufferedImage(
             PPU.SCREEN_WIDTH, PPU.SCREEN_HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -56,6 +72,14 @@ public class ScreenComponent extends JComponent {
     private boolean hasFrame;
 
     private int[] palette = Palettes.defaultPalette().colours();
+
+    /**
+     * Whether to draw the rewind marker over the picture. Written by the emulation thread and read
+     * by the event dispatch thread when it paints, which is what {@code volatile} is here for; it is
+     * outside {@link #frameLock} on purpose, since a marker that appeared a frame late would be
+     * nobody's problem and holding the lock for it would be.
+     */
+    private volatile boolean rewinding;
 
     public ScreenComponent() {
         setScale(ScreenScale.defaultScale());
@@ -92,6 +116,28 @@ public class ScreenComponent extends JComponent {
             hasFrame = true;
             colourise();
         }
+
+        repaint();
+    }
+
+    /**
+     * Draws the rewind marker over the picture, or stops.
+     * <p>
+     * Called from the emulation thread, like {@link #present(int[])}, and by the same rule: that is
+     * the thread that knows whether the machine is actually going backwards, which is not the same
+     * question as whether the key is down -- a paused machine, or a history that has run out, is
+     * a key held with nothing happening.
+     * <p>
+     * Over the picture rather than in it. What the PPU drew is what the PPU drew, and a marker
+     * painted into the framebuffer would end up in screenshots and in the frame hashes, where it
+     * would be a lie about the machine.
+     */
+    public void setRewinding(final boolean rewinding) {
+        if (this.rewinding == rewinding) {
+            return;
+        }
+
+        this.rewinding = rewinding;
 
         repaint();
     }
@@ -183,8 +229,55 @@ public class ScreenComponent extends JComponent {
                         PPU.SCREEN_WIDTH, FrameRenderer.VISIBLE_BOTTOM,
                         null);
             }
+
+            if (rewinding) {
+                drawRewindMarker(g2, x, y, height);
+            }
+
         } finally {
             g2.dispose();
+        }
+    }
+
+    /**
+     * A pair of triangles pointing back the way the game is going, in the corner a video recorder
+     * used to put them.
+     * <p>
+     * The <em>bottom</em> left, which is the one decision here worth explaining: the top is where a
+     * NES game keeps its score, its lives and its timer, and a marker over Super Mario Bros.'s
+     * MARIO 000000 is a marker in the way. Almost nothing puts a status bar along the bottom.
+     * <p>
+     * Sized off the picture rather than off the window, so it stays the same size relative to the
+     * game at every scale, and drawn twice -- once offset in black -- because a translucent white
+     * mark on its own disappears into a bright sky.
+     */
+    private static void drawRewindMarker(
+            final Graphics2D g2, final int x, final int y, final int height) {
+        var size = Math.max(MARKER_MINIMUM, height / MARKER_HEIGHT_DIVISOR);
+        var arrow = size * 3 / 4;
+        var gap = Math.max(1, size / 5);
+        var margin = size * 2 / 3;
+        var offset = Math.max(1, size / 12);
+
+        var left = x + margin;
+        var top = y + height - margin - size;
+
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // The shadow first and the mark over it, so the offset copy reads as a shadow rather than
+        // as a third triangle.
+        for (var shadow = 1; shadow >= 0; shadow--) {
+            g2.setColor(shadow == 1 ? MARKER_SHADOW : MARKER_FILL);
+
+            for (var triangle = 0; triangle < 2; triangle++) {
+                var start = left + triangle * (arrow + gap) + shadow * offset;
+                var line = top + shadow * offset;
+
+                g2.fillPolygon(
+                        new int[]{start + arrow, start + arrow, start},
+                        new int[]{line, line + size, line + size / 2},
+                        3);
+            }
         }
     }
 }

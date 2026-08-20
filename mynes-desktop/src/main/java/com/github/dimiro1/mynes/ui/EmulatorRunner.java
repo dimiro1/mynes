@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.Rewind;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.SwingUtilities;
 import java.lang.System.Logger;
@@ -14,6 +16,12 @@ import java.util.function.Consumer;
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
  * {@link ScreenComponent} -- all of them at normal speed, sixty a second of them when fast
  * forwarding -- and the sound that went with them to an {@link AudioOutput}.
+ * <p>
+ * It also runs the machine the other way. Every other finished frame is written into a
+ * {@link Rewind} ring, and while the rewind key is held the loop pops one of them per display tick
+ * instead of clocking anything -- so the game goes backwards at twice speed without a single
+ * instruction being re-executed, because the picture travels inside the state. Fast Forward applies
+ * to that wait like any other, which makes holding both keys a faster reverse still.
  * <p>
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
@@ -58,6 +66,22 @@ public class EmulatorRunner {
      */
     private static final int AUDIO_BUFFER_SAMPLES = 4096;
 
+    /**
+     * How many frames apart the rewind states are taken, and so how many frames each display tick
+     * gives back while the key is held.
+     * <p>
+     * Two rather than one, which is three improvements for one cost. The capture is half as often,
+     * so it takes a little over a millisecond a frame instead of nearly three. The same memory holds
+     * twice as much game. And, since a tick gives back one state either way, <strong>the rewind runs
+     * at twice speed</strong> -- undoing five seconds takes two and a half rather than five, which
+     * is the difference between a feature and a chore.
+     * <p>
+     * The cost is that letting go of the key lands on an even frame, so it can be one frame away
+     * from the exact moment somebody wanted. At sixty frames a second that is sixteen milliseconds
+     * of a game they are about to play differently anyway.
+     */
+    private static final int REWIND_INTERVAL = 2;
+
     private final NES nes;
     private final ScreenComponent screen;
     private final AudioOutput audio = new AudioOutput();
@@ -89,7 +113,29 @@ public class EmulatorRunner {
      */
     private final Debugger debugger;
 
+    /**
+     * The last few seconds of the machine, or null when the setting asked for none.
+     * <p>
+     * Owned by the runner rather than by the window, unlike the debugger: a history belongs to the
+     * machine that lived it, and carrying one across a power cycle would let somebody rewind into a
+     * game that had already been switched off and on again.
+     */
+    private final @Nullable Rewind rewind;
+
+    /**
+     * The sound that went with the history, kept alongside it and never without it. Null exactly
+     * when {@link #rewind} is.
+     */
+    private final @Nullable RewindAudio rewindAudio;
+
     private volatile boolean running;
+
+    /**
+     * Whether the rewind key is being held. Written by the event dispatch thread and read here, so
+     * the loop picks it up at the next frame boundary rather than mid-frame -- the same handoff as
+     * {@link #paused} and for the same reason.
+     */
+    private volatile boolean rewinding;
 
     /**
      * Written by the event dispatch thread when somebody uses the Pause item, and by this thread
@@ -113,11 +159,35 @@ public class EmulatorRunner {
 
     private Thread thread;
 
-    public EmulatorRunner(final NES nes, final ScreenComponent screen, final Debugger debugger) {
+    /**
+     * @param rewindFrames how many frames of history to keep so the machine can be run backwards
+     *                     through them, or 0 for a machine that keeps none -- which costs one null
+     *                     check a frame and nothing else. Frames rather than states: the ring holds
+     *                     one state per {@link #REWIND_INTERVAL} of them.
+     */
+    public EmulatorRunner(
+            final NES nes,
+            final ScreenComponent screen,
+            final Debugger debugger,
+            final int rewindFrames) {
         this.nes = nes;
         this.screen = screen;
         this.debugger = debugger;
         this.frameNanos = nes.getRegion().frameNanos();
+
+        var states = rewindFrames / REWIND_INTERVAL;
+
+        if (states >= Rewind.MINIMUM_CAPACITY) {
+            this.rewind = new Rewind(states, REWIND_INTERVAL);
+
+            // Counted in frames rather than states, because sound is not something there can be
+            // every other one of: the ring has to hold the frames in between as well, or the rewind
+            // would play half the seconds it was showing.
+            this.rewindAudio = new RewindAudio(states * REWIND_INTERVAL);
+        } else {
+            this.rewind = null;
+            this.rewindAudio = null;
+        }
     }
 
     /**
@@ -194,6 +264,17 @@ public class EmulatorRunner {
 
     public boolean isPaused() {
         return paused;
+    }
+
+    /**
+     * Runs the machine backwards for as long as this is true, one frame of history per display tick.
+     * Takes effect within a frame.
+     * <p>
+     * A no-op on a machine keeping no history, so the key can be wired up unconditionally and the
+     * setting decides whether anything happens.
+     */
+    public void setRewinding(final boolean rewinding) {
+        this.rewinding = rewinding;
     }
 
     /**
@@ -277,19 +358,27 @@ public class EmulatorRunner {
         try {
             audio.open();
 
+            // The floor of the history is the machine as it was switched on, so that rewinding all
+            // the way back lands on the power-on screen rather than on whatever the first frame of
+            // the game happened to be.
+            if (rewind != null) {
+                rewind.capture(nes);
+            }
+
             var speed = this.speed;
             var deadline = System.nanoTime();
             var nextPresent = deadline + frameNanos;
             var lastFrame = ppu.getFrame();
             var wasPaused = false;
+            var wasRewinding = false;
 
             while (running) {
                 runPendingCommands();
 
                 // Normally a no-op -- nothing has been clocked since this was last assigned. It
-                // matters when a command has just loaded a save state, which can move the frame
-                // counter backwards: the loop below waits for the counter to *change*, so a stale
-                // value here would satisfy it after a single tick and present a torn frame.
+                // matters when the frame counter has just moved backwards, which both a loaded save
+                // state and a rewound frame do: the loop below waits for the counter to *change*, so
+                // a stale value here would satisfy it after a single tick and present a torn frame.
                 lastFrame = ppu.getFrame();
 
                 // Asked before the pause is looked at, because a step is the one thing that runs a
@@ -311,6 +400,76 @@ public class EmulatorRunner {
                     LockSupport.parkNanos(frameNanos);
                     deadline = System.nanoTime();
                     continue;
+                }
+
+                // After the pause branch, so pause wins: a frozen machine that could still be
+                // rewound would be two ideas about what the screen is showing. And guarded against
+                // stepping for the reason the pause branch is, since a step is the one thing that
+                // runs a machine that is not running.
+                if (rewinding && rewind != null && !stepping) {
+                    if (!wasRewinding) {
+                        // What the card is holding is up to a tenth of a second of a game that is
+                        // now running the other way. Dropped for the reason a pause drops it.
+                        audio.flush();
+                        screen.setRewinding(true);
+                        wasRewinding = true;
+                    }
+
+                    // Read here rather than taken from the snapshot below, which is only refreshed
+                    // on the forward path: reaching for Fast Forward without letting go of rewind is
+                    // how the game runs backwards at speed, and it has to take effect while it is
+                    // being held rather than once it has been let go of.
+                    var rewindSpeed = this.speed;
+                    var wasOn = ppu.getFrame();
+                    var moved = rewind.rewind(nes, 1);
+
+                    if (moved > 0) {
+                        // The frames that step actually gave back, which is two most of the time and
+                        // one on the first step off a frame with no state of its own. Counted rather
+                        // than assumed, so the sound is exactly the sound of the frames the picture
+                        // has just gone back over.
+                        var given = (int) (wasOn - ppu.getFrame());
+
+                        // Backwards, and at whatever rate the rewind is running -- so two frames of
+                        // it are handed over in the time the card plays one. Never blocking, for the
+                        // reason fast forward never blocks: there is no way to give a sound card
+                        // audio faster than real time, and waiting for it would slow the rewind down
+                        // to the speed of the thing being undone. What does not fit is dropped, so
+                        // this comes out chopped, which is very much what rewinding sounds like.
+                        audio.write(samples, rewindAudio.take(given, samples), false);
+
+                        // Nothing is re-emulated: the picture arrives with the state. What is left
+                        // is deciding whether to hand it over, and that is the forward path's
+                        // arithmetic unchanged -- otherwise UNLIMITED would ask the display for
+                        // several thousand pictures a second while it drained the ring.
+                        var now = System.nanoTime();
+
+                        if (rewindSpeed == EmulationSpeed.NORMAL || now - nextPresent >= 0) {
+                            screen.present(ppu.getFrameBuffer());
+
+                            nextPresent += frameNanos;
+                            if (nextPresent - now < 0) {
+                                nextPresent = now + frameNanos;
+                            }
+                        }
+                    }
+
+                    // A ring that has run out waits a whole frame whatever the speed. There is
+                    // nothing left to go back to, so the oldest picture simply stays up -- and
+                    // UNLIMITED, which does not wait at all, would otherwise spin against it.
+                    LockSupport.parkNanos(
+                            moved > 0 ? rewindSpeed.frameNanos(nes.getRegion()) : frameNanos);
+                    deadline = System.nanoTime();
+                    continue;
+                }
+
+                if (wasRewinding) {
+                    // The other edge, and the same reasoning: the card is holding up to a tenth of
+                    // a second of a game running backwards, which stopped being true the moment the
+                    // key came up. What comes out of the speaker should be what is on the screen.
+                    audio.flush();
+                    screen.setRewinding(false);
+                    wasRewinding = false;
                 }
 
                 // Skipped while stepping: the machine is still stopped, the card was emptied when
@@ -344,6 +503,23 @@ public class EmulatorRunner {
 
                 var completed = ppu.getFrame() != lastFrame;
 
+                // Drained up here rather than at the two places below that used to do it, because
+                // the rewind ring has to be given the sound of a frame before anything decides
+                // whether that frame's sound is going to be played. A frame that stopped part way
+                // through is left alone, exactly as it was: there is no finished frame of sound in
+                // it, and the APU's own ring holds several frames' worth of slack.
+                var sampleCount = completed ? apu.drainSamples(samples) : 0;
+
+                // Every frame that finished, wherever it finished -- stepped, halted, fast
+                // forwarded. One place, above everything below that might skip the rest of the
+                // loop, because the ring's newest entry has to describe the machine as it stands --
+                // and because the two rings must be fed on exactly the same frames or the sound
+                // would come from a different second of the game than the picture.
+                if (completed && rewind != null) {
+                    rewind.capture(nes);
+                    rewindAudio.capture(samples, sampleCount);
+                }
+
                 if (stop != null) {
                     halt(stop);
                 }
@@ -359,9 +535,10 @@ public class EmulatorRunner {
                 if (stop != null) {
                     // A stepped or halted frame still goes on the screen. Its sound does not: one
                     // frame of it played on its own is a click, and a machine stepped a frame at a
-                    // time would be a metronome of them. Drained rather than left, so the ring does
-                    // not carry this frame across the stop and play it on the far side.
-                    apu.drainSamples(samples);
+                    // time would be a metronome of them. It was drained above rather than left, so
+                    // the APU's ring does not carry this frame across the stop and play it on the
+                    // far side -- and the rewind ring kept it, so going back over a stepped frame
+                    // still has its sound.
                     screen.present(ppu.getFrameBuffer());
                     continue;
                 }
@@ -372,7 +549,7 @@ public class EmulatorRunner {
                 // going to be dropped anyway. Fast forwarding cannot block -- there is no way to
                 // hand a sound card audio faster than real time -- so what does not fit is lost,
                 // and fast forward sounds chopped rather than sped up.
-                audio.write(samples, apu.drainSamples(samples), speed == EmulationSpeed.NORMAL);
+                audio.write(samples, sampleCount, speed == EmulationSpeed.NORMAL);
 
                 // Fast forward finishes frames faster than any display can show them, so most of
                 // them are dropped rather than handed over. A frame nobody will see still costs a
@@ -419,6 +596,10 @@ public class EmulatorRunner {
             logger.log(Level.ERROR, "emulation failed at frame " + ppu.getFrame(), t);
         } finally {
             audio.close();
+
+            // A machine torn down mid-rewind would otherwise leave the marker painted over the next
+            // one -- or over an empty window, if this was the last.
+            screen.setRewinding(false);
         }
 
         logger.log(Level.INFO, "emulation stopped");

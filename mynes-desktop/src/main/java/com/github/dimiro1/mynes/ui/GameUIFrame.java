@@ -9,6 +9,7 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.state.BatteryRAM;
+import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
@@ -199,6 +200,10 @@ public class GameUIFrame extends JFrame {
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
+
+        // Once, unlike the bindings: there is no dialog that moves this one, only the file.
+        keyboardInput.setRewindKey(config.rewindKey());
+
         screen.setPalette(config.palette(currentRegion()));
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
@@ -1253,8 +1258,16 @@ public class GameUIFrame extends JFrame {
         machineMenuPause.setSelected(false);
         machineMenuFastForward.setSelected(false);
 
-        runner = new EmulatorRunner(nes, screen, debugger);
+        // Seconds is what the setting says and frames is what a ring holds, and only here is it
+        // known which machine the cartridge turned out to run on -- 1803 frames for thirty seconds
+        // of NTSC against 1500 of PAL. Zero seconds builds no ring at all.
+        runner = new EmulatorRunner(nes, screen, debugger,
+                Rewind.framesFor(nes.getRegion(), config.rewindSeconds()));
         runner.setStopListener(this::stopped);
+
+        // Per machine, like the controller above and for the same reason: each one keeps its own
+        // history, and the key must not still be rewinding a game that has been switched off.
+        keyboardInput.setRewind(runner::setRewinding);
 
         if (debuggerFrame != null) {
             debuggerFrame.setMachine(nes, runner);
