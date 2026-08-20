@@ -171,6 +171,31 @@ exit 2.
 so `run.state.startedFromPowerOn` in the report is part of what to check before diffing two of them.
 `--sram-in`/`--sram-out` do the same for battery RAM, in the `.sav` format other emulators read.
 
+### Going back rather than starting again
+
+`rewind on` keeps a state for every finished frame, and `rewind N` puts the machine back N of them.
+It is off unless asked for, because capturing costs two to three milliseconds a frame and a headless
+run is usually a measurement.
+
+```sh
+printf 'rewind on\nrun 90\nrewind 30\nquit\n' | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+That lands on frame 60 with the same hash a plain `run 60` gives -- a rewound machine is byte for
+byte the machine that never went forward, which is the whole claim and is worth re-checking after
+touching any of it. `rewind on FRAMES` sizes the ring, the default being thirty seconds for the
+region; `rewind` on its own reports `capacity` and `rewindable`; `rewind off` drops the history.
+Running out is not an error, and the reply's `framesRewound` is how far it *actually* went.
+
+**`run.state.framesRewound` joins `startedFromPowerOn` in the list of things to check before diffing
+two runs.** A session that went back and played the same frames again visited them with the machine
+in a state the frame counter no longer describes, so its `frameChanges` and its sound are not a
+straight run's. It is always present and 0 when nobody rewound.
+
+The window's ring is not this one: it keeps a state every *other* frame, which halves the cost,
+doubles the history for the memory, and gives back two frames per display tick so the rewind runs at
+twice speed. The REPL stays at one so that `rewind N` means N frames.
+
 ### Running a romhack
 
 `--patch FILE` applies an IPS patch to the ROM before anything reads it as a cartridge. Repeatable,

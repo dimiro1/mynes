@@ -40,7 +40,7 @@ class DebuggerFrameTests {
         debugger.attach(nes);
 
         // Never started, so the machine is this thread's throughout and nothing below races.
-        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger);
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0);
     }
 
     @Test

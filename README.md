@@ -63,11 +63,16 @@ page carries is never anything a build here has not already made.
 | Select | Shift |
 | Quick Save | F5 |
 | Quick Load | F7 |
+| Rewind (hold) | Backspace |
 | Screenshot | F12 |
+
+Rewind runs the game backwards through the last thirty seconds, sound and all, for as long as you
+hold the key; let go and it plays on from there. Fast Forward applies while you hold it, so the two
+together are a fast reverse.
 
 **Settings > Controller...** remaps any of them. Click a button, press the key you want on it, and
 that is it: there is no save button. Your choices land in `~/.mynes/config.properties`, along with
-the palette, screen size and fast forward speed:
+the palette, screen size, fast forward speed and how much rewind keeps:
 
 ```properties
 video.palette=nesdev
@@ -77,9 +82,14 @@ video.screenshot.scale=1
 emulation.region=auto
 emulation.fast-forward=4x
 audio.muted=false
+rewind.seconds=30
+rewind.key=VK_BACK_SPACE
 controller1.a=VK_X
 controller1.left=VK_LEFT
 ```
+
+`rewind.seconds=0` switches rewind off, which costs nothing at all; it is the one setting with no
+menu item, so that file is where it is remapped.
 
 You can edit that file by hand instead. Key names are the `VK_` constants from
 `java.awt.event.KeyEvent`, and an empty value leaves a button unbound. Anything missing or

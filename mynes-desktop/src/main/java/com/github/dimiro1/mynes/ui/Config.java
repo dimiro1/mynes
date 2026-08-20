@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 
+import java.awt.event.KeyEvent;
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -44,6 +45,30 @@ public final class Config {
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
     private static final String UNLIMITED_SPRITES_KEY = "hacks.unlimited-sprites";
+    private static final String REWIND_SECONDS_KEY = "rewind.seconds";
+    private static final String REWIND_KEY_KEY = "rewind.key";
+
+    /**
+     * How much history rewind keeps unless the file says otherwise. Long enough to undo the jump
+     * that went wrong and short enough that nobody has to think about the memory.
+     */
+    private static final int DEFAULT_REWIND_SECONDS = 30;
+
+    /**
+     * The ceiling, which is a guard against a typo rather than a considered limit. Five minutes of
+     * NTSC is 18,000 states; an extra nought on the end of the entry would be an hour of them, and
+     * the first anybody would know of it is the emulator running out of heap in the middle of a
+     * game.
+     */
+    private static final int MAX_REWIND_SECONDS = 300;
+
+    /**
+     * Backspace, for the reason the quick save and load keys are function keys: it sits in the same
+     * physical place on every keyboard layout, which a letter does not. It is also already the
+     * "undo the last thing" key everywhere else on the machine, and it is nowhere near the eight the
+     * game wants.
+     */
+    private static final int DEFAULT_REWIND_KEY = KeyEvent.VK_BACK_SPACE;
 
     private static final String HEADER = """
             # MyNES settings.
@@ -100,6 +125,17 @@ public final class Config {
             # flickering -- which is a change to the picture and to nothing the game can see.
             """;
 
+    private static final String REWIND_HEADER = """
+            # Holding the rewind key runs the game backwards through the last few seconds of it.
+            # rewind.seconds is how many of them to keep -- 0 switches the whole thing off, and
+            # anything over 300 is taken as 300. The cost is memory and about two milliseconds a
+            # frame, both of which a machine holding no history pays none of.
+            #
+            # rewind.key is a VK_ name from java.awt.event.KeyEvent, the same as the controller
+            # bindings below; an empty value leaves rewind with no key on it. There is no menu item
+            # for this one, so this file is where it is remapped.
+            """;
+
     private KeyBindings keyBindings;
     private NESPalette palette;
     private NESPalette palPalette;
@@ -109,6 +145,8 @@ public final class Config {
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
     private boolean unlimitedSprites;
+    private int rewindSeconds;
+    private int rewindKey;
 
     private Config(
             final KeyBindings keyBindings,
@@ -119,7 +157,9 @@ public final class Config {
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted,
-            final boolean unlimitedSprites) {
+            final boolean unlimitedSprites,
+            final int rewindSeconds,
+            final int rewindKey) {
         this.keyBindings = keyBindings;
         this.palette = palette;
         this.palPalette = palPalette;
@@ -129,6 +169,8 @@ public final class Config {
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
         this.unlimitedSprites = unlimitedSprites;
+        this.rewindSeconds = rewindSeconds;
+        this.rewindKey = rewindKey;
     }
 
     /**
@@ -163,7 +205,49 @@ public final class Config {
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, MUTED_KEY),
-                flagFrom(properties, UNLIMITED_SPRITES_KEY));
+                flagFrom(properties, UNLIMITED_SPRITES_KEY),
+                rewindSecondsFrom(properties),
+                KeyBindings.codeOf(
+                        properties.getProperty(REWIND_KEY_KEY),
+                        DEFAULT_REWIND_KEY,
+                        REWIND_KEY_KEY));
+    }
+
+    /**
+     * How many seconds of history to keep.
+     * <p>
+     * Two ways of being wrong and two different answers, because they are not the same mistake.
+     * Something that is not a number at all says nothing about what was wanted, so it falls back to
+     * the default like every other entry here. A number outside the range is a wish that can be
+     * granted approximately, so it is clamped -- and a negative one clamps to zero, which is the
+     * nearest thing to "less than none" the feature has.
+     */
+    private static int rewindSecondsFrom(final Properties properties) {
+        var value = properties.getProperty(REWIND_SECONDS_KEY);
+
+        if (value == null) {
+            return DEFAULT_REWIND_SECONDS;
+        }
+
+        int seconds;
+
+        try {
+            seconds = Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            logger.log(Level.WARNING, value.trim() + " is not a number of seconds, "
+                    + REWIND_SECONDS_KEY + " falls back to " + DEFAULT_REWIND_SECONDS);
+            return DEFAULT_REWIND_SECONDS;
+        }
+
+        var clamped = Math.clamp(seconds, 0, MAX_REWIND_SECONDS);
+
+        if (clamped != seconds) {
+            logger.log(Level.WARNING,
+                    REWIND_SECONDS_KEY + " is " + seconds + ", which is outside 0 to "
+                            + MAX_REWIND_SECONDS + " -- keeping " + clamped + " seconds");
+        }
+
+        return clamped;
     }
 
     /**
@@ -277,6 +361,16 @@ public final class Config {
                 .append(UNLIMITED_SPRITES_KEY)
                 .append('=')
                 .append(unlimitedSprites)
+                .append("\n\n");
+
+        text.append(REWIND_HEADER)
+                .append(REWIND_SECONDS_KEY)
+                .append('=')
+                .append(rewindSeconds)
+                .append('\n')
+                .append(REWIND_KEY_KEY)
+                .append('=')
+                .append(KeyBindings.nameOf(rewindKey))
                 .append("\n\n");
 
         keyBindings.appendTo(text);
@@ -395,5 +489,36 @@ public final class Config {
 
     public void setUnlimitedSprites(final boolean unlimitedSprites) {
         this.unlimitedSprites = unlimitedSprites;
+    }
+
+    /**
+     * How many seconds of the game to keep so it can be run backwards, or 0 for a machine that keeps
+     * none and so costs nothing.
+     * <p>
+     * Seconds rather than frames because that is the question somebody is actually asking, and
+     * because the answer in frames depends on which machine the cartridge turns out to run on --
+     * which is not known until one is loaded.
+     */
+    public int rewindSeconds() {
+        return rewindSeconds;
+    }
+
+    public void setRewindSeconds(final int rewindSeconds) {
+        this.rewindSeconds = Math.clamp(rewindSeconds, 0, MAX_REWIND_SECONDS);
+    }
+
+    /**
+     * The key held down to run the game backwards, or {@link KeyBindings#UNBOUND} for nobody's key.
+     * <p>
+     * Not one of {@link KeyBindings}'s eight, because it is not a button: no wire in the controller
+     * port carries it and no game can see it. It is remapped by editing the file rather than through
+     * Settings &gt; Controller..., which is a dialog about the eight things a NES pad had.
+     */
+    public int rewindKey() {
+        return rewindKey;
+    }
+
+    public void setRewindKey(final int rewindKey) {
+        this.rewindKey = rewindKey;
     }
 }

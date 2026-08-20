@@ -155,29 +155,49 @@ public final class KeyBindings {
         var keys = new EnumMap<Button, Integer>(Button.class);
 
         for (var button : Button.values()) {
-            keys.put(button, parse(properties.getProperty(button.propertyKey()), button));
+            keys.put(
+                    button,
+                    codeOf(
+                            properties.getProperty(button.propertyKey()),
+                            DEFAULTS.get(button),
+                            button.propertyKey()));
         }
 
         return new KeyBindings(keys);
     }
 
-    private static int parse(final @Nullable String value, final Button button) {
-        if (value == null) {
-            return DEFAULTS.get(button);
+    /**
+     * Reads one {@code VK_} name out of the config file, the way every entry in it is read: nothing
+     * is trusted, and a bad one costs its own setting rather than the startup.
+     * <p>
+     * Public and not about the eight buttons, because the file has grown other keys since -- the
+     * rewind key is one -- and the alternative is a second reflection-built table somewhere else
+     * that disagrees with this one about what this JDK calls a key.
+     *
+     * @param name     the value as it appears in the file, or null if the entry is not there.
+     * @param fallback what a missing or unreadable entry means. {@link #UNBOUND} for a key that is
+     *                 allowed to be nothing.
+     * @param setting  the property this came from, so the log says which line to go and fix.
+     * @return the key code, or {@link #UNBOUND} for an entry deliberately emptied out.
+     */
+    public static int codeOf(
+            final @Nullable String name, final int fallback, final String setting) {
+        if (name == null) {
+            return fallback;
         }
 
-        var name = value.trim();
-        if (name.isEmpty()) {
+        var trimmed = name.trim();
+        if (trimmed.isEmpty()) {
             // Deliberately unbound. Someone who would rather not give up a key for Select can
             // empty the entry out and say so.
             return UNBOUND;
         }
 
-        var code = CODES_BY_NAME.get(name);
+        var code = CODES_BY_NAME.get(trimmed);
         if (code == null) {
-            logger.log(Level.WARNING, name + " is not a key name, "
-                    + button.propertyKey() + " falls back to its default");
-            return DEFAULTS.get(button);
+            logger.log(Level.WARNING, trimmed + " is not a key name, "
+                    + setting + " falls back to its default");
+            return fallback;
         }
 
         return code;
@@ -196,12 +216,16 @@ public final class KeyBindings {
         for (var button : Button.values()) {
             text.append(button.propertyKey())
                     .append('=')
-                    .append(nameFor(keyFor(button)))
+                    .append(nameOf(keyFor(button)))
                     .append('\n');
         }
     }
 
-    private static String nameFor(final int code) {
+    /**
+     * How a key code is spelled back into the config file, and the other half of {@link #codeOf}.
+     * Empty for a key that is nothing, which is what reads back as unbound.
+     */
+    public static String nameOf(final int code) {
         if (code == UNBOUND) {
             return "";
         }

@@ -3,9 +3,11 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import org.jetbrains.annotations.Nullable;
 
 import javax.imageio.ImageIO;
 import java.io.IOException;
@@ -88,6 +90,23 @@ public final class Session {
      * a code belongs to whoever is playing, and a save state carries none of them.
      */
     private final GameGenie genie = new GameGenie();
+
+    /**
+     * The last few seconds of the machine, once somebody has asked for them, and null until then.
+     * <p>
+     * Null at rest rather than an empty ring, the way {@code MMU.genie} is: a one-shot run captures
+     * nothing and pays one null check a frame for the privilege, which is what keeps a headless run
+     * exactly as fast as it was before any of this existed. Two to three milliseconds a frame is
+     * cheap next to a game and ruinous next to a benchmark.
+     */
+    private @Nullable Rewind rewind;
+
+    /**
+     * How many frames this session has gone back over its whole life, which is what the report
+     * carries. Cumulative and never reset: the question it answers is whether the run is comparable
+     * with another one at all, and a run that rewound and played the same frames again is not.
+     */
+    private long framesRewound;
 
     private final short[] samples = new short[AUDIO_BUFFER_SAMPLES];
 
@@ -254,6 +273,13 @@ public final class Session {
 
         collectAudio();
 
+        // The one place a frame is known to have finished, which is why the ring is fed from here
+        // rather than from the three loops above: a frame that ends inside stepInstructions is as
+        // much a frame as one advanceFrame ran, and history that skipped it would count wrong.
+        if (rewind != null) {
+            rewind.capture(nes);
+        }
+
         var hash = FrameAnalysis.hash(ppu.getFrameBuffer());
         var changed = hash != previousHash;
         previousHash = hash;
@@ -408,6 +434,99 @@ public final class Session {
         SaveState.read(nes, path);
 
         previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
+    }
+
+    // ==================================================================================== rewind
+
+    /**
+     * Starts keeping the last {@code capacityFrames} frames, so the machine can be run backwards
+     * through them.
+     * <p>
+     * Captures at once, which is what puts the machine as it stands at the floor of the history
+     * rather than one frame above it. Explicit rather than always on because a headless run is
+     * usually a measurement, and a measurement should not quietly cost two milliseconds a frame.
+     *
+     * @throws UsageException if it is already armed, since a second call would silently throw the
+     *                        history away.
+     */
+    public void armRewind(final int capacityFrames) {
+        if (rewind != null) {
+            throw new UsageException(
+                    "rewind is already on, holding " + rewind.capacity() + " frames. Turn it off"
+                            + " first if the point is to start again with a different size.");
+        }
+
+        try {
+            rewind = new Rewind(capacityFrames);
+        } catch (IllegalArgumentException e) {
+            throw new UsageException(e.getMessage());
+        }
+
+        rewind.capture(nes);
+    }
+
+    /**
+     * Stops keeping history and drops what there was. Idempotent: turning off something that is
+     * already off is what somebody meant either way.
+     */
+    public void disarmRewind() {
+        rewind = null;
+    }
+
+    /**
+     * Puts the machine back where it was {@code frames} frames ago.
+     * <p>
+     * {@link #previousHash} is reseeded here for the same reason {@link #loadState} reseeds it, and
+     * it is worth saying twice because the two are easy to fix one at a time: it describes a picture
+     * the machine no longer has, so the next frame would be counted as a change that never happened
+     * and every {@code frameChanges} in the report would be one out.
+     *
+     * @return how many frames it actually moved, which is fewer than asked for when the history ran
+     * out.
+     * @throws UsageException if nothing has been kept, since a rewind that answered "0 frames" would
+     *                        look the same as one that had simply run out.
+     */
+    public int rewind(final int frames) {
+        if (rewind == null) {
+            throw new UsageException(
+                    "rewind is off, so there is no history to go back through. Turn it on with"
+                            + " \"rewind on\" and run some frames first.");
+        }
+
+        var moved = rewind.rewind(nes, frames);
+
+        framesRewound += moved;
+        previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
+
+        return moved;
+    }
+
+    /**
+     * Whether history is being kept at all.
+     */
+    public boolean rewinding() {
+        return rewind != null;
+    }
+
+    /**
+     * How many frames of history are being kept once it is full, or 0 when it is off.
+     */
+    public int rewindCapacity() {
+        return rewind == null ? 0 : rewind.capacity();
+    }
+
+    /**
+     * How far back it could go right now, which climbs as a run goes on and stops at the capacity.
+     */
+    public int rewindable() {
+        return rewind == null ? 0 : rewind.rewindable();
+    }
+
+    /**
+     * How many frames this session has gone back altogether.
+     */
+    public long framesRewound() {
+        return framesRewound;
     }
 
     /**

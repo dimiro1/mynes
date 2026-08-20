@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Disassembler;
+import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveStateException;
 
 import java.io.BufferedReader;
@@ -55,6 +56,9 @@ public final class Repl {
             genie clear                take them all out
             save-state PATH            write the whole machine to a file
             load-state PATH            put one back, from this same ROM
+            rewind on [FRAMES]         start keeping history, 30 seconds of it by default
+            rewind N                   go back N frames, or as far as the history goes
+            rewind off                 stop keeping it
             audio                      peak, RMS and silence since the last audio command
             help                       this
             quit                       stop
@@ -78,6 +82,13 @@ public final class Repl {
      * end of whatever routine the machine stopped in.
      */
     private static final int DEFAULT_DISASM_LINES = 16;
+
+    /**
+     * How much history {@code rewind on} keeps when it is not told, in seconds rather than frames
+     * because that is the unit the answer is wanted in -- and because the two machines put a
+     * different number of frames in a second. The window's default is the same thirty.
+     */
+    private static final int DEFAULT_REWIND_SECONDS = 30;
 
     private final Session session;
     private final Options options;
@@ -173,6 +184,7 @@ public final class Repl {
             case "genie", "ungenie" -> genie(name, words);
             case "save-state" -> saveState(words);
             case "load-state" -> loadState(words);
+            case "rewind" -> rewind(words);
             case "audio" -> audio();
             case "help" -> reply("help", node -> node.put("commands", HELP));
             default -> error(name, "\"" + name + "\" is not a command. Try help.");
@@ -649,6 +661,60 @@ public final class Repl {
         }
 
         reply("load-state", node -> node.put("path", path.toString()));
+    }
+
+    /**
+     * Starts keeping history, goes back through it, or says how much of it there is.
+     * <p>
+     * The one command rather than three because the three are one idea, and because the shape reads
+     * the way it is used: {@code rewind on}, some frames, {@code rewind 30}. Unlike {@code hack} it
+     * is not a two-position switch -- the interesting form is the middle one, which takes a number.
+     * <p>
+     * Worth having at all because this is where the feature can be checked. A window is somebody
+     * holding a key down and a picture that looks about right; here a rewound machine's frame and
+     * hash come back on the same line, so "it went back to where it was" is an assertion rather than
+     * an impression.
+     */
+    private void rewind(final String[] words) {
+        if (words.length < 2) {
+            reply("rewind", this::putRewind);
+            return;
+        }
+
+        switch (words[1].toLowerCase(Locale.ROOT)) {
+            case "on" -> {
+                session.armRewind(words.length > 2
+                        ? (int) number(words[2], "rewind")
+                        : Rewind.framesFor(session.nes().getRegion(), DEFAULT_REWIND_SECONDS));
+
+                reply("rewind", this::putRewind);
+            }
+            case "off" -> {
+                session.disarmRewind();
+
+                reply("rewind", this::putRewind);
+            }
+            default -> {
+                // How far it actually went, not how far it was asked to go. A history that ran out
+                // is the ordinary answer to a key held down, and the difference between the two
+                // numbers is the whole of what a caller wants to know about it.
+                var moved = session.rewind((int) number(words[1], "rewind"));
+
+                reply("rewind", node -> {
+                    node.put("framesRewound", moved);
+                    putRewind(node);
+                });
+            }
+        }
+    }
+
+    private void putRewind(final Json.Object node) {
+        node.put("on", session.rewinding());
+
+        if (session.rewinding()) {
+            node.put("capacity", session.rewindCapacity());
+            node.put("rewindable", session.rewindable());
+        }
     }
 
     private static long sizeOf(final Path path) {

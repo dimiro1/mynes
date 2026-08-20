@@ -557,6 +557,28 @@ class HeadlessRunTests {
         assertEquals(state.toString(), report().at("/run/state/loadedFrom").asText());
     }
 
+    /**
+     * The fourth thing that decides whether two runs are comparable, after the region, the hacks and
+     * the codes. A run that went back and played the same frames again visited them with a machine
+     * the frame counter no longer describes, so its sound and its frame changes are not a straight
+     * run's -- and nothing else in the document would say so.
+     */
+    @Test
+    void theReportSaysHowMuchOfTheRunWasPlayedTwice() throws Exception {
+        run();
+
+        assertEquals(0, report().at("/run/state/framesRewound").asLong(),
+                "present and zero on a run nobody rewound, so two reports compare key for key");
+
+        var script = Files.writeString(
+                out.resolve("session.txt"), "rewind on\nrun 30\nrewind 10\nquit\n");
+
+        run("--script", script.toString());
+
+        assertEquals(10, report().at("/run/state/framesRewound").asLong());
+        assertEquals(20, report().at("/ppu/frame").asLong(), "thirty run, ten given back");
+    }
+
     @Test
     void aStateFromAnotherCartridgeStopsTheRun() {
         var state = out.resolve("nestest.mn");

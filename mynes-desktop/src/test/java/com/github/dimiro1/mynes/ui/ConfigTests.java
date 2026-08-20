@@ -307,6 +307,66 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the rewind settings")
+    class LoadingRewind {
+        @Test
+        void aMissingEntryGivesThirtySecondsOnBackspace() throws IOException {
+            var config = Config.load(write("video.palette=nesdev\n"));
+
+            assertEquals(30, config.rewindSeconds());
+            assertEquals(KeyEvent.VK_BACK_SPACE, config.rewindKey());
+        }
+
+        @Test
+        void aNumberNamesItsSeconds() throws IOException {
+            assertEquals(90, Config.load(write("rewind.seconds=90\n")).rewindSeconds());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertEquals(5, Config.load(write("rewind.seconds= 5 \n")).rewindSeconds());
+            assertEquals(KeyEvent.VK_HOME, Config.load(write("rewind.key= VK_HOME \n")).rewindKey());
+        }
+
+        @Test
+        void zeroSwitchesTheWholeThingOff() throws IOException {
+            assertEquals(0, Config.load(write("rewind.seconds=0\n")).rewindSeconds());
+        }
+
+        /**
+         * A wish that can be granted approximately is granted approximately. The ceiling is there
+         * because an extra nought is a plausible typo and an hour of save states is not something
+         * to find out about by running out of heap.
+         */
+        @Test
+        void anImpossibleNumberOfSecondsIsClamped() throws IOException {
+            assertEquals(300, Config.load(write("rewind.seconds=3000\n")).rewindSeconds());
+            assertEquals(0, Config.load(write("rewind.seconds=-5\n")).rewindSeconds());
+        }
+
+        /**
+         * Unlike a number out of range, which says what was wanted. This says nothing, so it lands
+         * where every other unreadable entry in the file lands.
+         */
+        @Test
+        void somethingThatIsNotANumberFallsBackToTheDefault() throws IOException {
+            assertEquals(30, Config.load(write("rewind.seconds=lots\n")).rewindSeconds());
+        }
+
+        @Test
+        void anEmptyKeyLeavesRewindWithNoKeyOnIt() throws IOException {
+            assertEquals(KeyBindings.UNBOUND, Config.load(write("rewind.key=\n")).rewindKey());
+        }
+
+        @Test
+        void anUnknownKeyNameFallsBackToBackspace() throws IOException {
+            // VK_BACKSPACE without the underscore is the likely typo, and it is not a constant.
+            assertEquals(KeyEvent.VK_BACK_SPACE,
+                    Config.load(write("rewind.key=VK_BACKSPACE\n")).rewindKey());
+        }
+    }
+
+    @Nested
     @DisplayName("saving")
     class Saving {
         @Test
@@ -404,6 +464,30 @@ class ConfigTests {
         }
 
         @Test
+        void theRewindSettingsSurviveTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setRewindSeconds(120);
+            config.setRewindKey(KeyEvent.VK_HOME);
+            config.save(config());
+
+            var loaded = Config.load(config());
+
+            assertEquals(120, loaded.rewindSeconds());
+            assertEquals(KeyEvent.VK_HOME, loaded.rewindKey());
+        }
+
+        @Test
+        void aRewindKeyOfNothingReadsBackAsNothing() throws IOException {
+            // Rather than as the default, which is the trap an empty value falls into if the file
+            // simply leaves the entry out.
+            var config = Config.load(config());
+            config.setRewindKey(KeyBindings.UNBOUND);
+            config.save(config());
+
+            assertEquals(KeyBindings.UNBOUND, Config.load(config()).rewindKey());
+        }
+
+        @Test
         void createsTheDirectory() throws IOException {
             var path = directory.resolve("nested").resolve("config.properties");
 
@@ -439,6 +523,8 @@ class ConfigTests {
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
             config.setUnlimitedSprites(true);
+            config.setRewindSeconds(45);
+            config.setRewindKey(KeyEvent.VK_BACK_SPACE);
             config.save(config());
 
             var text = Files.readString(config());
@@ -451,6 +537,8 @@ class ConfigTests {
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("hacks.unlimited-sprites=true"), text);
+            assertTrue(text.contains("rewind.seconds=45"), text);
+            assertTrue(text.contains("rewind.key=VK_BACK_SPACE"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
         }
 
