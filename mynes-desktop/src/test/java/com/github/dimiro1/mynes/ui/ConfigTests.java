@@ -283,6 +283,30 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the hacks")
+    class LoadingHacks {
+        @Test
+        void aMissingEntryLeavesTheConsoleAsItWas() throws IOException {
+            assertFalse(Config.load(write("video.palette=nesdev\n")).unlimitedSprites());
+        }
+
+        @Test
+        void trueMeansTheSpriteLimitIsLifted() throws IOException {
+            assertTrue(Config.load(write("hacks.unlimited-sprites=true\n")).unlimitedSprites());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertTrue(Config.load(write("hacks.unlimited-sprites= true \n")).unlimitedSprites());
+        }
+
+        @Test
+        void anythingElseLeavesItOff() throws IOException {
+            assertFalse(Config.load(write("hacks.unlimited-sprites=yes\n")).unlimitedSprites());
+        }
+    }
+
+    @Nested
     @DisplayName("saving")
     class Saving {
         @Test
@@ -371,6 +395,15 @@ class ConfigTests {
         }
 
         @Test
+        void theSpriteLimitHackSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setUnlimitedSprites(true);
+            config.save(config());
+
+            assertTrue(Config.load(config()).unlimitedSprites());
+        }
+
+        @Test
         void createsTheDirectory() throws IOException {
             var path = directory.resolve("nested").resolve("config.properties");
 
@@ -405,6 +438,7 @@ class ConfigTests {
             config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
+            config.setUnlimitedSprites(true);
             config.save(config());
 
             var text = Files.readString(config());
@@ -416,6 +450,7 @@ class ConfigTests {
             assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
+            assertTrue(text.contains("hacks.unlimited-sprites=true"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
         }
 

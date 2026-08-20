@@ -154,6 +154,11 @@ A CHR viewer shows every tile of a bank with a zoomed preview, coloured with any
 palettes the game is using, and it updates live as CHR RAM is rewritten and palettes change. There
 are also toggles to hide the background or the sprite layer without the game noticing.
 
+A **Hacks** menu, for the things the console does not do. **Unlimited Sprites** draws the sprites the
+chip would have dropped, so a scanline holding more than eight of them stops flickering; the game
+cannot tell, since the overflow flag still rises and the cartridge still sees the same address bus.
+It is off unless it is ticked, and the tick is remembered.
+
 All of it is in headless mode too — `break`, `watch`, `step` and `disasm` are commands in the
 interactive session, so the same questions can be asked from a script.
 
@@ -276,6 +281,12 @@ seconds to start up, the jar about a third of one.
   run without a patched file existing anywhere. The report's `cart.patches` says how many records
   each one held, and `cart.sha256` is the digest of the patched image rather than the file on disk —
   a patch that turns out to hold no records is one cut against a different dump of the game.
+- **`--hack NAME`** switches on one of the things the console does not do, all of which are off
+  otherwise. There is one so far, `unlimited-sprites`, which draws the sprites the chip would have
+  dropped so that a scanline holding more than eight of them stops flickering. Nothing a game can
+  observe changes — the overflow flag still rises and the cartridge sees the same address bus — but
+  the picture is not the one the hardware would have produced, so `run.hacks` in the report is part
+  of what to check before diffing two of them.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
   lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what

@@ -39,6 +39,7 @@ import java.util.TreeSet;
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
+ * @param hacks            which of the things the hardware does not do to switch on.
  * @param dumps            which memories to write out when the run ends.
  * @param loadState        a save state to start from instead of power on, or null.
  * @param saveState        where to write a save state when the run ends, or null.
@@ -73,6 +74,7 @@ public record Options(
         Region region,
         NESPalette palette,
         boolean audio,
+        Set<String> hacks,
         List<String> dumps,
         Path loadState,
         Path saveState,
@@ -96,6 +98,19 @@ public record Options(
     public enum Format {
         AUTO, JSON, TEXT
     }
+
+    /**
+     * Drawing the sprites the eight output units had no room for, so a scanline holding more than
+     * eight of them stops flickering. Not hardware, which is the point of the flag: a run with this
+     * on and a run without it are two different machines, and {@code run.hacks} in the report says
+     * which one happened.
+     */
+    public static final String UNLIMITED_SPRITES = "unlimited-sprites";
+
+    /**
+     * Every hack there is, which is also what an unknown {@code --hack} is answered with.
+     */
+    public static final Set<String> HACKS = Set.of(UNLIMITED_SPRITES);
 
     /**
      * Ten seconds of emulated time, which is about a second of real time and long enough for most
@@ -207,6 +222,17 @@ public record Options(
                                     44100Hz. The report's peak, RMS and silent frame counts are
                                     there either way; this only adds the file.
 
+            Hacks, which are things the console does not do
+              --hack NAME[,NAME..]  Switch one on. All of them are off unless named here, and
+                                    run.hacks in the report says which were on, so a run with one
+                                    and a run without it can be told apart.
+                                      unlimited-sprites   Draw the sprites the chip would have
+                                                          dropped, so a scanline holding more than
+                                                          eight of them stops flickering. Nothing a
+                                                          game can see changes: the overflow flag
+                                                          still rises and the cartridge sees the
+                                                          same address bus.
+
             Memory, dumped once the run has finished
               --dump LIST           Comma separated, from: ram (2KB), oam (256B), palette (32B),
                                     nametables (4KB), prgram (8KB), chr (8KB), or all. Raw binary,
@@ -282,6 +308,7 @@ public record Options(
         Region region = null;
         NESPalette palette = null;
         var audio = false;
+        var hacks = new LinkedHashSet<String>();
         var dumps = new LinkedHashSet<String>();
         Path loadState = null;
         Path saveState = null;
@@ -324,6 +351,7 @@ public record Options(
                 case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--audio" -> audio = true;
+                case "--hack" -> parseHacks(value(args, ++i, flag), hacks);
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
                 case "--load-state" -> loadState = Path.of(value(args, ++i, flag));
                 case "--save-state" -> saveState = Path.of(value(args, ++i, flag));
@@ -372,6 +400,7 @@ public record Options(
                 region,
                 palette,
                 audio,
+                Set.copyOf(hacks),
                 List.copyOf(dumps),
                 loadState,
                 saveState,
@@ -518,6 +547,31 @@ public record Options(
         }
 
         return last;
+    }
+
+    /**
+     * Reads a hack list, adding what it names to {@code hacks}.
+     * <p>
+     * An unknown name is refused rather than ignored, for the reason a misspelled palette is: a run
+     * that quietly happened without the hack somebody asked for would look like it had worked, and
+     * the picture is the only place the difference shows.
+     */
+    private static void parseHacks(final String text, final Set<String> hacks) {
+        for (var token : text.split(",")) {
+            var trimmed = token.trim().toLowerCase();
+
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+
+            if (!HACKS.contains(trimmed)) {
+                throw new UsageException(
+                        "--hack does not know \"" + trimmed + "\". It knows "
+                                + String.join(", ", new TreeSet<>(HACKS)) + ".");
+            }
+
+            hacks.add(trimmed);
+        }
     }
 
     private static void parseDumps(final String text, final Set<String> dumps) {

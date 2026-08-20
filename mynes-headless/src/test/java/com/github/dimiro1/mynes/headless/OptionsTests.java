@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -193,6 +194,31 @@ class OptionsTests {
     @Test
     void allIsEveryDump() {
         assertEquals(Session.DUMPS, parse("--rom", "x.nes", "--dump", "all").dumps());
+    }
+
+    @Test
+    void noHackIsAskedForUnlessOneIsNamed() {
+        assertTrue(parse("--rom", "x.nes").hacks().isEmpty(), "the console is the default");
+    }
+
+    @Test
+    void aHackIsTakenAsAsked() {
+        assertEquals(
+                Set.of(Options.UNLIMITED_SPRITES),
+                parse("--rom", "x.nes", "--hack", "unlimited-sprites").hacks());
+    }
+
+    /**
+     * Refused rather than ignored, for the reason a misspelled region is: the only place the
+     * difference shows is the picture, so a run that quietly did not switch it on would look like
+     * it had worked.
+     */
+    @Test
+    void aHackNameThatIsNotOnTheListIsRejected() {
+        var message = refused("--rom", "x.nes", "--hack", "infinite-lives").getMessage();
+
+        assertTrue(message.contains("infinite-lives"));
+        assertTrue(message.contains("unlimited-sprites"), "the message should offer the real ids");
     }
 
     @Test

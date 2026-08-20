@@ -353,6 +353,12 @@ public class PPU {
             new SpriteUnit(), new SpriteUnit(), new SpriteUnit(), new SpriteUnit(),
     };
 
+    /**
+     * The sprites the eight units above had no room for, which are not hardware and are drawn only
+     * when somebody has asked for them.
+     */
+    private final ExtraSprites extraSprites = new ExtraSprites();
+
     // ---------------------------------------------------------------- open bus
 
     private final OpenBus openBus = new OpenBus();
@@ -828,6 +834,8 @@ public class PPU {
             for (var unit : spriteUnits) {
                 unit.halted = false;
             }
+
+            extraSprites.release();
         }
 
         if (dot < 257 || dot > 320) {
@@ -866,6 +874,13 @@ public class PPU {
             case 4 -> unit.patternLow = fetchSpritePattern(slot, 0);
             case 6 -> unit.patternHigh = fetchSpritePattern(slot, 8);
             default -> { /* the dots that only put an address out */ }
+        }
+
+        // The fetch window is over, so the eight units are loaded and the evaluation's answer for
+        // this line is final. Whatever it had to leave behind is picked up here, on a dot the
+        // hardware spends putting an address out and nothing else.
+        if (dot == 320) {
+            extraSprites.scan();
         }
     }
 
@@ -961,6 +976,8 @@ public class PPU {
         for (var unit : spriteUnits) {
             unit.clockCounter();
         }
+
+        extraSprites.clockCounters();
     }
 
     /**
@@ -979,6 +996,8 @@ public class PPU {
         for (var unit : spriteUnits) {
             unit.shift();
         }
+
+        extraSprites.shift();
     }
 
     private void clearSecondaryOAM() {
@@ -1319,22 +1338,7 @@ public class PPU {
             row = 0;
         }
 
-        if ((attributes & 0x80) != 0) {
-            row = height - 1 - row;
-        }
-
-        int address;
-
-        if (height == 16) {
-            // A tall sprite ignores $2000's table bit: the tile number's low bit picks the table
-            // and the rest of it picks a pair of tiles, the second being the bottom half.
-            address = ((tile & 1) << 12) | ((tile & 0xFE) << 4);
-            address += row >= 8 ? 16 + (row & 7) : row;
-        } else {
-            address = ((ctrl & CTRL_SPRITE_TABLE) != 0 ? 0x1000 : 0x0000) | (tile << 4) | row;
-        }
-
-        var data = vram.read(address + plane);
+        var data = vram.read(spritePatternAddress(tile, attributes, row, height) + plane);
 
         if (!inRange) {
             return 0;
@@ -1346,12 +1350,220 @@ public class PPU {
     }
 
     /**
+     * Where the low bit plane of one row of one sprite lives. The high one is eight further on.
+     * <p>
+     * Address arithmetic and nothing else, which is why {@link ExtraSprites} can share it: no bus
+     * cycle happens here, so the caller decides whether the cartridge is told about the address.
+     *
+     * @param tile       the tile number out of OAM.
+     * @param attributes the attribute byte, of which only the vertical flip bit matters here.
+     * @param row        which row of the sprite, 0 to {@code height - 1}, before any flip.
+     * @param height     8 or 16.
+     */
+    private int spritePatternAddress(
+            final int tile, final int attributes, final int row, final int height) {
+        var line = (attributes & 0x80) != 0 ? height - 1 - row : row;
+
+        if (height == 16) {
+            // A tall sprite ignores $2000's table bit: the tile number's low bit picks the table
+            // and the rest of it picks a pair of tiles, the second being the bottom half.
+            var address = ((tile & 1) << 12) | ((tile & 0xFE) << 4);
+
+            return address + (line >= 8 ? 16 + (line & 7) : line);
+        }
+
+        return ((ctrl & CTRL_SPRITE_TABLE) != 0 ? 0x1000 : 0x0000) | (tile << 4) | line;
+    }
+
+    /**
      * Turns a pattern byte back to front, which is how a horizontally flipped sprite is drawn:
      * the hardware loads the shift register the other way round rather than shifting the other
      * way.
      */
     private static int reverseBits(final int value) {
         return Integer.reverse(value) >>> 24;
+    }
+
+    /**
+     * The sprites the hardware ran out of output units for, drawn anyway.
+     * <p>
+     * This is not a chip. The 2C02 has eight sprite output units and a scanline that wants a ninth
+     * gets the overflow flag instead, which is why so many games flicker their sprites -- rotating
+     * which of them is dropped, so that all of them are visible half the time. Switching this on
+     * puts the dropped ones on screen as well, and the flicker stops.
+     * <p>
+     * The reason a game cannot tell is that nothing here touches anything a game can reach. The
+     * evaluation, secondary OAM, the eight real units and every bus cycle they make are left
+     * exactly as they were, and this runs afterwards on the results. The overflow flag still rises,
+     * $2004 still answers with whatever the sprite hardware is holding, and sprite 0 hit is still
+     * sprite 0's. OAM is read through {@link OAM#peek} and the patterns through {@link VRAM#peek},
+     * so no row of OAM is refreshed that would have decayed and MMC3's counter never sees an
+     * address that would not have been there. What changes is the picture and nothing else.
+     * <p>
+     * Inner rather than static because it is all borrowed: the beam position, $2000, OAM, the PPU
+     * bus, and the evaluation's own answer for the line.
+     */
+    private final class ExtraSprites {
+        /**
+         * Whether anybody has asked for this. Default off, and not part of the machine -- it
+         * belongs to whoever is watching, like the two layer switches.
+         */
+        private boolean enabled;
+
+        /**
+         * Sixty four sprites in OAM, less the eight the hardware has units of its own for, which is
+         * as many as can ever be left over on one scanline.
+         */
+        private final SpriteUnit[] units = new SpriteUnit[56];
+
+        /**
+         * How many of them the line being drawn is using. Everything below loops to here rather
+         * than over the array, so a machine with the hack switched off spends one comparison a dot
+         * on it.
+         */
+        private int count;
+
+        private ExtraSprites() {
+            Arrays.setAll(units, i -> new SpriteUnit());
+        }
+
+        /**
+         * Picks up whatever the evaluation had to leave behind, once per scanline at dot 320.
+         * <p>
+         * Only when eight sprites were found: fewer means nothing was dropped, and the flag the
+         * hardware raises when it drops one is exactly the condition being undone here. The
+         * pre-render line evaluates nothing, so it has nothing to leave behind either -- the stale
+         * secondary OAM that lets a sprite reach scanline 0 is the real units' business and stays
+         * theirs.
+         */
+        private void scan() {
+            count = 0;
+
+            if (!enabled || scanline == preRenderLine || evaluation.spritesFound < 8) {
+                return;
+            }
+
+            var height = spriteHeight();
+
+            // The first eight matches are already in the real units, and the walk starts wherever
+            // OAMADDR pointed when the evaluation did, so a game that moved it does not have
+            // sprites resurrected from in front of where the hardware began looking. Four bytes at
+            // a time, which is an approximation only for a game that left OAMADDR misaligned: the
+            // hardware would have read those bytes out of step, and this reads sprites.
+            var skip = 8;
+
+            for (var address = evaluation.firstAddressExamined & 0xFC;
+                 address < 0x100;
+                 address += 4) {
+                var row = scanline - oam.peek(address);
+
+                if (row < 0 || row >= height) {
+                    continue;
+                }
+
+                if (skip > 0) {
+                    skip--;
+                    continue;
+                }
+
+                var tile = oam.peek(address + 1);
+                var attributes = oam.peek(address + 2);
+                var unit = units[count++];
+
+                unit.counter = oam.peek(address + 3);
+                unit.attributes = attributes;
+                unit.patternLow = pattern(tile, attributes, row, height, 0);
+                unit.patternHigh = pattern(tile, attributes, row, height, 8);
+            }
+        }
+
+        /**
+         * One bit plane of one sprite, read past the cartridge rather than through it.
+         *
+         * @see VRAM#peek(int)
+         */
+        private int pattern(
+                final int tile,
+                final int attributes,
+                final int row,
+                final int height,
+                final int plane) {
+            var data = vram.peek(spritePatternAddress(tile, attributes, row, height) + plane);
+
+            return (attributes & 0x40) != 0 ? reverseBits(data) : data;
+        }
+
+        private void clockCounters() {
+            for (var i = 0; i < count; i++) {
+                units[i].clockCounter();
+            }
+        }
+
+        private void shift() {
+            for (var i = 0; i < count; i++) {
+                units[i].shift();
+            }
+        }
+
+        /**
+         * Puts them back to counting, on the same dot the real units are put back to counting on.
+         */
+        private void release() {
+            for (var i = 0; i < count; i++) {
+                units[i].halted = false;
+            }
+        }
+
+        /**
+         * @return the first of these putting out an opaque pixel, or null. Only asked once all
+         * eight real units have come out transparent, which is what keeps the answer in OAM order:
+         * every sprite here is later in OAM than every sprite there.
+         */
+        private SpriteUnit firstOpaque() {
+            for (var i = 0; i < count; i++) {
+                if (units[i].pixel() != 0) {
+                    return units[i];
+                }
+            }
+
+            return null;
+        }
+
+        /**
+         * The units travel, and {@link #enabled} does not.
+         * <p>
+         * Not because a save state cares what the picture looked like, but because a state can be
+         * taken half way down a scanline -- a REPL breakpoint, or the debugger's step -- and
+         * resuming from one has to draw the rest of that line the same way running straight through
+         * would have. {@link #count} rather than {@code enabled} is what everything above reads, so
+         * a state loaded into a machine with the hack switched off still finishes the line it was
+         * in the middle of and then quietly stops finding any.
+         */
+        private void serialize(final StateIO io) {
+            count = Math.min(io.u8(count), units.length);
+
+            // One field across all of them at a time, which is how the eight real units are
+            // written a few lines above this.
+            for (var unit : units) {
+                unit.counter = io.u8(unit.counter);
+            }
+
+            for (var unit : units) {
+                unit.attributes = io.u8(unit.attributes);
+            }
+
+            for (var unit : units) {
+                unit.patternLow = io.u8(unit.patternLow);
+            }
+
+            for (var unit : units) {
+                unit.patternHigh = io.u8(unit.patternHigh);
+            }
+
+            for (var unit : units) {
+                unit.halted = io.bool(unit.halted);
+            }
+        }
     }
 
     // ================================================================ pixel output
@@ -1391,17 +1603,27 @@ public class PPU {
      * @return the low five bits of the palette address to draw, zero meaning the backdrop.
      */
     private int multiplex(final int x, final int background) {
-        var unit = -1;
+        SpriteUnit winner = null;
+        var isSpriteZero = false;
         var colour = 0;
 
         if ((mask & MASK_SHOW_SPRITES) != 0 && (x >= 8 || (mask & MASK_SHOW_SPRITES_LEFT) != 0)) {
-            for (var i = 0; i < spriteUnits.length; i++) {
-                colour = spriteUnits[i].pixel();
-
-                if (colour != 0) {
-                    unit = i;
-                    break;
+            for (var i = 0; i < spriteUnits.length && winner == null; i++) {
+                if (spriteUnits[i].pixel() != 0) {
+                    winner = spriteUnits[i];
+                    isSpriteZero = i == 0;
                 }
+            }
+
+            // Only once the hardware's own eight have all come out transparent, which is what
+            // keeps first-opaque-wins meaning the same thing: every extra sprite is later in OAM
+            // than every real one, so a real unit would have won anyway.
+            if (winner == null) {
+                winner = extraSprites.firstOpaque();
+            }
+
+            if (winner != null) {
+                colour = winner.pixel();
             }
         }
 
@@ -1410,18 +1632,18 @@ public class PPU {
         // background pixel, so a hidden layer stays invisible to the game itself.
         var drawnBackground = backgroundLayerVisible ? background : 0;
 
-        if (unit < 0) {
+        if (winner == null) {
             return drawnBackground;
         }
 
         // The hit is about two opaque pixels meeting, not about which of them is drawn, so a
         // sprite hidden behind the background still sets it. The last pixel of the line never
         // does, for reasons lost with the hardware.
-        if (unit == 0 && spriteZeroOnThisLine && background != 0 && x != SCREEN_WIDTH - 1) {
+        if (isSpriteZero && spriteZeroOnThisLine && background != 0 && x != SCREEN_WIDTH - 1) {
             spriteZeroHit = true;
         }
 
-        var attributes = spriteUnits[unit].attributes;
+        var attributes = winner.attributes;
 
         if (background != 0 && (attributes & 0x20) != 0) {
             return drawnBackground;
@@ -2043,9 +2265,9 @@ public class PPU {
      *       computes it from {@link #vblankFlag} and {@link #ctrl}, so it is recomputed on the way
      *       in rather than restored. The CPU's own latches are a different matter and are in its
      *       chunk.</li>
-     *   <li><strong>The two layer switches</strong>, which belong to whoever is watching rather than
-     *       to the machine. Restoring them would hide a layer while the Debug menu still said it was
-     *       showing.</li>
+     *   <li><strong>The two layer switches</strong>, and {@link ExtraSprites#enabled} beside them,
+     *       which belong to whoever is watching rather than to the machine. Restoring them would
+     *       hide a layer while the Debug menu still said it was showing.</li>
      * </ul>
      * The two decay tables come with {@link #clock} and {@link #frame}, which is what they are
      * measured against -- a table restored without its clock would decay at the wrong time.
@@ -2053,7 +2275,8 @@ public class PPU {
      * It stays one flat list even where the fields now belong to a sub-unit, because the order of
      * this method is the file format and it was settled before there were sub-units to group them
      * into. {@link Background} is the exception, and only because its eight fields already sat
-     * together in exactly the order it writes them.
+     * together in exactly the order it writes them; {@link ExtraSprites} is the other, and only
+     * because it arrived after the end of the list and so had nowhere else to go.
      *
      * @see com.github.dimiro1.mynes.state.SaveState
      */
@@ -2140,12 +2363,17 @@ public class PPU {
         // than in a chunk of their own because nothing else can reach them.
         vram.serialize(io);
 
-        // Last, rather than up with the beam position it belongs to, because the order of this
-        // method is the file format. A field inserted in the middle would be read out of a state
-        // written before it existed as whatever byte happened to be at that offset; appended, it
-        // is simply missing from an older file, and StateIO hands back what the machine already
-        // had -- which for a state written before there was a PAL machine to write one is right.
+        // Appended rather than put up with the beam position it belongs to, because the order of
+        // this method is the file format. A field inserted in the middle would be read out of a
+        // state written before it existed as whatever byte happened to be at that offset;
+        // appended, it is simply missing from an older file, and StateIO hands back what the
+        // machine already had -- which for a state written before there was a PAL machine to write
+        // one is right.
         masterClockRemainder = io.u8(masterClockRemainder);
+
+        // Last for the same reason, and it is the whole of the sprite limit hack that travels:
+        // whether anybody asked for it does not, any more than the layer switches do.
+        extraSprites.serialize(io);
 
         if (!io.saving()) {
             updateNMILine();
@@ -2242,6 +2470,19 @@ public class PPU {
 
     public boolean isSpriteLayerVisible() {
         return spriteLayerVisible;
+    }
+
+    /**
+     * Draws the sprites the real chip would have dropped, so that a scanline holding more than
+     * eight of them stops flickering. Off at power on, and the game cannot tell it has been thrown:
+     * see {@link ExtraSprites}.
+     */
+    public void setUnlimitedSprites(final boolean unlimited) {
+        extraSprites.enabled = unlimited;
+    }
+
+    public boolean isUnlimitedSprites() {
+        return extraSprites.enabled;
     }
 
     /**

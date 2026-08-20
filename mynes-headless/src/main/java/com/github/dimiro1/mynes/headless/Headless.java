@@ -148,6 +148,12 @@ public final class Headless {
             var session = new Session(
                     new NES(cart, region), palette.colours(), wav);
 
+            // Before either of the two below it, because a hack is not machine state: a save state
+            // carries none of these, so switching one on afterwards would leave it depending on
+            // whether the run started from power on.
+            session.nes().getPPU().setUnlimitedSprites(
+                    options.hacks().contains(Options.UNLIMITED_SPRITES));
+
             // The cartridge RAM first and the save state second, because a state carries its own copy
             // of that RAM and is the more specific answer of the two.
             if (options.sramIn() != null) {

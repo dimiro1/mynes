@@ -131,6 +131,13 @@ public final class Report {
         run.put("region", region.id());
         run.put("regionForced", options.region() != null);
 
+        // And which things the console does not do were switched on, which is the third. Read back
+        // off the machine rather than off the command line, so that a REPL session that flipped one
+        // half way through is reported as it ended rather than as it started. Always present, and
+        // one key per hack rather than a list, so two reports compare key for key.
+        var hacks = run.putObject("hacks");
+        hacks.put("unlimitedSprites", ppu.isUnlimitedSprites());
+
         // Where the run started, which decides whether it is comparable with another one at all. A
         // run that began from a save state and one that began at power on are not two measurements
         // of the same thing, and telling them apart is the whole job of this document.

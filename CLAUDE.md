@@ -123,7 +123,22 @@ own 1 back, so read `exitCode` out of the report if you need to tell them apart.
 They are not one machine at two speeds: 312 scanlines against 262, 3.2 dots to a CPU cycle against
 3, 50.0070 frames a second against 60.0988, and a different APU table for everything counted in CPU
 cycles. So **a PAL run and an NTSC run of the same ROM are not comparable** -- `run.region` in the
-report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`.
+report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`
+and `run.hacks`.
+
+`run.hacks` is the third thing in that list, and it is there for the same reason: `--hack
+unlimited-sprites` draws the sprites the chip would have dropped, so a scanline holding more than
+eight of them stops flickering. Nothing a game can observe changes -- the overflow flag still rises,
+$2004 still answers with what the sprite hardware is holding, and the cartridge sees the same address
+bus, which is what keeps MMC3's scanline counter honest -- but the picture is not the one the
+hardware would have drawn, so two runs that disagree about it are not two measurements of the same
+thing. Every hack is off unless it is named. `hack unlimited-sprites on|off` does the same thing
+inside an interactive session, which is how to take the same frame twice and diff the pictures.
+
+Do not go looking for a game to see it on. A cartridge is written to stay under eight sprites a line
+and they mostly manage it -- Punch-Out!!'s first fight peaks at seven, Battletoads' first level at
+eight -- so the demonstration is `sprite-limit/sprite-limit.nes`, which puts all sixty four on one
+line and is assembled by `SpriteLimitROM` beside it rather than vendored as bytes.
 
 Everything that differs is in `Region`, including the PPU's OAM decay window, which has to outlast
 the machine's own blanking interval or every sprite in the game vanishes once a frame. Its tables

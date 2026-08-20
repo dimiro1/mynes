@@ -476,6 +476,58 @@ class HeadlessRunTests {
         assertTrue(report().at("/run/cpuCycles").asLong() > ntscCycles);
     }
 
+    /**
+     * The flag reaches the PPU, and the report says so either way -- which is the point of it,
+     * since a run with the hack on and a run without it are not two measurements of the same
+     * machine even when the picture happens to come out the same.
+     */
+    @Test
+    void theReportSaysWhichHacksWereOn() throws Exception {
+        run();
+
+        assertFalse(report().at("/run/hacks/unlimitedSprites").asBoolean(),
+                "off unless somebody asks");
+
+        run("--hack", "unlimited-sprites");
+
+        assertTrue(report().at("/run/hacks/unlimitedSprites").asBoolean());
+    }
+
+    /**
+     * nestest never puts nine sprites on a scanline, so switching the hack on has nothing to do --
+     * which makes it the right cartridge for showing that the flag on its own changes no pixels.
+     */
+    @Test
+    void aHackWithNothingToDoLeavesThePictureExactlyAsItWas() throws Exception {
+        run();
+
+        var withoutIt = report().at("/video/finalFrame/hash").asText();
+
+        run("--hack", "unlimited-sprites");
+
+        assertEquals(withoutIt, report().at("/video/finalFrame/hash").asText());
+    }
+
+    @Test
+    void aHackNobodyHasWrittenIsACommandLineError() {
+        assertEquals(2, run("--hack", "infinite-lives"));
+    }
+
+    /**
+     * The report reads the hacks back off the machine rather than off the command line, so a
+     * session that switched one on half way through is described as it ended.
+     */
+    @Test
+    void aHackSwitchedOnInTheReplIsInTheReport() throws Exception {
+        var script = Files.writeString(
+                out.resolve("session.txt"), "run 5\nhack unlimited-sprites on\nquit\n");
+
+        run("--script", script.toString());
+
+        assertTrue(report().at("/run/hacks/unlimitedSprites").asBoolean(),
+                "nobody put it on the command line, and it is on all the same");
+    }
+
     @Test
     void theReportSaysWhatTheCartridgeAskedFor() throws Exception {
         run();

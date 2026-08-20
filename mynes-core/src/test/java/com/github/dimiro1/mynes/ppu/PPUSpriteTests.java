@@ -569,6 +569,176 @@ class PPUSpriteTests extends PPUFixture {
     }
 
     @Nested
+    @DisplayName("the unlimited sprites hack")
+    class UnlimitedSprites {
+        @Test
+        void theNinthSpriteOnAScanlineIsDrawnWhenTheLimitIsOff() {
+            for (var i = 0; i < 9; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, 20 + i * 10);
+            }
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderFrames(2);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(20 + 7 * 10, 11), "the eighth still is");
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(20 + 8 * 10, 11), "and now the ninth too");
+        }
+
+        @Test
+        void allSixtyFourSpritesOnOneLineAreDrawn() {
+            // Four pixels apart, so all sixty four fit across the 256 the beam draws.
+            for (var i = 0; i < 64; i++) {
+                writeSprite(i, 10, LEFT_HALF_TILE, 0, i * 4);
+            }
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderFrames(2);
+
+            for (var i = 0; i < 64; i++) {
+                assertEquals(colour(SPRITE_COLOUR), pixelAt(i * 4, 11), "sprite " + i);
+            }
+        }
+
+        @Test
+        void anEarlierSpriteStillCoversALaterOneAmongTheExtras() {
+            // Eight to fill the real units, then two more in the same place. The ninth is earlier
+            // in OAM than the tenth, so it is the one drawn.
+            for (var i = 0; i < 8; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 8);
+            }
+
+            writeSprite(8, 10, SOLID_TILE, 0x00, 100);  // sprite palette 0
+            writeSprite(9, 10, SOLID_TILE, 0x01, 100);  // sprite palette 1, same place
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderFrames(2);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(100, 11), "the ninth wins, not the tenth");
+        }
+
+        @Test
+        void theOverflowFlagStillRisesWithTheLimitOff() {
+            for (var i = 0; i < 9; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 8);
+            }
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderThrough(11);
+
+            assertTrue(overflowSet(), "the game is told it lost a sprite it did not lose");
+        }
+
+        @Test
+        void theLimitOffChangesNothingWhenEightOrFewerShareALine() {
+            for (var i = 0; i < 8; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 10);
+            }
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderThrough(11);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(70, 11), "the eighth is where it was");
+            assertEquals(colour(BACKDROP), pixelAt(80, 11), "and nothing has been invented");
+            assertFalse(overflowSet());
+        }
+
+        @Test
+        void theLeftColumnClipAppliesToExtraSprites() {
+            for (var i = 0; i < 8; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, 100 + i * 8);
+            }
+
+            writeSprite(8, 10, SOLID_TILE, 0, 4);
+
+            ppu.setUnlimitedSprites(true);
+            startRendering(SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT);
+            renderFrames(2);
+
+            assertEquals(colour(BACKDROP), pixelAt(4, 11), "inside the clipped strip");
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(8, 11), "and out the other side of it");
+        }
+
+        @Test
+        void tallAndFlippedExtrasFetchTheRowsTheRealUnitsWould() {
+            // Tile 3 is odd, so an 8x16 sprite using it comes from the second pattern table
+            // whatever $2000 says. The top half is solid and the bottom half is empty.
+            for (var row = 0; row < 8; row++) {
+                writeVRAM(0x1000 + 2 * 16 + row, 0xF0);
+                writeVRAM(0x1000 + 3 * 16 + row, 0x00);
+            }
+
+            for (var i = 0; i < 8; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 8);
+            }
+
+            writeSprite(8, 10, 0x03, 0, 100);
+            writeSprite(9, 10, 0x03, FLIP_HORIZONTALLY | FLIP_VERTICALLY, 150);
+
+            ppu.setUnlimitedSprites(true);
+            startRendering(SHOW_EVERYTHING, 0x20);  // tall sprites
+            renderFrames(2);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(100, 11), "unflipped: the top left is on");
+            assertEquals(colour(BACKDROP), pixelAt(107, 11));
+            assertEquals(colour(BACKDROP), pixelAt(100, 20), "and the bottom half is empty");
+
+            assertEquals(colour(BACKDROP), pixelAt(150, 11), "flipped both ways: the top is empty");
+            assertEquals(colour(BACKDROP), pixelAt(150, 20));
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(157, 20), "and the bottom right is solid");
+        }
+
+        @Test
+        void anExtraSpriteBehindTheBackgroundStaysBehind() {
+            fillBackground();
+
+            for (var i = 0; i < 8; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, i * 8);
+            }
+
+            writeSprite(8, 10, SOLID_TILE, BEHIND_BACKGROUND, 100);
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderFrames(2);
+
+            assertEquals(colour(BACKGROUND_COLOUR), pixelAt(100, 11),
+                    "the priority bit means the same thing here as anywhere else");
+        }
+
+        @Test
+        void aSpriteInFrontOfWhereTheHardwareStartedLookingIsNotResurrected() {
+            // Nine sprites from number 8 on, and one at number 0 that is on the same line.
+            for (var i = 8; i < 17; i++) {
+                writeSprite(i, 10, SOLID_TILE, 0, (i - 8) * 8);
+            }
+
+            writeSprite(0, 10, SOLID_TILE, 0, 200);
+
+            ppu.setUnlimitedSprites(true);
+            startRendering();
+            renderFrames(2);
+
+            // OAMADDR pointed at sprite 8, so the evaluation starts there and sprite 0 is never
+            // examined at all. Set here rather than before rendering because the fetch phase holds
+            // it at zero from dot 257 to dot 320 of every line, and the evaluation for the line
+            // below this one starts at dot 65.
+            runTo(10, 10);
+            ppu.write(OAMADDR, 8 * 4);
+            advanceFrames(1);
+
+            assertEquals(colour(SPRITE_COLOUR), pixelAt(64, 11),
+                    "the ninth of the nine it did look at is drawn");
+            assertEquals(colour(BACKDROP), pixelAt(200, 11),
+                    "and the one in front of where it began looking is not");
+        }
+    }
+
+    @Nested
     @DisplayName("what rendering does to OAMADDR")
     class OamAddress {
         /**
