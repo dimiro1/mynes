@@ -224,16 +224,7 @@ public final class SaveState {
      */
     public static void read(final NES nes, final InputStream in) throws IOException {
         var file = in.readAllBytes();
-
-        if (file.length < HEADER_BYTES) {
-            throw new SaveStateException("that file is too short to be a save state.");
-        }
-
-        if (!Arrays.equals(file, 0, MAGIC.length, MAGIC, 0, MAGIC.length)) {
-            throw new SaveStateException("that is not a save state.");
-        }
-
-        var header = header(file);
+        var header = headerOf(file);
 
         if (header.formatVersion() > VERSION) {
             throw new SaveStateException(
@@ -336,6 +327,24 @@ public final class SaveState {
         return header(header);
     }
 
+    /**
+     * The same, for a state held in memory rather than in a file.
+     * <p>
+     * Package-private because a {@link Movie}'s anchor is a whole state file nested inside it, and a
+     * movie validates everything it holds before any machine exists to be touched.
+     */
+    static Header headerOf(final byte[] file) {
+        if (file.length < HEADER_BYTES) {
+            throw new SaveStateException("that file is too short to be a save state.");
+        }
+
+        if (!Arrays.equals(file, 0, MAGIC.length, MAGIC, 0, MAGIC.length)) {
+            throw new SaveStateException("that is not a save state.");
+        }
+
+        return header(file);
+    }
+
     private static Header header(final byte[] file) {
         var sha256 = new byte[SHA256_BYTES];
         System.arraycopy(file, OFFSET_SHA256, sha256, 0, SHA256_BYTES);
@@ -403,29 +412,33 @@ public final class SaveState {
     }
 
     // ================================================================================= plain bytes
+    //
+    // Package-private rather than private because Movie writes a header of the same shape -- big
+    // endian, fixed width, outside the compression -- and two copies of "put a long at an offset"
+    // is two places for the endianness to be got wrong.
 
-    private static void putShort(final byte[] target, final int offset, final int value) {
+    static void putShort(final byte[] target, final int offset, final int value) {
         target[offset] = (byte) (value >> 8);
         target[offset + 1] = (byte) value;
     }
 
-    private static void putInt(final byte[] target, final int offset, final int value) {
+    static void putInt(final byte[] target, final int offset, final int value) {
         for (var i = 0; i < 4; i++) {
             target[offset + i] = (byte) (value >> (24 - i * 8));
         }
     }
 
-    private static void putLong(final byte[] target, final int offset, final long value) {
+    static void putLong(final byte[] target, final int offset, final long value) {
         for (var i = 0; i < 8; i++) {
             target[offset + i] = (byte) (value >> (56 - i * 8));
         }
     }
 
-    private static int readShort(final byte[] source, final int offset) {
+    static int readShort(final byte[] source, final int offset) {
         return Byte.toUnsignedInt(source[offset]) << 8 | Byte.toUnsignedInt(source[offset + 1]);
     }
 
-    private static int readInt(final byte[] source, final int offset) {
+    static int readInt(final byte[] source, final int offset) {
         var value = 0;
 
         for (var i = 0; i < 4; i++) {
@@ -435,7 +448,7 @@ public final class SaveState {
         return value;
     }
 
-    private static long readLong(final byte[] source, final int offset) {
+    static long readLong(final byte[] source, final int offset) {
         var value = 0L;
 
         for (var i = 0; i < 8; i++) {
@@ -445,7 +458,7 @@ public final class SaveState {
         return value;
     }
 
-    private static String bytesToHex(final byte[] bytes) {
+    static String bytesToHex(final byte[] bytes) {
         var hex = new StringBuilder(bytes.length * 2);
 
         for (var b : bytes) {
@@ -455,7 +468,7 @@ public final class SaveState {
         return hex.toString();
     }
 
-    private static byte[] hexToBytes(final String hex) {
+    static byte[] hexToBytes(final String hex) {
         var bytes = new byte[hex.length() / 2];
 
         for (var i = 0; i < bytes.length; i++) {

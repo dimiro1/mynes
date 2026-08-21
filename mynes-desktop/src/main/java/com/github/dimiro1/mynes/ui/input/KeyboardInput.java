@@ -25,6 +25,14 @@ import java.util.function.Consumer;
  * from it. So none of the state here is shared, and the only thing that crosses to the emulation
  * thread is the button mask handed to {@link Controller#setButtons(int)}, which is that class's
  * problem.
+ * <p>
+ * Two exceptions to that, and both belong to movies. {@link #heldMask()} is read from the emulation
+ * thread once a frame, which is why the mask has a field of its own and is {@code volatile}. And
+ * {@link #setLatching(boolean)} switches off the immediate hand-off above: while a movie is being
+ * recorded or played, what the game sees has to change exactly once per frame, on the thread that
+ * clocks it -- a press that landed half way through a frame would be written down as belonging to a
+ * frame it was only half of, and a replay of it would be a different game. When neither is
+ * happening the immediate path is left exactly as it was, because that is the one a player feels.
  */
 public final class KeyboardInput implements KeyEventDispatcher {
     /**
@@ -47,6 +55,31 @@ public final class KeyboardInput implements KeyEventDispatcher {
      * go of one of two opposing directions leaves the other one pressed.
      */
     private int pressed;
+
+    /**
+     * What {@link #pressed} comes to once the opposing directions are taken out, which is the mask
+     * the game actually sees.
+     * <p>
+     * A field rather than a local because the emulation thread reads it once a frame while a movie
+     * is being recorded. {@code volatile} for that one reader; every writer is the event dispatch
+     * thread.
+     */
+    private volatile int mask;
+
+    /**
+     * Whether the emulation thread is latching the mask itself, once a frame, instead of taking it
+     * from here the moment a key moves. True exactly while a movie is being recorded or played.
+     */
+    private boolean latching;
+
+    /**
+     * Whether the keyboard is being kept away from the game entirely, which is what a replay wants:
+     * a bumped key must not reach a machine that is playing somebody else's session back.
+     * <p>
+     * Not the same thing as {@link #latching}. A recording wants the keys -- they are what is being
+     * recorded -- and only wants them delivered on a frame boundary.
+     */
+    private boolean playbackMuted;
 
     /**
      * The key that runs the game backwards while it is held, or {@link KeyBindings#UNBOUND}.
@@ -110,6 +143,48 @@ public final class KeyboardInput implements KeyEventDispatcher {
     }
 
     /**
+     * What the player is holding down right now, ready for the emulation thread to latch at a frame
+     * boundary. The one thing here that another thread may call.
+     */
+    public int heldMask() {
+        return mask;
+    }
+
+    /**
+     * Hands the timing of the pad over to the emulation thread, or takes it back.
+     * <p>
+     * Taking it back pushes whatever is held down straight away, because the last thing the game was
+     * told is whatever the last latch happened to catch -- and a button that stuck down when a
+     * recording stopped would be a button held for as long as the game ran.
+     */
+    public void setLatching(final boolean latching) {
+        this.latching = latching;
+
+        if (!latching && controller != null) {
+            controller.setButtons(mask);
+        }
+    }
+
+    /**
+     * Keeps the keyboard away from the game, which is what a replay wants. Rewind still works: it is
+     * not a button, and it is the gesture that stops a playback.
+     * <p>
+     * The buttons are dropped either way, since neither entering nor leaving a replay should leave
+     * one held. Deliberately not {@link #releaseAll()}, which would let go of rewind as well -- and
+     * a playback is most often ended by the rewind key, which is still down at the moment this is
+     * called.
+     */
+    public void setPlaybackMuted(final boolean muted) {
+        playbackMuted = muted;
+        pressed = 0;
+        mask = 0;
+
+        if (controller != null) {
+            controller.setButtons(0);
+        }
+    }
+
+    /**
      * Lets go of everything. Wired to the game window losing focus, so that cmd-tabbing away in
      * the middle of a jump does not leave the button held down for as long as the window is gone.
      * <p>
@@ -119,6 +194,7 @@ public final class KeyboardInput implements KeyEventDispatcher {
      */
     public void releaseAll() {
         pressed = 0;
+        mask = 0;
 
         if (controller != null) {
             controller.setButtons(0);
@@ -163,19 +239,38 @@ public final class KeyboardInput implements KeyEventDispatcher {
                     return false;
                 }
 
+                if (playbackMuted) {
+                    // Swallowed rather than merely not passed on: the whole point of a replay is
+                    // that it is the recorded session and nothing else, and a key with a menu item
+                    // on it as well would otherwise still act.
+                    return true;
+                }
+
                 // Setting a bit that is already set is what makes the key repeat a non-event.
                 pressed |= button.mask();
             }
             // Releases are taken whatever else is held down, so a key let go of after reaching for
             // a modifier cannot leave its button stuck.
-            case KeyEvent.KEY_RELEASED -> pressed &= ~button.mask();
+            case KeyEvent.KEY_RELEASED -> {
+                if (playbackMuted) {
+                    return true;
+                }
+
+                pressed &= ~button.mask();
+            }
             // KEY_TYPED carries a character and no key code.
             default -> {
                 return false;
             }
         }
 
-        target.setButtons(withoutOpposingDirections(pressed));
+        mask = withoutOpposingDirections(pressed);
+
+        // Left to the emulation thread while a movie is involved, which is the whole of the
+        // difference: it takes this same mask at the next frame boundary instead.
+        if (!latching) {
+            target.setButtons(mask);
+        }
 
         return true;
     }

@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.state.Movie;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -76,6 +77,9 @@ public final class Report {
      * @param screenshots     the frames photographed.
      * @param dumps           the memories written out.
      * @param expectations    what was asked of the run, and whether it held.
+     * @param recorded        the movie this run wrote, or null if it recorded nothing.
+     * @param recordedTo      where that went.
+     * @param replayed        the movie this run played, or null if it played none.
      * @param exitCode        what the process is about to return.
      */
     public record Outcome(
@@ -87,6 +91,9 @@ public final class Report {
             List<Long> screenshots,
             List<Dump> dumps,
             List<Expectation> expectations,
+            Movie recorded,
+            Path recordedTo,
+            Movie replayed,
             int exitCode) {
     }
 
@@ -169,10 +176,27 @@ public final class Report {
         // counter no longer describes, so its frameChanges and its sound are not the straight run's.
         // Always present and 0 when nobody rewound, so two reports still compare key for key.
         var state = run.putObject("state");
-        state.put("startedFromPowerOn", options.loadState() == null);
+
+        // A replayed run started wherever the movie says it did, which is a state inside the movie
+        // whenever the movie is anchored -- so a replay of an anchored take is no more comparable
+        // with a power-on run than a --load-state one is.
+        state.put("startedFromPowerOn",
+                options.loadState() == null
+                        && (outcome.replayed() == null || !outcome.replayed().anchored()));
         put(state, "loadedFrom", options.loadState());
         put(state, "savedTo", options.saveState());
         state.put("framesRewound", session.framesRewound());
+
+        // The fifth and sixth things that decide whether two runs are comparable, and the only two
+        // that describe a whole session rather than a moment in one. Always present, with explicit
+        // nulls, so two reports line up key for key whether either run touched a movie.
+        var recorded = run.putObject("record");
+        put(recorded, "savedTo", outcome.recordedTo());
+        describe(recorded, outcome.recorded());
+
+        var replayed = run.putObject("replay");
+        put(replayed, "playedFrom", options.play());
+        describe(replayed, outcome.replayed());
 
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());
@@ -287,7 +311,7 @@ public final class Report {
 
         var input = report.putObject("input");
         input.put("pressFrames", options.pressFrames());
-        input.put("framesWithInput", framesWithInput(options, outcome.frames()));
+        input.put("framesWithInput", framesWithInput(options, outcome));
 
         var resetAt = input.putArray("resetAt");
         for (var frame : options.resetAt()) {
@@ -354,17 +378,42 @@ public final class Report {
     /**
      * How many frames of the run had a button held down. A schedule that turns out to press nothing
      * is the commonest reason a headless run of a real cartridge shows a title screen and no game.
+     * <p>
+     * A replay is asked the movie rather than the schedule, which {@code --play} refused and which
+     * is therefore empty: answering 0 for a run that pressed something on every frame would be the
+     * one number in this document most likely to be believed.
      */
-    private static long framesWithInput(final Options options, final long frames) {
+    private static long framesWithInput(final Options options, final Outcome outcome) {
         var count = 0L;
 
-        for (var frame = 0L; frame < frames; frame++) {
-            if (options.input().buttonsAt(frame) != 0) {
+        for (var frame = 0L; frame < outcome.frames(); frame++) {
+            var buttons = outcome.replayed() != null
+                    ? outcome.replayed().buttonsAt(frame)
+                    : options.input().buttonsAt(frame);
+
+            if (buttons != 0) {
                 count++;
             }
         }
 
         return count;
+    }
+
+    /**
+     * What a movie was, or the same three keys holding nulls where there was no movie. The path it
+     * came from or went to is put by the caller, since only that knows which of the two this is.
+     */
+    private static void describe(final Json.Object node, final Movie movie) {
+        if (movie == null) {
+            node.putNull("frames");
+            node.putNull("anchored");
+            node.putNull("anchorFrame");
+            return;
+        }
+
+        node.put("frames", movie.frameCount());
+        node.put("anchored", movie.anchored());
+        node.put("anchorFrame", movie.anchorFrame());
     }
 
     private static double framesPerSecond(final Outcome outcome) {

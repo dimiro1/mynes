@@ -1,16 +1,24 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.state.MovieException;
+import com.github.dimiro1.mynes.state.MovieRecorder;
 import com.github.dimiro1.mynes.state.Rewind;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.SwingUtilities;
+import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
 
 /**
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
@@ -22,6 +30,14 @@ import java.util.function.Consumer;
  * instead of clocking anything -- so the game goes backwards at twice speed without a single
  * instruction being re-executed, because the picture travels inside the state. Fast Forward applies
  * to that wait like any other, which makes holding both keys a faster reverse still.
+ * <p>
+ * And it writes sessions down, and plays them back. A {@link MovieRecorder} is offered the mask that
+ * was in force for every finished frame -- the same frames the two rewind rings are fed on, since
+ * all three have to agree about what a frame is -- and a {@link Movie} being played supplies that
+ * mask instead of the keyboard. Both of them move the pad from the immediate path to a latch on this
+ * thread, once a frame, which is what {@code KeyboardInput.setLatching} is for: a key that reached
+ * the controller half way through a frame would be recorded as belonging to a frame it was only half
+ * of.
  * <p>
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
@@ -150,6 +166,49 @@ public class EmulatorRunner {
      * Told, on the event dispatch thread, whenever the machine stops somewhere it was asked to.
      */
     private volatile Consumer<Debugger.Stop> stopListener;
+
+    /**
+     * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
+     * give the keyboard back and take the word off the title bar.
+     */
+    private volatile Runnable playbackEndedListener;
+
+    /**
+     * The session being written down, or null. Emulation thread only, like everything below it:
+     * every way in goes through {@link #post}.
+     */
+    private @Nullable MovieRecorder recorder;
+
+    /**
+     * The session being played back, or null.
+     */
+    private @Nullable Movie playing;
+
+    /**
+     * Which frame of {@link #playing} runs next, counted from the movie's own start.
+     */
+    private long playCursor;
+
+    /**
+     * The mask latched for the frame now running, which is what gets written down when it finishes.
+     * Held rather than read twice, so the frame a recorder is told about is exactly the frame the
+     * game saw.
+     */
+    private int pendingMask;
+
+    /**
+     * Where a latched mask comes from while recording: the keyboard, in practice. Never null, so the
+     * loop has nothing to check -- a machine with no keyboard pointed at it records nothing pressed,
+     * which is true.
+     */
+    private IntSupplier inputSource = () -> 0;
+
+    /**
+     * Whether the next time round the loop starts a frame rather than resuming one a breakpoint
+     * stopped part way through. The guard on the latch: changing what the game is holding half way
+     * through a frame would be a frame nobody could record or replay honestly.
+     */
+    private boolean atFrameBoundary = true;
 
     /**
      * How fast to run. Written from the event dispatch thread and read here, so the loop picks a
@@ -286,6 +345,136 @@ public class EmulatorRunner {
     }
 
     /**
+     * Told whenever a movie reaches its last frame, on the event dispatch thread. The machine is
+     * still running: the last frame of a replay is followed by the next frame of a game somebody is
+     * now playing themselves.
+     */
+    public void setPlaybackEndedListener(final Runnable listener) {
+        this.playbackEndedListener = listener;
+    }
+
+    // ==================================================================================== movies
+
+    /**
+     * Where the mask comes from while a movie is being recorded, latched once a frame on this
+     * thread. Wired to the keyboard per machine, the way the controller and the rewind key are.
+     */
+    public void setFrameInputSource(final IntSupplier source) {
+        post(() -> inputSource = source);
+    }
+
+    /**
+     * Starts writing the session down.
+     * <p>
+     * Always anchored, unlike the command line's: somebody who has just decided to record something
+     * is hardly ever sitting on a machine that has not run yet, and a menu item that behaved
+     * differently depending on whether they were would be a menu item nobody could predict.
+     *
+     * @param codes the Game Genie codes in the slot, pinned into the movie's header. The window
+     *              refuses to change them while this is running, since a movie whose header names
+     *              one set and whose frames were played against another cannot be replayed.
+     */
+    public void startRecording(final List<GameGenieCode> codes) {
+        post(() -> recorder = MovieRecorder.anchoredAt(nes, codes));
+    }
+
+    /**
+     * Stops, and writes what was recorded.
+     *
+     * @param onFailure told on the event dispatch thread if the file could not be written, since
+     *                  {@link #post} has nothing to hand an exception back on.
+     */
+    public void stopRecording(final Path path, final Consumer<Exception> onFailure) {
+        post(() -> {
+            if (recorder == null) {
+                return;
+            }
+
+            var movie = recorder.movie();
+            recorder = null;
+
+            try {
+                movie.write(path);
+                logger.log(Level.INFO, "wrote a " + movie.frameCount() + " frame movie to "
+                        + path.getFileName());
+            } catch (IOException | MovieException e) {
+                logger.log(Level.ERROR, "could not write the movie", e);
+                SwingUtilities.invokeLater(() -> onFailure.accept(e));
+            }
+        });
+    }
+
+    /**
+     * Puts the machine where the movie starts and plays it from there.
+     * <p>
+     * A state change rather than a plain command: the anchor replaces the machine wholesale, and
+     * what the sound card is still holding belongs to a game that is no longer running.
+     */
+    public void startPlayback(final Movie movie) {
+        postStateChange(() -> {
+            try {
+                movie.applyAnchor(nes);
+            } catch (MovieException e) {
+                // The window checked the header before opening the file, so this is close to
+                // impossible -- and a machine left half started would be worse than a log line.
+                // Told anyway, or the window sits with the keyboard muted waiting for a playback
+                // that never began.
+                logger.log(Level.ERROR, "could not start the movie", e);
+                notePlaybackEnded();
+                return;
+            }
+
+            playing = movie;
+            playCursor = 0;
+            atFrameBoundary = true;
+
+            // A movie of no frames is legal and boring, and it is over before the first one runs.
+            // Ended here rather than left to the loop, so the window is told either way.
+            if (playCursor >= playing.frameCount()) {
+                endPlayback();
+            }
+        });
+    }
+
+    /**
+     * Gives up on a movie part way through, leaving the machine wherever it had got to. What
+     * reaching for the rewind key does, and what the menu item does.
+     */
+    public void stopPlayback() {
+        post(this::endPlayback);
+    }
+
+    /**
+     * The console's Reset button, and the one way the window presses it.
+     * <p>
+     * One posted command rather than two, because a recorder has to be told before the machine is
+     * and the two threads cannot be trusted to keep that order between them.
+     */
+    public void reset() {
+        post(() -> {
+            if (recorder != null) {
+                recorder.reset();
+            }
+
+            nes.reset();
+        });
+    }
+
+    /**
+     * The machine has been replaced wholesale by something nobody played their way to -- a loaded
+     * slot. Called from inside the runnable that did it, so a recording in progress starts again
+     * from where the state put it rather than carrying on describing a timeline that no longer
+     * leads anywhere.
+     */
+    public void noteMachineJumped() {
+        if (recorder != null) {
+            recorder.jumped(nes);
+        }
+
+        atFrameBoundary = true;
+    }
+
+    /**
      * Runs exactly one instruction, whether the machine is paused or not.
      */
     public void stepInstruction() {
@@ -407,6 +596,13 @@ public class EmulatorRunner {
                 // stepping for the reason the pause branch is, since a step is the one thing that
                 // runs a machine that is not running.
                 if (rewinding && rewind != null && !stepping) {
+                    // Reaching for rewind during a replay is how somebody says "let me take it from
+                    // here": the movie stops and the machine is theirs. Anything else would be a
+                    // replay fighting the player for the same frames.
+                    if (playing != null) {
+                        endPlayback();
+                    }
+
                     if (!wasRewinding) {
                         // What the card is holding is up to a tenth of a second of a game that is
                         // now running the other way. Dropped for the reason a pause drops it.
@@ -429,6 +625,15 @@ public class EmulatorRunner {
                         // than assumed, so the sound is exactly the sound of the frames the picture
                         // has just gone back over.
                         var given = (int) (wasOn - ppu.getFrame());
+
+                        // Frames rather than the states the call above answered in: this ring keeps
+                        // one every other frame, so the two numbers are different here in a way they
+                        // are not in a headless session.
+                        if (recorder != null) {
+                            recorder.rewound(nes, given);
+                        }
+
+                        atFrameBoundary = true;
 
                         // Backwards, and at whatever rate the rewind is running -- so two frames of
                         // it are handed over in the time the card plays one. Never blocking, for the
@@ -487,6 +692,25 @@ public class EmulatorRunner {
                     }
                 }
 
+                // The pad, changed exactly once per frame and on this thread, whenever a movie is
+                // involved. Skipped on a frame that is being resumed after a breakpoint stopped it
+                // part way through: latching again in flight would change what the game is holding
+                // inside a single frame, which is a frame neither a recording nor a replay could
+                // describe.
+                if (atFrameBoundary) {
+                    if (playing != null) {
+                        if (playing.resetsAt(playCursor)) {
+                            nes.reset();
+                        }
+
+                        pendingMask = playing.buttonsAt(playCursor);
+                        nes.getController1().setButtons(pendingMask);
+                    } else if (recorder != null) {
+                        pendingMask = inputSource.getAsInt();
+                        nes.getController1().setButtons(pendingMask);
+                    }
+                }
+
                 Debugger.Stop stop = null;
 
                 if (debugger.isArmed()) {
@@ -503,6 +727,8 @@ public class EmulatorRunner {
 
                 var completed = ppu.getFrame() != lastFrame;
 
+                atFrameBoundary = completed;
+
                 // Drained up here rather than at the two places below that used to do it, because
                 // the rewind ring has to be given the sound of a frame before anything decides
                 // whether that frame's sound is going to be played. A frame that stopped part way
@@ -518,6 +744,24 @@ public class EmulatorRunner {
                 if (completed && rewind != null) {
                     rewind.capture(nes);
                     rewindAudio.capture(samples, sampleCount);
+                }
+
+                // The same gate, deliberately: a movie, the rewind ring and the sound ring have to
+                // be fed on exactly the same frames or none of the three describes the same second
+                // of the game as the others.
+                if (completed && recorder != null) {
+                    recorder.frame(pendingMask);
+                }
+
+                if (completed && playing != null) {
+                    playCursor++;
+
+                    if (playCursor >= playing.frameCount()) {
+                        // Straight back to the keyboard, with no pause and no dialog: the frame
+                        // after the last frame of a replay is the first frame of a game somebody is
+                        // playing.
+                        endPlayback();
+                    }
                 }
 
                 if (stop != null) {
@@ -661,6 +905,35 @@ public class EmulatorRunner {
 
         if (listener != null) {
             SwingUtilities.invokeLater(() -> listener.accept(stop));
+        }
+    }
+
+    /**
+     * Drops the movie and tells the window, which is what gives the keyboard back.
+     * <p>
+     * The listener is told on the event dispatch thread, and the hop is made here rather than left
+     * to whoever registered, for the reason {@link #halt} makes it here: this is the one place that
+     * can be sure of it.
+     */
+    private void endPlayback() {
+        if (playing == null) {
+            return;
+        }
+
+        logger.log(Level.INFO, "playback ended at frame " + nes.getPPU().getFrame()
+                + ", " + playCursor + " of " + playing.frameCount() + " frames played");
+
+        playing = null;
+        playCursor = 0;
+
+        notePlaybackEnded();
+    }
+
+    private void notePlaybackEnded() {
+        var listener = playbackEndedListener;
+
+        if (listener != null) {
+            SwingUtilities.invokeLater(listener);
         }
     }
 

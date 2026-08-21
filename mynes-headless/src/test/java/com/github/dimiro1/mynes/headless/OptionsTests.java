@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -312,6 +313,90 @@ class OptionsTests {
     void theUsageExplainsThatABatteryFileIsTheInteroperableOne() {
         assertTrue(Options.usage().contains("every other emulator"),
                 "somebody reading --help should learn that a .sav can come from anywhere");
+    }
+
+    @Test
+    void theMovieFlagsAreWhereTheyWereNamed() {
+        var options = parse("--rom", "x.nes", "--record", "take.mnm");
+
+        assertEquals(Path.of("take.mnm"), options.record());
+        assertNull(options.play());
+
+        assertEquals(Path.of("in.mnm"), parse("--rom", "x.nes", "--play", "in.mnm").play());
+    }
+
+    @Test
+    void aRunPlaysAndRecordsNothingUnlessToldOtherwise() {
+        var options = parse("--rom", "x.nes");
+
+        assertNull(options.record());
+        assertNull(options.play());
+    }
+
+    /**
+     * How long a movie is cannot be known while the command line is being read, so {@code --frames}
+     * has to be remembered as given or not given rather than as a number: 600 and "nobody said" are
+     * the same value and different answers.
+     */
+    @Test
+    void whetherFramesWasAskedForIsRememberedSeparatelyFromTheNumber() {
+        assertFalse(parse("--rom", "x.nes").framesSet());
+        assertEquals(600, parse("--rom", "x.nes").frames());
+
+        assertTrue(parse("--rom", "x.nes", "--frames", "600").framesSet(),
+                "the default typed out is still somebody having typed it");
+        assertTrue(parse("--rom", "x.nes", "--frames", "30").framesSet());
+    }
+
+    /**
+     * Each of these is a second answer to something the movie has already answered, and a run that
+     * quietly took one of them would not be the recorded session at all.
+     */
+    @Test
+    void playRefusesTheFlagsTheMovieReplaces() {
+        var replaced = List.of(
+                List.of("--record", "out.mnm"),
+                List.of("--input", "60:start"),
+                List.of("--reset-at", "100"),
+                List.of("--genie", "SXIOPO"),
+                List.of("--load-state", "in.mn"),
+                List.of("--sram-in", "in.sav"),
+                List.of("--interactive"));
+
+        for (var flags : replaced) {
+            var args = new ArrayList<>(List.of("--rom", "x.nes", "--play", "take.mnm"));
+            args.addAll(flags);
+
+            var refused = refused(args.toArray(new String[0]));
+
+            assertTrue(refused.getMessage().contains(flags.getFirst()),
+                    "the message has to name the flag that was typed: " + refused.getMessage());
+            assertTrue(refused.getMessage().contains("--play"));
+        }
+    }
+
+    /**
+     * Everything else combines. A recorded run is an ordinary run with somebody taking notes.
+     */
+    @Test
+    void recordCombinesWithEverythingElse() {
+        var options = parse(
+                "--rom", "x.nes",
+                "--record", "take.mnm",
+                "--input", "60:start",
+                "--reset-at", "100",
+                "--genie", "SXIOPO",
+                "--load-state", "in.mn",
+                "--interactive");
+
+        assertEquals(Path.of("take.mnm"), options.record());
+        assertTrue(options.interactive());
+    }
+
+    @Test
+    void theUsageExplainsThatARewindIsNotInTheMovie() {
+        assertTrue(Options.usage().contains("never re-enacts the revert"),
+                "somebody reading --help should learn what a rewind does to a recording");
     }
 
     @Test
