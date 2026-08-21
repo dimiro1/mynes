@@ -3,6 +3,8 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.state.MovieRecorder;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
@@ -102,6 +104,15 @@ public final class Session {
     private @Nullable Rewind rewind;
 
     /**
+     * The movie being written down, once somebody has asked for one, and null until then.
+     * <p>
+     * Beside {@link #rewind} rather than inside the console for the reason that one is: a machine
+     * does not know that anybody is writing down what it does, and a log hanging off a chip would be
+     * walked into and shredded by {@code SaveStateCompletenessTests}.
+     */
+    private @Nullable MovieRecorder recorder;
+
+    /**
      * How many frames this session has gone back over its whole life, which is what the report
      * carries. Cumulative and never reset: the question it answers is whether the run is comparable
      * with another one at all, and a run that rewound and played the same frames again is not.
@@ -173,8 +184,16 @@ public final class Session {
 
     /**
      * The console's Reset button.
+     * <p>
+     * The one funnel for both {@code --reset-at} and the REPL's {@code reset}, which is what lets
+     * the recorder be told here rather than at each of them. Told <em>before</em> the machine is, so
+     * the index it writes down is the frame the reset will be seen in rather than the one before it.
      */
     public void reset() {
+        if (recorder != null) {
+            recorder.reset();
+        }
+
         nes.reset();
     }
 
@@ -278,6 +297,13 @@ public final class Session {
         // much a frame as one advanceFrame ran, and history that skipped it would count wrong.
         if (rewind != null) {
             rewind.capture(nes);
+        }
+
+        // Here for the same reason, and with one more of its own: the buttons field is the mask in
+        // force whether the frame finished inside advanceFrame or inside stepInstructions, so a
+        // frame somebody stepped their way through is recorded with exactly what was held for it.
+        if (recorder != null) {
+            recorder.frame(buttons);
         }
 
         var hash = FrameAnalysis.hash(ppu.getFrameBuffer());
@@ -433,6 +459,12 @@ public final class Session {
     public void loadState(final Path path) throws IOException {
         SaveState.read(nes, path);
 
+        // A machine nobody played their way to, so a recording in progress has to start again from
+        // here rather than carry on describing a timeline that no longer leads anywhere.
+        if (recorder != null) {
+            recorder.jumped(nes);
+        }
+
         previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
     }
 
@@ -495,6 +527,12 @@ public final class Session {
 
         var moved = rewind.rewind(nes, frames);
 
+        // States and frames are the same number here, since a headless ring keeps one per frame --
+        // which is not true of the window's, and is why MovieRecorder.rewound takes frames.
+        if (recorder != null) {
+            recorder.rewound(nes, moved);
+        }
+
         framesRewound += moved;
         previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
@@ -527,6 +565,100 @@ public final class Session {
      */
     public long framesRewound() {
         return framesRewound;
+    }
+
+    // ==================================================================================== movies
+
+    /**
+     * Starts writing down what is pressed, so the run can be played again from a file.
+     * <p>
+     * The codes in the cartridge slot are pinned here, at the start, which is why both front ends
+     * refuse to change them while a recording is running: a movie whose header names one set and
+     * whose frames were played against another cannot be replayed and would not say so.
+     *
+     * @param fromPowerOn whether to record a movie that carries no state at all. Only honest on a
+     *                    machine that has not run and whose cartridge RAM has not been filled from
+     *                    a battery file, since a movie has no way to carry either; anything else
+     *                    puts the machine as it stands into the file instead.
+     * @throws UsageException if it is already on, since a second call would silently throw the take
+     *                        away.
+     */
+    public void startRecording(final boolean fromPowerOn) {
+        if (recorder != null) {
+            throw new UsageException(
+                    "a movie is already being recorded, " + recorder.framesRecorded() + " frames"
+                            + " long. Stop it first if the point is to start a new one.");
+        }
+
+        recorder = fromPowerOn && frame() == 0
+                ? MovieRecorder.atPowerOn(nes, genie.codes())
+                : MovieRecorder.anchoredAt(nes, genie.codes());
+    }
+
+    /**
+     * Stops recording and hands over what was recorded.
+     *
+     * @throws UsageException if nothing was being recorded, since an empty movie and a movie of a
+     *                        session nobody recorded look identical from the outside.
+     */
+    public Movie stopRecording() {
+        if (recorder == null) {
+            throw new UsageException(
+                    "nothing is being recorded, so there is no movie to write. Start one with"
+                            + " \"record start\".");
+        }
+
+        var movie = recorder.movie();
+        recorder = null;
+
+        return movie;
+    }
+
+    /**
+     * Whether a movie is being written down.
+     */
+    public boolean recording() {
+        return recorder != null;
+    }
+
+    /**
+     * How many frames are in the movie so far, or 0 when nothing is being recorded.
+     */
+    public long framesRecorded() {
+        return recorder == null ? 0 : recorder.framesRecorded();
+    }
+
+    /**
+     * Whether the movie being recorded carries a state to start from rather than starting at power
+     * on. Can become true part way through a take: a loaded state or a rewind past the start of the
+     * recording both re-anchor it.
+     */
+    public boolean recordingAnchored() {
+        return recorder != null && recorder.anchored();
+    }
+
+    /**
+     * Which frame the movie being recorded starts on, or 0 when nothing is being recorded.
+     */
+    public long recordingAnchorFrame() {
+        return recorder == null ? 0 : recorder.anchorFrame();
+    }
+
+    /**
+     * Puts the machine where a movie starts, so its buttons can be played back into it.
+     * <p>
+     * Here rather than in {@link Headless} for the reason {@link #loadState} is here: this is a
+     * machine jump, and {@link #previousHash} describes a picture the machine no longer has.
+     * Reseeding it belongs where it cannot be forgotten.
+     *
+     * @throws com.github.dimiro1.mynes.state.MovieException if the movie was recorded on another
+     *                                                       cartridge or another machine, in which
+     *                                                       case this one is untouched.
+     */
+    public void beginReplay(final Movie movie) {
+        movie.applyAnchor(nes);
+
+        previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
     }
 
     /**

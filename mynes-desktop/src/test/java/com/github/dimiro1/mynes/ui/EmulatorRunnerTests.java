@@ -1,12 +1,19 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.Movie;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongPredicate;
@@ -29,6 +36,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>
  * A sound device is not needed. {@link AudioOutput#open()} says so in the log and runs silently when
  * there is not one, which is exactly what happens on the machine that runs CI.
+ * <p>
+ * The movie tests at the end are here for the same reason as the rewind ones: {@code MovieTests}
+ * proves the recorder's own arithmetic, and this proves that the loop asks it the right questions on
+ * the right frames -- which is the one part of the feature that only exists on this thread.
  */
 class EmulatorRunnerTests {
     /**
@@ -61,12 +72,22 @@ class EmulatorRunnerTests {
     private EmulatorRunner runner;
     private ArrayBlockingQueue<Debugger.Stop> stops;
 
+    /**
+     * Anything that went wrong writing a movie, which happens on the emulation thread and so cannot
+     * fail a test by throwing.
+     */
+    private ArrayBlockingQueue<Exception> failures;
+
+    @TempDir
+    private Path directory;
+
     @BeforeEach
     void setUp() {
         nes = new NES(Cart.load(rom(), "runner.nes"));
         debugger = new Debugger();
         debugger.attach(nes);
         stops = new ArrayBlockingQueue<>(16);
+        failures = new ArrayBlockingQueue<>(16);
 
         runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, REWIND_FRAMES);
         runner.setStopListener(stops::add);
@@ -244,6 +265,125 @@ class EmulatorRunnerTests {
         Thread.sleep(200);
 
         assertTrue(nes.getPPU().getFrame() >= played, "a paused machine holds where it is");
+    }
+
+    // ==================================================================================== movies
+
+    /**
+     * The mask the loop latches is the mask that gets written down, for every frame that finished.
+     * <p>
+     * Both calls are posted before the thread starts, so they run before the first frame and the
+     * movie starts at frame 0 with nothing missed off the front.
+     */
+    @Test
+    void everyRecordedFrameCarriesTheMaskThatWasLatched() throws Exception {
+        var path = directory.resolve("take.mnm");
+
+        runner.setFrameInputSource(() -> Controller.BUTTON_A);
+        runner.startRecording(List.of());
+        runner.start();
+
+        waitFor(frame -> frame >= 30, "the machine never got going");
+
+        var movie = stopRecordingAndRead(path);
+
+        assertEquals(0, movie.anchorFrame());
+        assertTrue(movie.frameCount() >= 30, "it recorded what was played: " + movie.frameCount());
+
+        for (var i = 0L; i < movie.frameCount(); i++) {
+            assertEquals(Controller.BUTTON_A, movie.buttonsAt(i), "frame " + i);
+        }
+    }
+
+    /**
+     * The window keeps a state every <em>other</em> frame, so what {@code Rewind.rewind} answers is
+     * states and what the recorder has to be told is frames. Passing the wrong one of the two would
+     * leave the movie holding twice the frames the machine actually went back over, and the invariant
+     * asserted here is what catches it: a movie holds exactly the frames between its anchor and where
+     * the machine stands, however many of them were played twice on the way.
+     */
+    @Test
+    void rewindingWhileRecordingDropsTheFramesItTookBack() throws Exception {
+        var path = directory.resolve("rewound.mnm");
+
+        runner.setFrameInputSource(() -> 0);
+        runner.startRecording(List.of());
+        runner.start();
+
+        var played = waitFor(frame -> frame >= 60, "the machine never got going");
+
+        runner.setRewinding(true);
+        waitFor(frame -> frame <= 20, "the machine never went backwards");
+        runner.setRewinding(false);
+
+        // Paused rather than stopped: posted commands still run, so the movie can still be written,
+        // and no more frames finish -- which is what makes the frame counter below worth reading.
+        runner.setPaused(true);
+        Thread.sleep(200);
+
+        var atRest = nes.getPPU().getFrame();
+        var movie = stopRecordingAndRead(path);
+
+        assertEquals(atRest - movie.anchorFrame(), movie.frameCount());
+        assertTrue(movie.frameCount() < played,
+                "the frames that were taken back are not in it: " + movie.frameCount()
+                        + " of " + played);
+    }
+
+    /**
+     * A session recorded on one machine, played back on another that has never seen a key pressed --
+     * and control handed back when it runs out, which is what the window turns into giving the
+     * keyboard its game back.
+     */
+    @Test
+    void aMoviePlaysBackAndHandsControlBackAtTheEnd() throws Exception {
+        var path = directory.resolve("take.mnm");
+
+        runner.setFrameInputSource(() -> Controller.BUTTON_A);
+        runner.startRecording(List.of());
+        runner.start();
+
+        waitFor(frame -> frame >= 20, "the machine never got going");
+
+        var movie = stopRecordingAndRead(path);
+        runner.stop();
+
+        var ended = new ArrayBlockingQueue<Boolean>(4);
+        var second = new NES(Cart.load(rom(), "runner.nes"));
+
+        // No history, so nothing here depends on the ring: the point is the cursor and the handover.
+        runner = new EmulatorRunner(second, new ScreenComponent(), new Debugger(), 0);
+        runner.setPlaybackEndedListener(() -> ended.add(true));
+        runner.startPlayback(movie);
+        runner.start();
+
+        assertNotNull(
+                ended.poll(PATIENCE_SECONDS, TimeUnit.SECONDS),
+                "the movie never finished, or never said so");
+        assertTrue(second.getPPU().getFrame() >= movie.frameCount(),
+                "and every frame of it was played");
+    }
+
+    /**
+     * Stops the recording, waits for the file to land, and reads it back.
+     * <p>
+     * The write happens on the emulation thread, so it is the file appearing rather than the call
+     * returning that says it is done -- and it appears whole, since a movie is written through a
+     * temporary and moved into place.
+     */
+    private Movie stopRecordingAndRead(final Path path) throws IOException, InterruptedException {
+        runner.stopRecording(path, failures::add);
+
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(PATIENCE_SECONDS);
+
+        while (System.nanoTime() < deadline && !Files.exists(path)) {
+            Thread.sleep(10);
+        }
+
+        assertNull(failures.poll(), "the movie should have been written without complaint");
+        assertTrue(Files.exists(path), path + " was never written");
+
+        return Movie.read(path);
     }
 
     /**

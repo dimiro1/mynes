@@ -25,6 +25,9 @@ import java.util.TreeSet;
  * @param patches          IPS patches to apply to it, in the order they were named, before it is
  *                         read as a cartridge at all.
  * @param frames           how many frames to run, when nothing stops it sooner.
+ * @param framesSet        whether {@code --frames} was actually given. {@code --play} runs the
+ *                         movie's own length unless somebody named one, and how long a movie is
+ *                         cannot be known while the command line is still being read.
  * @param timeout          how much real time to allow.
  * @param resetAt          frames to press the console's Reset button at the start of.
  * @param input            what to press, and when.
@@ -48,6 +51,10 @@ import java.util.TreeSet;
  * @param saveState        where to write a save state when the run ends, or null.
  * @param sramIn           a battery file to fill the cartridge's RAM from before starting, or null.
  * @param sramOut          where to write that RAM when the run ends, or null.
+ * @param record           where to write a movie of the run, or null.
+ * @param play             a movie to play instead of a schedule, or null. It carries the input, the
+ *                         resets, the codes and where the run starts, so it refuses the flags that
+ *                         would say those things twice.
  * @param expectNotBlank   the final picture must show more than one colour.
  * @param expectAudio      some sample must not have been silence.
  * @param expectMotion     at least this many frames must have differed from the one before, or -1.
@@ -62,6 +69,7 @@ public record Options(
         Path rom,
         List<Path> patches,
         long frames,
+        boolean framesSet,
         Duration timeout,
         List<Long> resetAt,
         InputSchedule input,
@@ -84,6 +92,8 @@ public record Options(
         Path saveState,
         Path sramIn,
         Path sramOut,
+        Path record,
+        Path play,
         boolean expectNotBlank,
         boolean expectAudio,
         long expectMotion,
@@ -275,6 +285,29 @@ public record Options(
               --save-state FILE     Write a save state when the run ends. Applied after --sram-in,
                                     so a state's own copy of the cartridge RAM wins.
 
+            Movies, which are sessions rather than snapshots
+              --record FILE         Write a .mnm movie of this run: where it started, one button
+                                    mask per finished frame, and the frames Reset was pressed at.
+                                    Combines with everything, including --interactive.
+                                    A run that started at power on records a movie that starts
+                                    there and carries no state at all. Anything else -- a
+                                    --load-state, a --sram-in, or a rewind that went back past the
+                                    start of the recording -- puts a save state in the file to
+                                    start from, since there is otherwise nothing to say where the
+                                    beginning was.
+                                    Rewinding while recording drops the frames that were taken
+                                    back, so a movie holds the timeline that was finally played and
+                                    a replay never re-enacts the revert.
+              --play FILE           Play one instead of running a schedule. --frames defaults to
+                                    the movie's own length; asking for more runs on past the end
+                                    with nothing held down, which is how to see what the game does
+                                    when the player stops playing.
+                                    The movie is the input, so --play refuses --record, --input,
+                                    --input-file, --reset-at, --genie, --load-state, --sram-in and
+                                    --interactive rather than letting one of them quietly win.
+                                    It has to be the same cartridge and the same region; anything
+                                    else exits 2. run.replay in the report says what was played.
+
             Expectations. Each one that fails makes the run exit 4; the report says which. Anything
             more particular than these belongs in jq over the report.
               --expect-not-blank    The final picture must show more than one colour.
@@ -313,6 +346,7 @@ public record Options(
         Path rom = null;
         var patches = new ArrayList<Path>();
         var frames = DEFAULT_FRAMES;
+        var framesSet = false;
         var timeout = DEFAULT_TIMEOUT;
         var resetAt = new ArrayList<Long>();
         var inputSpecs = new ArrayList<String>();
@@ -335,6 +369,8 @@ public record Options(
         Path saveState = null;
         Path sramIn = null;
         Path sramOut = null;
+        Path record = null;
+        Path play = null;
         var expectNotBlank = false;
         var expectAudio = false;
         var expectMotion = -1L;
@@ -352,7 +388,10 @@ public record Options(
                 case "--list-palettes" -> listPalettes = true;
                 case "--rom" -> rom = Path.of(value(args, ++i, flag));
                 case "--patch" -> patches.add(Path.of(value(args, ++i, flag)));
-                case "--frames" -> frames = positive(value(args, ++i, flag), flag);
+                case "--frames" -> {
+                    frames = positive(value(args, ++i, flag), flag);
+                    framesSet = true;
+                }
                 case "--timeout" -> timeout = Duration.ofSeconds(
                         positive(value(args, ++i, flag), flag));
                 case "--reset-at" -> resetAt.add(positive(value(args, ++i, flag), flag));
@@ -379,6 +418,8 @@ public record Options(
                 case "--save-state" -> saveState = Path.of(value(args, ++i, flag));
                 case "--sram-in" -> sramIn = Path.of(value(args, ++i, flag));
                 case "--sram-out" -> sramOut = Path.of(value(args, ++i, flag));
+                case "--record" -> record = Path.of(value(args, ++i, flag));
+                case "--play" -> play = Path.of(value(args, ++i, flag));
                 case "--expect-not-blank" -> expectNotBlank = true;
                 case "--expect-audio" -> expectAudio = true;
                 case "--expect-motion" -> expectMotion = positive(value(args, ++i, flag), flag);
@@ -400,6 +441,29 @@ public record Options(
             throw new UsageException("--rom is required. --help says what else there is.");
         }
 
+        if (play != null) {
+            // Each of these is a second answer to a question the movie has already answered, and a
+            // run that quietly took one of them would not be the recorded session at all. Refused
+            // one at a time rather than as a list, so the message names the flag that was typed.
+            refuseWithPlay(record != null, "--record",
+                    "a movie is not something to re-record; play it and record the result some"
+                            + " other way if that is really the intention");
+            refuseWithPlay(!inputSpecs.isEmpty(), "--input",
+                    "the movie is the input");
+            refuseWithPlay(!resetAt.isEmpty(), "--reset-at",
+                    "the movie carries the frames Reset was pressed at");
+            refuseWithPlay(!genie.isEmpty(), "--genie",
+                    "the movie carries the codes it was recorded with, and putting others in would"
+                            + " be a different run");
+            refuseWithPlay(loadState != null, "--load-state",
+                    "the movie says where it starts, at power on or from a state inside it");
+            refuseWithPlay(sramIn != null, "--sram-in",
+                    "a movie that needed the battery filled was recorded from a state that already"
+                            + " has it");
+            refuseWithPlay(interactive, "--interactive",
+                    "a replay is a run of a schedule that is already written down");
+        }
+
         var report = STDOUT.equals(reportPath) ? null
                 : reportPath == null ? outDir.resolve(REPORT_NAME) : Path.of(reportPath);
 
@@ -407,6 +471,7 @@ public record Options(
                 rom,
                 List.copyOf(patches),
                 frames,
+                framesSet,
                 timeout,
                 List.copyOf(resetAt),
                 InputSchedule.parse(inputSpecs, pressFrames),
@@ -429,6 +494,8 @@ public record Options(
                 saveState,
                 sramIn,
                 sramOut,
+                record,
+                play,
                 expectNotBlank,
                 expectAudio,
                 expectMotion,
@@ -492,6 +559,21 @@ public record Options(
     public boolean wantsScreenshotAt(final long frame) {
         return screenshotFrames.contains(frame)
                 || (screenshotEvery > 0 && frame % screenshotEvery == 0);
+    }
+
+    /**
+     * Refuses one of the flags {@code --play} replaces, saying which and why.
+     * <p>
+     * Refused rather than ignored, and rather than allowed to win: a replay whose input came from
+     * somewhere other than the movie is not a replay of anything, and it would look exactly like one
+     * that worked.
+     */
+    private static void refuseWithPlay(
+            final boolean given, final String flag, final String because) {
+        if (given) {
+            throw new UsageException(
+                    "--play and " + flag + " cannot both be given: " + because + ".");
+        }
     }
 
     private static String value(final String[] args, final int i, final String flag) {

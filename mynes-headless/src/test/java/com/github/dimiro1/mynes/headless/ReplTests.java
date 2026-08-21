@@ -380,6 +380,119 @@ class ReplTests {
         assertTrue(help.contains("load-state"));
         assertTrue(help.contains("rewind on"));
         assertTrue(help.contains("rewind off"));
+        assertTrue(help.contains("record start"));
+        assertTrue(help.contains("record stop"));
+    }
+
+    // ==================================================================================== movies
+
+    @Test
+    void recordReportsItsStatus() throws Exception {
+        var replies = session(
+                "record", "record start", "run 20", "record", "record stop " + movie(), "quit");
+
+        assertFalse(replies.getFirst().get("on").asBoolean());
+        assertFalse(replies.getFirst().has("frames"),
+                "nothing to say about a recording that is not happening");
+
+        assertTrue(replies.get(1).get("on").asBoolean());
+        assertEquals(0, replies.get(1).get("frames").asLong());
+        assertFalse(replies.get(1).get("anchored").asBoolean(),
+                "started on frame 0 with no battery filled, so there is nothing to carry");
+
+        assertEquals(20, replies.get(3).get("frames").asLong());
+        assertFalse(replies.get(4).get("on").asBoolean(), "and it stopped");
+    }
+
+    /**
+     * A recording that started after the machine had run has nowhere to begin from but a state, so
+     * it takes one -- which is what makes {@code record start} usable at any moment rather than only
+     * before the first frame.
+     */
+    @Test
+    void recordingFromPartWayThroughCarriesAState() throws Exception {
+        var replies = session("run 40", "record start", "run 10", "record", "quit");
+
+        assertTrue(replies.get(1).get("anchored").asBoolean());
+        assertEquals(40, replies.get(1).get("anchorFrame").asLong());
+        assertEquals(10, replies.get(3).get("frames").asLong(),
+                "ten frames of movie, from frame forty of the machine");
+    }
+
+    @Test
+    void recordStartTwiceIsAnError() throws Exception {
+        var replies = session("record start", "run 10", "record start", "run 10", "quit");
+
+        assertFalse(replies.get(2).get("ok").asBoolean());
+        assertTrue(replies.get(2).get("error").asText().contains("already being recorded"),
+                "and says why, since starting again would throw the take away");
+        assertEquals(20, replies.get(3).get("frame").asLong(), "the session carried on");
+    }
+
+    @Test
+    void recordStopWithoutARecordingIsAnError() throws Exception {
+        var replies = session("record stop " + movie(), "run 10", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean());
+        assertTrue(replies.getFirst().get("error").asText().contains("record start"),
+                "and says what to do");
+        assertEquals(10, replies.get(1).get("frame").asLong());
+    }
+
+    /**
+     * Nowhere named on the command line and nowhere named here, which has to be answered rather than
+     * guessed at -- and answered without losing the take.
+     */
+    @Test
+    void recordStopWithNowhereToWriteKeepsTheTake() throws Exception {
+        var replies = session("record start", "run 10", "record stop", "record", "quit");
+
+        assertFalse(replies.get(2).get("ok").asBoolean());
+        assertTrue(replies.get(3).get("on").asBoolean(), "still recording, still ten frames in");
+        assertEquals(10, replies.get(3).get("frames").asLong());
+    }
+
+    @Test
+    void recordStopWritesAMovieWhereItWasAsked() throws Exception {
+        var path = movie();
+        var reply = session("record start", "run 25", "record stop " + path, "quit").get(2);
+
+        assertEquals(path.toString(), reply.get("path").asText());
+        assertEquals(25, reply.get("frames").asLong());
+        assertTrue(reply.get("bytes").asLong() > 0);
+        assertTrue(Files.exists(path));
+    }
+
+    /**
+     * A movie pins the codes at the moment it starts, so changing them half way through would leave
+     * a file naming one set that was played against another -- and nothing in it would say so.
+     * Listing them is still allowed, since listing changes nothing.
+     */
+    @Test
+    void changingGenieCodesWhileRecordingIsRefused() throws Exception {
+        var replies = session(
+                "genie SXIOPO",
+                "record start",
+                "genie",
+                "genie ZEXPYGLA",
+                "ungenie SXIOPO",
+                "genie clear",
+                "quit");
+
+        assertTrue(replies.get(2).get("ok").asBoolean(), "listing them is not changing them");
+        assertEquals(List.of("SXIOPO"), codes(replies.get(2)));
+
+        for (var refused : List.of(replies.get(3), replies.get(4), replies.get(5))) {
+            assertFalse(refused.get("ok").asBoolean(), refused.toString());
+            assertTrue(refused.get("error").asText().contains("pinned"));
+        }
+    }
+
+    /**
+     * Where a movie goes in these tests. Never beside a fixture.
+     */
+    private Path movie() {
+        return directory.resolve("take.mnm");
     }
 
     // ==================================================================================== rewind

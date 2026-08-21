@@ -196,6 +196,52 @@ The window's ring is not this one: it keeps a state every *other* frame, which h
 doubles the history for the memory, and gives back two frames per display tick so the rewind runs at
 twice speed. The REPL stays at one so that `rewind N` means N frames.
 
+### Recording a session, and playing it back
+
+`--record FILE` writes a `.mnm` movie of the run: where it started, one button mask per finished
+frame, and a sparse list of the frames Reset was pressed at. `--play FILE` plays one instead of a
+schedule. A replay is byte-identical, which is the whole claim and the thing to check after touching
+any of it:
+
+```sh
+java -jar $JAR --headless --rom ROM.nes --frames 900 --input 60/40x3:start --reset-at 500 \
+    --record take.mnm --save-state a.mn
+java -jar $JAR --headless --rom ROM.nes --play take.mnm --save-state b.mn
+cmp a.mn b.mn        # byte-identical end state
+```
+
+**A rewind is not in the movie.** Rewinding while recording drops the frames that were taken back,
+so a movie holds the timeline that was finally played and a replay never re-enacts the revert. That
+composes out of the rewind claim above: a rewound machine is byte for byte the machine that never
+went forward, so there is nothing lost by truncating the log to match.
+
+`--play` is the input, so it refuses `--record`, `--input`, `--input-file`, `--reset-at`, `--genie`,
+`--load-state`, `--sram-in` and `--interactive` -- each of those would be a second answer to a
+question the movie has already answered. It defaults `--frames` to the movie's own length; asking for
+more runs past the end with nothing held down.
+
+`record`, `record start` and `record stop [PATH]` do the same inside an interactive session -- the
+shape of `rewind` rather than of `hack`, since the interesting form is the one that takes a file.
+Mutating `genie`/`ungenie`/`genie clear` are refused while recording, because a movie pins the codes
+at the moment it starts and a file naming one set that was played against another cannot be replayed.
+
+**`run.record` and `run.replay` join the comparability checklist**, beside `run.state`, `run.region`,
+`run.hacks` and `run.genie`. Both are always present with explicit nulls. A run that started at power
+on records a movie that starts there and carries no state at all; anything else -- a `--load-state`,
+a `--sram-in`, a loaded state mid-session, or a rewind that went back past the start of the recording
+-- puts a save state inside the file, and `run.replay.anchored` is what says so.
+`run.state.startedFromPowerOn` is false for a replay of one of those.
+
+The Game Genie codes ride inside the movie and are put back on replay. They have to: a cheated
+cartridge is byte for byte an honest one, so `cart.sha256` cannot tell them apart and nothing else in
+the file would.
+
+The desktop has **Machine > Record Movie... / Play Movie...**. While either is running the pad is
+latched once a frame on the emulation thread rather than reaching the controller the moment a key
+moves, and Power Cycle, Region and the Game Genie item are greyed out -- the first two would build a
+new machine and take the recorder with it. Rewinding during playback stops it and hands the game
+back.
+
 ### Running a romhack
 
 `--patch FILE` applies an IPS patch to the ROM before anything reads it as a cartridge. Repeatable,
@@ -313,7 +359,7 @@ Four Maven modules, and the arrows between them only point one way.
 mynes-core/           depends on nothing
   mynes/              the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
   mynes/mappers/      mappers 0 to 4
-  mynes/state/        save states and battery .sav files
+  mynes/state/        save states, battery .sav files, and .mnm session recordings
   mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
   mynes/video/        colour indices to pixels: the overscan crop and the frame renderer

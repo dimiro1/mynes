@@ -209,6 +209,34 @@ class GameGenieRunTests {
         assertEquals(0x03, codes.get(0).get("compare").asInt());
     }
 
+    /**
+     * The codes travel inside a movie, which is the only place they can travel: the cartridge a code
+     * was played against is byte for byte the cartridge it was not, so a replay that took its codes
+     * from the command line would be a replay of a different run -- and one that took none would
+     * quietly play the honest game and look like it had worked.
+     */
+    @Test
+    void aMovieCarriesTheCodesItWasRecordedWith() throws Exception {
+        var take = out.resolve("cheated.mnm");
+        var cheated = run("cheated", "--genie", String.join(",", CODES),
+                "--record", take.toString());
+
+        var replayed = out.resolve("replayed");
+
+        // Nobody types a code here, and --play would refuse one if they tried.
+        assertEquals(Headless.EXIT_OK, Headless.run(new String[]{
+                "--rom", ROM,
+                "--out", replayed.toString(),
+                "--quiet",
+                "--screenshot", "last",
+                "--play", take.toString()}));
+
+        assertEquals(CODES.size(), report(replayed).at("/run/genie").size(),
+                "the device was filled from the movie");
+        assertEquals(hashIn(cheated), hashIn(replayed));
+        assertArrayEquals(shotIn(cheated), shotIn(replayed), "the same PNG, byte for byte");
+    }
+
     @Test
     void aCodeThatIsNotOneStopsTheRunBeforeItStarts() {
         assertEquals(Headless.EXIT_USAGE, Headless.run(new String[]{

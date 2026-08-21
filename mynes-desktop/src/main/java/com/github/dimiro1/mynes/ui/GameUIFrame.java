@@ -9,6 +9,8 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.state.BatteryRAM;
+import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
@@ -83,6 +85,13 @@ public class GameUIFrame extends JFrame {
      */
     private final SystemFileChooser patchChooser;
 
+    /**
+     * The Record and Play dialogs, kept apart from the two above so that movies remember their own
+     * folder: a session somebody recorded is not usually filed beside the cartridge it was recorded
+     * from.
+     */
+    private final SystemFileChooser movieChooser;
+
     private final ScreenComponent screen = new ScreenComponent();
     private final KeyboardInput keyboardInput;
 
@@ -119,6 +128,26 @@ public class GameUIFrame extends JFrame {
 
     private final JMenuItem machineMenuQuickSave = new JMenuItem("Quick Save");
     private final JMenuItem machineMenuQuickLoad = new JMenuItem("Quick Load");
+
+    /**
+     * The four movie items, and the two things a movie will not survive.
+     * <p>
+     * Power Cycle and Region both build a new machine, and a take in progress lives in the runner
+     * that would be torn down -- so both are greyed out while one is running rather than allowed to
+     * lose it silently. There is no accelerator on any of these: the function keys are spoken for,
+     * and Shift is Select, so a Shift shortcut is a hazard here.
+     */
+    private final JMenuItem machineMenuRecord = new JMenuItem("Record Movie...");
+    private final JMenuItem machineMenuStopRecording = new JMenuItem("Stop Recording");
+    private final JMenuItem machineMenuPlay = new JMenuItem("Play Movie...");
+    private final JMenuItem machineMenuStopPlayback = new JMenuItem("Stop Playback");
+    private final JMenuItem machineMenuPowerCycle = new JMenuItem("Power Cycle", KeyEvent.VK_C);
+
+    /**
+     * Built in {@link #init()} rather than here, because {@link #regionMenu()} reads the config and
+     * a field initialiser runs before the constructor has loaded it.
+     */
+    private JMenu machineMenuRegion;
 
     /**
      * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
@@ -185,6 +214,30 @@ public class GameUIFrame extends JFrame {
      */
     private byte[] batteryShadow = new byte[0];
 
+    /**
+     * Whether a movie is being recorded, and where it is going when it stops.
+     * <p>
+     * The destination is asked for up front, before a single frame is recorded, which is the shape
+     * {@code --record FILE} has and the shape that means somebody who forgets to stop cleanly has
+     * still said where it goes. The recorder itself lives on the emulation thread; these two are the
+     * window's own copy of "is one running", since it cannot read that field.
+     */
+    private boolean movieRecording;
+
+    private Path recordingTo;
+
+    private boolean moviePlaying;
+
+    /**
+     * A movie waiting for the machine that is about to be built to start playing it.
+     * <p>
+     * Playback always goes through a power cycle, whether the movie is anchored or not: a movie from
+     * power on needs a machine that has not run, and one with a state inside it is going to replace
+     * the machine anyway. One path rather than two, and the codes and the muting are put in place in
+     * {@link #startMachine} where every other per-machine thing already is.
+     */
+    private Movie pendingMovie;
+
     public GameUIFrame() {
         super("MyNES");
 
@@ -197,6 +250,11 @@ public class GameUIFrame extends JFrame {
         patchChooser = new SystemFileChooser();
         patchChooser.addChoosableFileFilter(patchFilter);
         patchChooser.setFileFilter(patchFilter);
+
+        var movieFilter = new SystemFileChooser.FileNameExtensionFilter("MyNES movie", "mnm");
+        movieChooser = new SystemFileChooser();
+        movieChooser.addChoosableFileFilter(movieFilter);
+        movieChooser.setFileFilter(movieFilter);
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
@@ -253,12 +311,12 @@ public class GameUIFrame extends JFrame {
         machineMenuReset.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, command));
         machineMenu.add(machineMenuReset);
 
-        JMenuItem machineMenuPowerCycle = new JMenuItem("Power Cycle", KeyEvent.VK_C);
         machineMenuPowerCycle.setAccelerator(
                 KeyStroke.getKeyStroke(KeyEvent.VK_R, command | InputEvent.SHIFT_DOWN_MASK));
         machineMenu.add(machineMenuPowerCycle);
 
-        machineMenu.add(regionMenu());
+        machineMenuRegion = regionMenu();
+        machineMenu.add(machineMenuRegion);
 
         machineMenu.addSeparator();
 
@@ -275,6 +333,24 @@ public class GameUIFrame extends JFrame {
 
         machineMenuQuickLoad.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0));
         machineMenu.add(machineMenuQuickLoad);
+
+        machineMenu.addSeparator();
+
+        // Beside the save states, because they answer the two halves of the same question: a slot
+        // is where the machine got to and a movie is how it got there.
+        machineMenuRecord.setMnemonic(KeyEvent.VK_E);
+        machineMenuRecord.setEnabled(false);
+        machineMenu.add(machineMenuRecord);
+
+        machineMenuStopRecording.setEnabled(false);
+        machineMenu.add(machineMenuStopRecording);
+
+        machineMenuPlay.setMnemonic(KeyEvent.VK_Y);
+        machineMenuPlay.setEnabled(false);
+        machineMenu.add(machineMenuPlay);
+
+        machineMenuStopPlayback.setEnabled(false);
+        machineMenu.add(machineMenuStopPlayback);
 
         machineMenu.addSeparator();
 
@@ -413,7 +489,10 @@ public class GameUIFrame extends JFrame {
         // vector. Posted rather than called because only the emulation thread touches the NES.
         machineMenuReset.addActionListener(e -> {
             if (runner != null) {
-                runner.post(nes::reset);
+                // Through the runner rather than posted straight at the machine, because a movie
+                // being recorded has to be told about a reset before the machine sees it -- and one
+                // posted command is the only way to be sure of that order.
+                runner.reset();
             }
         });
 
@@ -427,6 +506,18 @@ public class GameUIFrame extends JFrame {
 
         machineMenuQuickSave.addActionListener(e -> saveSlot(currentSlot));
         machineMenuQuickLoad.addActionListener(e -> loadSlot(currentSlot));
+
+        machineMenuRecord.addActionListener(e -> startRecording());
+        machineMenuStopRecording.addActionListener(e -> stopRecording());
+        machineMenuPlay.addActionListener(e -> playMovie());
+
+        // Only the runner is told: it ends the playback and hands the news back here, which is the
+        // same path the last frame of a movie takes. One place decides what stopping looks like.
+        machineMenuStopPlayback.addActionListener(e -> {
+            if (runner != null) {
+                runner.stopPlayback();
+            }
+        });
 
         // Which slots have something in them changes as the game is played, so the labels are worked
         // out when the menu opens rather than when it is built.
@@ -1002,6 +1093,11 @@ public class GameUIFrame extends JFrame {
         runner.postStateChange(() -> {
             try {
                 SaveState.read(nes, path);
+
+                // Inside the runnable rather than beside it, so a load that was refused leaves a
+                // recording in progress describing the timeline it is still on.
+                runner.noteMachineJumped();
+
                 logger.log(Level.INFO, "loaded slot " + slot + ", now at frame " + nes.getPPU().getFrame());
             } catch (IOException | SaveStateException ex) {
                 report("Could not load slot " + slot, ex);
@@ -1010,6 +1106,183 @@ public class GameUIFrame extends JFrame {
 
         // The buttons the player was holding belong to the game they were playing a moment ago.
         keyboardInput.releaseAll();
+    }
+
+    // ==================================================================================== movies
+
+    /**
+     * Starts writing the session down, having first asked where it is going.
+     * <p>
+     * The destination up front rather than at the end, which is the shape {@code --record FILE} has:
+     * somebody who plays for twenty minutes and then closes the window has still said where the take
+     * belongs. It also means the answer to "am I recording?" is a file on disk rather than something
+     * held only in memory.
+     */
+    private void startRecording() {
+        if (runner == null || romPath == null || movieRecording || moviePlaying) {
+            return;
+        }
+
+        movieChooser.setSelectedFile(defaultMoviePath().toFile());
+
+        if (movieChooser.showSaveDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        recordingTo = movieChooser.getSelectedFile().toPath();
+        movieRecording = true;
+
+        // The pad moves to the emulation thread's own latch from here on. A press that reached the
+        // controller half way through a frame would be written down as belonging to a frame it was
+        // only half of, and the replay of it would be a different game.
+        keyboardInput.setLatching(true);
+        runner.startRecording(genieCodes);
+
+        logger.log(Level.INFO, "recording to " + recordingTo.getFileName());
+
+        updateMovieItems();
+        updateTitle();
+    }
+
+    private void stopRecording() {
+        if (runner == null || !movieRecording) {
+            return;
+        }
+
+        var path = recordingTo;
+
+        // The runner has already logged whatever went wrong and hopped back to this thread, so this
+        // is only the dialog.
+        runner.stopRecording(path, ex -> JOptionPane.showMessageDialog(
+                this,
+                "Could not write " + path.getFileName() + ": " + ex.getMessage(),
+                "Error",
+                JOptionPane.ERROR_MESSAGE));
+
+        movieRecording = false;
+        recordingTo = null;
+        keyboardInput.setLatching(false);
+
+        updateMovieItems();
+        updateTitle();
+    }
+
+    /**
+     * Opens a movie and plays it, from the beginning of the machine it was recorded on.
+     * <p>
+     * The header is read on this thread first -- sixty-eight bytes, no inflation -- so a movie from
+     * another cartridge or another machine is refused while the game somebody is playing is still
+     * playing. Only once it is going to work is the machine replaced.
+     */
+    private void playMovie() {
+        if (cart == null || movieRecording) {
+            return;
+        }
+
+        if (movieChooser.showOpenDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        var path = movieChooser.getSelectedFile().toPath();
+        final Movie movie;
+
+        try {
+            var header = Movie.header(path);
+
+            if (!header.romSHA256().equals(cart.sha256())) {
+                refuseMovie(path, "It was recorded on another cartridge -- mapper "
+                        + header.mapperNumber() + " " + header.romSHA256().substring(0, 12)
+                        + ", where this one is mapper " + cart.mapperNumber() + " "
+                        + cart.sha256().substring(0, 12) + ".");
+                return;
+            }
+
+            if (header.region() != currentRegion()) {
+                refuseMovie(path, "It was recorded on a " + header.region().label()
+                        + " machine and this one is " + currentRegion().label()
+                        + ". The cartridge is right, but a frame is not the same length on the two.");
+                return;
+            }
+
+            movie = Movie.read(path);
+        } catch (IOException | MovieException ex) {
+            report("Could not read " + path.getFileName(), ex);
+            return;
+        }
+
+        logger.log(Level.INFO, "playing " + path.getFileName() + ", " + movie.frameCount()
+                + " frames" + (movie.anchored() ? " from a state inside it" : " from power on")
+                + (movie.genie().isEmpty() ? ""
+                : ", with " + movie.genie().size() + " Game Genie codes it was recorded with"));
+
+        // Consumed by startMachine, after the codes have been replayed and before the thread starts.
+        pendingMovie = movie;
+
+        startMachine(cart);
+    }
+
+    private void refuseMovie(final Path path, final String why) {
+        JOptionPane.showMessageDialog(
+                this,
+                path.getFileName() + " will not play here.\n\n" + why,
+                "Play Movie",
+                JOptionPane.WARNING_MESSAGE);
+    }
+
+    /**
+     * The movie has run out, or somebody stopped it. Called on the event dispatch thread, from the
+     * runner, whichever of the two it was -- so there is one description of what stopping looks
+     * like.
+     * <p>
+     * Control goes straight back to the keyboard with no pause and no dialog: the frame after the
+     * last frame of a replay is the first frame of a game somebody is now playing.
+     */
+    private void playbackEnded(final EmulatorRunner from) {
+        // Which machine's playback ended. The news arrives here a moment after the fact, and by then
+        // the runner it came from may already have been replaced -- by one that is itself playing a
+        // different movie, which this would otherwise stop before it had drawn a frame.
+        if (from != runner || !moviePlaying) {
+            return;
+        }
+
+        moviePlaying = false;
+        keyboardInput.setPlaybackMuted(false);
+        keyboardInput.setLatching(false);
+
+        updateMovieItems();
+        updateTitle();
+    }
+
+    /**
+     * Where a movie goes when nobody has said. Beside the ROM and named after it, the way the slots,
+     * the battery file and the screenshots are.
+     */
+    private Path defaultMoviePath() {
+        var name = gamePath().getFileName().toString();
+        var dot = name.lastIndexOf('.');
+
+        return gamePath().resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".mnm");
+    }
+
+    /**
+     * Which of the movie items can be used, and which two things a movie stops somebody doing.
+     * <p>
+     * Power Cycle and Region both build a new machine, and the take lives in the runner that would
+     * be torn down. The Game Genie goes with them for a different reason: a movie pins the codes
+     * when it starts, so changing them half way through would leave a file that cannot be replayed
+     * and does not say so.
+     */
+    private void updateMovieItems() {
+        var busy = movieRecording || moviePlaying;
+
+        machineMenuRecord.setEnabled(runner != null && !busy);
+        machineMenuStopRecording.setEnabled(movieRecording);
+        machineMenuPlay.setEnabled(cart != null && !busy);
+        machineMenuStopPlayback.setEnabled(moviePlaying);
+
+        machineMenuPowerCycle.setEnabled(!busy);
+        machineMenuRegion.setEnabled(!busy);
+        hacksMenuGameGenie.setEnabled(cart != null && !busy);
     }
 
     /**
@@ -1183,6 +1456,21 @@ public class GameUIFrame extends JFrame {
         // read back as its own progress.
         saveBattery();
 
+        // Power Cycle and Region are greyed out while a movie is running, so the only way here with
+        // one in progress is a new cartridge -- which is a decision worth honouring rather than
+        // refusing. The take lives in the runner about to be stopped, so it goes with it; said out
+        // loud, because a recording that vanished silently would look like a bug.
+        if (movieRecording) {
+            logger.log(Level.WARNING, "a movie was being recorded and the machine is being replaced,"
+                    + " so the take was dropped");
+        }
+
+        movieRecording = false;
+        recordingTo = null;
+        moviePlaying = false;
+        keyboardInput.setLatching(false);
+        keyboardInput.setPlaybackMuted(false);
+
         // The slots, the battery file and the screenshots are named from these two, so a game keeps
         // its saves beside it -- and a hack keeps its own beside the patch, rather than writing over
         // the original's.
@@ -1231,6 +1519,14 @@ public class GameUIFrame extends JFrame {
         // window as the two lines above: the runner does not exist yet, so this thread owns it.
         debugger.attach(nes);
 
+        // A movie carries the codes it was recorded with, and they win: the cartridge a code was
+        // played against is byte for byte the cartridge it was not, so this is the only thing that
+        // can put the cheat back -- and a replay against a different set of codes is a replay of
+        // nothing.
+        if (pendingMovie != null) {
+            genieCodes = pendingMovie.genie();
+        }
+
         // And so does the cartridge slot. Replayed from the window's own list rather than left to
         // whatever the device happened to be holding, so that there is one answer to what the codes
         // are: attach first, so a code put in here reaches this machine's MMU and not the last one's.
@@ -1269,6 +1565,26 @@ public class GameUIFrame extends JFrame {
         // history, and the key must not still be rewinding a game that has been switched off.
         keyboardInput.setRewind(runner::setRewinding);
 
+        // And so is where a recorded frame's buttons come from, for the same reason again.
+        runner.setFrameInputSource(keyboardInput::heldMask);
+
+        var playing = runner;
+        runner.setPlaybackEndedListener(() -> playbackEnded(playing));
+
+        if (pendingMovie != null) {
+            // Posted before the thread exists, so the anchor is in place before a single frame runs.
+            runner.startPlayback(pendingMovie);
+            pendingMovie = null;
+
+            moviePlaying = true;
+
+            // The keyboard is kept off the game entirely while a movie plays -- a bumped key would
+            // stop it being the recorded session -- except for rewind, which is the gesture that
+            // takes it back.
+            keyboardInput.setPlaybackMuted(true);
+            keyboardInput.setLatching(true);
+        }
+
         if (debuggerFrame != null) {
             debuggerFrame.setMachine(nes, runner);
         }
@@ -1281,7 +1597,7 @@ public class GameUIFrame extends JFrame {
         machineMenu.setEnabled(true);
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
-        hacksMenuGameGenie.setEnabled(true);
+        updateMovieItems();
         updateTitle();
     }
 
@@ -1347,6 +1663,17 @@ public class GameUIFrame extends JFrame {
 
         if (runner.isPaused()) {
             return " (paused)";
+        }
+
+        // Above fast forward, because what the machine is doing to a file is a bigger surprise than
+        // how fast it is going -- and a recording somebody has forgotten about is the one state
+        // worth being reminded of on every glance at the window.
+        if (moviePlaying) {
+            return " (playback)";
+        }
+
+        if (movieRecording) {
+            return " (recording)";
         }
 
         if (runner.getSpeed() != EmulationSpeed.NORMAL) {

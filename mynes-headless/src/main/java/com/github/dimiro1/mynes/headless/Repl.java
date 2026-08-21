@@ -5,8 +5,11 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Disassembler;
+import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveStateException;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -59,6 +62,9 @@ public final class Repl {
             rewind on [FRAMES]         start keeping history, 30 seconds of it by default
             rewind N                   go back N frames, or as far as the history goes
             rewind off                 stop keeping it
+            record                     say whether a movie is being recorded, and how long it is
+            record start               start writing down what is pressed
+            record stop [PATH]         stop, and write it where --record said if PATH is left off
             audio                      peak, RMS and silence since the last audio command
             help                       this
             quit                       stop
@@ -110,6 +116,15 @@ public final class Repl {
     private int pressRemaining;
     private int pressButtons;
 
+    /**
+     * The last movie this session wrote and where it went, so the report can name it. Null until
+     * {@code record stop} has written one, and never touched by the {@code --record} path, which is
+     * finished off by {@link Headless} after the session has ended.
+     */
+    private @Nullable Movie recordedMovie;
+
+    private @Nullable Path recordedPath;
+
     public Repl(
             final Session session,
             final Options options,
@@ -122,6 +137,20 @@ public final class Repl {
         this.in = in;
         this.out = out;
         this.text = text;
+    }
+
+    /**
+     * The movie {@code record stop} wrote, or null if this session wrote none.
+     */
+    public @Nullable Movie recordedMovie() {
+        return recordedMovie;
+    }
+
+    /**
+     * Where that went.
+     */
+    public @Nullable Path recordedPath() {
+        return recordedPath;
     }
 
     /**
@@ -185,6 +214,7 @@ public final class Repl {
             case "save-state" -> saveState(words);
             case "load-state" -> loadState(words);
             case "rewind" -> rewind(words);
+            case "record" -> record(words);
             case "audio" -> audio();
             case "help" -> reply("help", node -> node.put("commands", HELP));
             default -> error(name, "\"" + name + "\" is not a command. Try help.");
@@ -539,6 +569,17 @@ public final class Repl {
     private void genie(final String name, final String[] words) {
         var device = session.genie();
 
+        // Every form of this except "list them" changes what is in the slot, and a movie pinned the
+        // codes at the moment it started: a file whose header names one set and whose frames were
+        // played against another cannot be replayed and would not say so. Refused rather than
+        // silently re-pinned, since which of the two somebody meant is not knowable from here.
+        if (session.recording() && changesTheCodes(name, words)) {
+            throw new UsageException(
+                    "a movie is being recorded, and it pinned the Game Genie codes when it started."
+                            + " Stop the recording first, or take the codes out before starting"
+                            + " one.");
+        }
+
         if (name.equals("ungenie")) {
             if (words.length < 2) {
                 throw new UsageException(
@@ -591,6 +632,14 @@ public final class Repl {
         }
 
         reply("genie", node -> putCodes(node, device));
+    }
+
+    /**
+     * Whether this {@code genie} or {@code ungenie} would change what is in the cartridge slot, as
+     * opposed to only listing it.
+     */
+    private static boolean changesTheCodes(final String name, final String[] words) {
+        return name.equals("ungenie") || words.length > 1;
     }
 
     private static GameGenieCode decode(final String word) {
@@ -705,6 +754,83 @@ public final class Repl {
                     putRewind(node);
                 });
             }
+        }
+    }
+
+    /**
+     * Starts a movie, stops one, or says whether there is one.
+     * <p>
+     * The shape of {@code rewind} rather than of {@code hack}, and for the same reason: the three
+     * forms are one idea and they read the way they are used -- {@code record start}, some frames,
+     * {@code record stop take.mnm}.
+     * <p>
+     * Worth having as a command rather than only as a flag because this is where the claim can be
+     * checked. Record a session that rewinds half way through, play it back, and compare the two
+     * save states: a window is somebody's impression that it looked right, and here it is an
+     * assertion about bytes.
+     */
+    private void record(final String[] words) {
+        if (words.length < 2) {
+            reply("record", this::putRecord);
+            return;
+        }
+
+        switch (words[1].toLowerCase(Locale.ROOT)) {
+            case "start" -> {
+                // A movie that carries no state is only honest when there is nothing to carry: a
+                // machine that has run is somewhere a file of buttons cannot describe, and --sram-in
+                // has filled a battery a movie has no way to hold.
+                session.startRecording(session.frame() == 0 && options.sramIn() == null);
+
+                reply("record", this::putRecord);
+            }
+            case "stop" -> {
+                var path = words.length > 2 ? Path.of(words[2]) : options.record();
+
+                // Asked this way round so that a session which never started one is told that,
+                // rather than told to name a file for a movie that does not exist. Nothing has been
+                // stopped yet either way, so the take survives both refusals.
+                if (session.recording() && path == null) {
+                    throw new UsageException(
+                            "record stop wants somewhere to write it, as in \"record stop"
+                                    + " take.mnm\" -- or a --record on the command line.");
+                }
+
+                var movie = session.stopRecording();
+
+                // A file that cannot be written is a bad command rather than the end of the
+                // session, the same as a misspelled address -- and the take is still in hand, so
+                // this is the one refusal here that actually costs something.
+                try {
+                    movie.write(path);
+                } catch (IOException | MovieException e) {
+                    throw new UsageException("could not write " + path + ": " + e.getMessage());
+                }
+
+                recordedMovie = movie;
+                recordedPath = path;
+
+                reply("record", node -> {
+                    node.put("path", path.toString());
+                    node.put("frames", movie.frameCount());
+                    node.put("anchored", movie.anchored());
+                    node.put("anchorFrame", movie.anchorFrame());
+                    node.put("bytes", sizeOf(path));
+                    putRecord(node);
+                });
+            }
+            default -> throw new UsageException(
+                    "record takes \"start\", \"stop\" or nothing, not \"" + words[1] + "\".");
+        }
+    }
+
+    private void putRecord(final Json.Object node) {
+        node.put("on", session.recording());
+
+        if (session.recording()) {
+            node.put("frames", session.framesRecorded());
+            node.put("anchored", session.recordingAnchored());
+            node.put("anchorFrame", session.recordingAnchorFrame());
         }
     }
 

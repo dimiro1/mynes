@@ -187,6 +187,13 @@ and there is no patched copy of it to keep anywhere. A patched game keeps its ow
 battery file, named after the patch rather than the ROM, so an afternoon with a hack cannot write
 over fifty hours of the original. `--patch` does the same thing from the command line.
 
+**Session recordings**, from **Machine > Record Movie...** and **Machine > Play Movie...**. A movie
+is not a video: it is where the run started, one button mask per frame, and the frames Reset was
+pressed at, which comes to a few hundred bytes a minute. Playing one back reproduces the session byte
+for byte, because nothing in the machine reads a clock or a random number. Rewinding while recording
+drops the frames you took back, so a movie holds the run you finally played rather than the one you
+undid. `--record` and `--play` do the same from the command line.
+
 **Save states and battery saves**, and a **headless mode** for running with no window at all. Both
 have a section of their own below.
 
@@ -259,6 +266,24 @@ The difference is worth keeping in mind. A save state is a bookmark, and losing 
 minutes. A `.sav` is fifty hours of Zelda, which is why that one is written to a temporary file and
 moved into place, so that a crash halfway through cannot take both it and its replacement.
 
+**Movies** are the third file here and the odd one out, because they hold no picture of the machine
+at all. A `.mnm` is where the run started, one byte per frame saying what was held down, and a list
+of the frames Reset was pressed at -- ninety seconds of play is about five kilobytes before it is
+compressed. It can be that small only because the console is deterministic: the same cartridge given
+the same buttons on the same frames arrives at the same bytes, so playing one back reproduces the
+session exactly rather than approximately.
+
+Recording from power on carries no state at all, which makes a movie of a whole playthrough something
+you can hand to anybody with the same ROM. Starting one part way through puts a save state inside the
+file to begin from, since there is otherwise nothing to say where the beginning was. Game Genie codes
+travel inside the movie and are put back on playback -- they have to, because a cheated cartridge is
+byte for byte an honest one and nothing else in the file could say so.
+
+Rewinding while recording drops the frames you took back rather than appending them, so a movie is
+the timeline you finally played and a replay never re-enacts the revert. Power Cycle and Region are
+greyed out while a movie is running, since both build a new machine and the recording would go with
+it.
+
 ## Headless mode
 
 The emulator also runs with nobody watching: no window, no sound card. That is useful from a script,
@@ -318,6 +343,12 @@ seconds to start up, the jar about a third of one.
   so `cart.sha256` is the plain one and `run.genie` is the only thing in the report that tells a
   cheated run from an honest one. Which also means a save state taken with codes in will load into a
   machine with them out, without a word of complaint.
+- **`--record FILE` and `--play FILE`** write and replay a session. `--play` is the input, so it
+  refuses `--input`, `--reset-at`, `--genie`, `--load-state` and the rest of what a movie already
+  says, and it defaults `--frames` to the movie's own length -- ask for more and the run carries on
+  past the end with nothing held down. `run.record` and `run.replay` in the report join the list of
+  things to check before diffing two runs. `record start` and `record stop` are commands in the
+  interactive session as well.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
   lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what

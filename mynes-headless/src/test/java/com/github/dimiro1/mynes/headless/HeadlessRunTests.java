@@ -646,6 +646,249 @@ class HeadlessRunTests {
                 "the first bank of a bigger board's file");
     }
 
+    // ==================================================================================== movies
+
+    /**
+     * A run with no frame count of its own, which is what {@code --play} wants: the whole point is
+     * that the movie's own length is the answer unless somebody overrules it.
+     */
+    private int play(final String... extra) {
+        var args = new String[extra.length + 5];
+
+        args[0] = "--rom";
+        args[1] = ROM;
+        args[2] = "--out";
+        args[3] = out.toString();
+        args[4] = "--quiet";
+
+        System.arraycopy(extra, 0, args, 5, extra.length);
+
+        return Headless.run(args);
+    }
+
+    /**
+     * The whole claim, through the command line: a session played back arrives at the same machine.
+     * <p>
+     * Compared as save state bytes rather than as pictures, because a picture stops being evidence
+     * as soon as a ROM settles down -- and because two files being byte-equal is an assertion
+     * anybody can re-run with {@code cmp}.
+     */
+    @Test
+    void aRecordedSessionReplaysToTheSameMachine() throws Exception {
+        var take = out.resolve("take.mnm");
+        var recorded = out.resolve("a.mn");
+        var replayed = out.resolve("b.mn");
+
+        assertEquals(Headless.EXIT_OK, run(
+                "--frames", "200", "--input", "60/40x3:start",
+                "--record", take.toString(), "--save-state", recorded.toString()));
+
+        assertTrue(Files.size(take) > 0, "there is a movie to play");
+        assertEquals(200, report().at("/run/record/frames").asLong());
+
+        assertEquals(Headless.EXIT_OK, play(
+                "--play", take.toString(), "--save-state", replayed.toString()));
+
+        assertEquals(200, report().at("/run/frames").asLong());
+        assertArrayEquals(
+                Files.readAllBytes(recorded), Files.readAllBytes(replayed),
+                "every field of the machine, not only the picture");
+    }
+
+    /**
+     * The headline: a rewind while recording drops the frames that were taken back, so the movie is
+     * the timeline that was finally played and the replay never re-enacts the revert.
+     * <p>
+     * Ninety frames run, thirty given back, thirty played again with Start held -- so the session
+     * ends on frame 90 and the movie holds 90 rather than 120.
+     */
+    @Test
+    void aRecordedSessionWithARewindReplaysStraightThrough() throws Exception {
+        var take = out.resolve("rewound.mnm");
+        var recorded = out.resolve("a.mn");
+        var replayed = out.resolve("b.mn");
+
+        var script = Files.writeString(out.resolve("session.txt"), String.join("\n",
+                "record start",
+                "rewind on",
+                "run 90",
+                "rewind 30",
+                "hold start",
+                "run 30",
+                "quit") + "\n");
+
+        assertEquals(Headless.EXIT_OK, run(
+                "--script", script.toString(),
+                "--record", take.toString(),
+                "--save-state", recorded.toString()));
+
+        assertEquals(90, report().at("/run/record/frames").asLong(),
+                "ninety, not a hundred and twenty: the thirty that were undone are not in it");
+        assertEquals(30, report().at("/run/state/framesRewound").asLong());
+
+        assertEquals(Headless.EXIT_OK, play(
+                "--play", take.toString(), "--save-state", replayed.toString()));
+
+        assertEquals(90, report().at("/run/replay/frames").asLong());
+        assertEquals(0, report().at("/run/state/framesRewound").asLong(),
+                "the replay never goes backwards at all");
+        assertArrayEquals(Files.readAllBytes(recorded), Files.readAllBytes(replayed));
+    }
+
+    @Test
+    void aReplayReproducesAMidRunReset() throws Exception {
+        var take = out.resolve("reset.mnm");
+        var recorded = out.resolve("a.mn");
+        var untouched = out.resolve("c.mn");
+        var replayed = out.resolve("b.mn");
+
+        assertEquals(Headless.EXIT_OK, run(
+                "--frames", "120", "--reset-at", "60",
+                "--record", take.toString(), "--save-state", recorded.toString()));
+
+        // nestest is sitting on a menu either way, so the picture is no evidence at all here and
+        // the state bytes are. Without this the test would pass on a replay that ignored resets.
+        assertEquals(Headless.EXIT_OK, run("--frames", "120", "--save-state", untouched.toString()));
+        assertFalse(
+                Arrays.equals(Files.readAllBytes(recorded), Files.readAllBytes(untouched)),
+                "the reset has to have changed something, or this proves nothing");
+
+        assertEquals(Headless.EXIT_OK, play(
+                "--play", take.toString(), "--save-state", replayed.toString()));
+
+        assertArrayEquals(Files.readAllBytes(recorded), Files.readAllBytes(replayed));
+    }
+
+    /**
+     * A run that did not start at power on has nowhere for a movie to begin but a state, so the
+     * movie carries one -- and the replay of it is honest about not being a power-on run.
+     */
+    @Test
+    void anAnchoredRecordingEmbedsItsStart() throws Exception {
+        var bookmark = out.resolve("at-60.mn");
+        run("--frames", "60", "--save-state", bookmark.toString());
+
+        var take = out.resolve("anchored.mnm");
+        var recorded = out.resolve("a.mn");
+        var replayed = out.resolve("b.mn");
+
+        assertEquals(Headless.EXIT_OK, run(
+                "--frames", "40",
+                "--load-state", bookmark.toString(),
+                "--record", take.toString(),
+                "--save-state", recorded.toString()));
+
+        assertTrue(report().at("/run/record/anchored").asBoolean());
+        assertEquals(60, report().at("/run/record/anchorFrame").asLong());
+        assertEquals(40, report().at("/run/record/frames").asLong());
+
+        assertEquals(Headless.EXIT_OK, play(
+                "--play", take.toString(), "--save-state", replayed.toString()));
+
+        assertFalse(report().at("/run/state/startedFromPowerOn").asBoolean(),
+                "a replay of an anchored take is no more a power-on run than a --load-state is");
+        assertEquals(100, report().at("/ppu/frame").asLong(), "sixty anchored plus forty played");
+        assertArrayEquals(Files.readAllBytes(recorded), Files.readAllBytes(replayed));
+    }
+
+    @Test
+    void playDefaultsToTheMovieLength() throws Exception {
+        var take = out.resolve("take.mnm");
+
+        run("--frames", "137", "--record", take.toString());
+
+        assertEquals(Headless.EXIT_OK, play("--play", take.toString()));
+
+        assertEquals(137, report().at("/run/frames").asLong(),
+                "nobody named a length, so the movie's own is the answer");
+    }
+
+    /**
+     * Running longer than the movie is a legitimate thing to want -- what does the game do when the
+     * player stops playing? -- and the honest answer for a frame nobody recorded is that nobody was
+     * touching the pad, which {@code framesWithInput} has to say rather than counting the whole run.
+     */
+    @Test
+    void runningPastTheEndContinuesWithNoInput() throws Exception {
+        var take = out.resolve("take.mnm");
+
+        run("--frames", "100", "--input", "0-100:start", "--record", take.toString());
+
+        assertEquals(Headless.EXIT_OK, play("--play", take.toString()));
+
+        var withinTheMovie = report().at("/input/framesWithInput").asLong();
+
+        assertTrue(withinTheMovie > 0, "the recorded session pressed something");
+
+        assertEquals(Headless.EXIT_OK, play("--play", take.toString(), "--frames", "160"));
+
+        assertEquals(160, report().at("/run/frames").asLong());
+        assertEquals(withinTheMovie, report().at("/input/framesWithInput").asLong(),
+                "the sixty frames past the end had nothing held");
+    }
+
+    @Test
+    void aMovieFromAnotherCartridgeExitsTwo() throws Exception {
+        var take = out.resolve("take.mnm");
+        run("--frames", "20", "--record", take.toString());
+
+        assertEquals(Headless.EXIT_USAGE, Headless.run(new String[]{
+                "--rom", "src/test/resources/mmc3-test-2/1-clocking.nes",
+                "--out", out.toString(), "--quiet",
+                "--play", take.toString()}));
+    }
+
+    @Test
+    void aFileThatIsNotAMovieExitsTwo() throws Exception {
+        var nonsense = Files.writeString(out.resolve("nonsense.mnm"), "this is not a movie");
+
+        assertEquals(Headless.EXIT_USAGE, play("--play", nonsense.toString()));
+    }
+
+    /**
+     * Always present, with explicit nulls, so two reports line up key for key whether either run
+     * touched a movie at all.
+     */
+    @Test
+    void theReportSaysWhatWasRecordedAndWhatWasReplayed() throws Exception {
+        run();
+
+        assertTrue(report().at("/run/record/savedTo").isNull());
+        assertTrue(report().at("/run/record/frames").isNull());
+        assertTrue(report().at("/run/replay/playedFrom").isNull());
+        assertTrue(report().at("/run/replay/anchorFrame").isNull());
+
+        var take = out.resolve("take.mnm");
+        run("--record", take.toString());
+
+        assertEquals(take.toString(), report().at("/run/record/savedTo").asText());
+        assertEquals(60, report().at("/run/record/frames").asLong());
+        assertFalse(report().at("/run/record/anchored").asBoolean());
+        assertTrue(report().at("/run/replay/playedFrom").isNull(), "it played nothing");
+
+        play("--play", take.toString());
+
+        assertEquals(take.toString(), report().at("/run/replay/playedFrom").asText());
+        assertEquals(60, report().at("/run/replay/frames").asLong());
+        assertTrue(report().at("/run/record/savedTo").isNull(), "and it recorded nothing");
+    }
+
+    /**
+     * The REPL writes its own file, so the report has to name that one rather than the flag that was
+     * never given.
+     */
+    @Test
+    void aMovieStoppedInTheReplIsNamedByTheReport() throws Exception {
+        var take = out.resolve("from-the-repl.mnm");
+        var script = Files.writeString(out.resolve("session.txt"),
+                "record start\nrun 45\nrecord stop " + take + "\nquit\n");
+
+        run("--script", script.toString());
+
+        assertEquals(take.toString(), report().at("/run/record/savedTo").asText());
+        assertEquals(45, report().at("/run/record/frames").asLong());
+    }
+
     private static byte[] patterned(final int length) {
         var bytes = new byte[length];
 

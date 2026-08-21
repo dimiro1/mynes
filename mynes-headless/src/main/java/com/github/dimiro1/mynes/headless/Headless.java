@@ -5,6 +5,8 @@ import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.patch.InvalidPatchException;
 import com.github.dimiro1.mynes.state.BatteryRAM;
+import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.palette.Palettes;
 
@@ -15,6 +17,7 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -69,9 +72,10 @@ public final class Headless {
 
         try {
             return runCartridge(options);
-        } catch (UsageException | SaveStateException e) {
+        } catch (UsageException | SaveStateException | MovieException e) {
             // A save state that will not load is a mistake on the command line in every sense that
-            // matters to a script: the file named was the wrong one. No sixth exit code for it.
+            // matters to a script: the file named was the wrong one. A movie that will not play is
+            // the same mistake. No sixth exit code for either.
             System.err.println(e.getMessage());
             return EXIT_USAGE;
         } catch (IOException e) {
@@ -126,6 +130,17 @@ public final class Headless {
         var region = options.regionFor(cart);
         var palette = options.paletteFor(region);
 
+        // Before the machine exists, because a movie is checked from top to bottom without one --
+        // so a file that is not a movie, or is damaged, or is from a later build, stops the run
+        // rather than half-playing it. Which cartridge it belongs to is Session.beginReplay's
+        // question, and is asked below.
+        var movie = options.play() == null ? null : Movie.read(options.play());
+
+        // How long a movie is cannot be known while the command line is being read, so this is
+        // where --frames finally means something. Naming one explicitly still wins: running on past
+        // the end with nothing held is how to see what the game does when the player stops playing.
+        var frames = movie != null && !options.framesSet() ? movie.frameCount() : options.frames();
+
         if (cart.timing() == Cart.Timing.DENDY && options.region() == null) {
             logger.log(Level.WARNING, options.rom().getFileName()
                     + " says Dendy, which is not modelled; running it as PAL");
@@ -134,7 +149,7 @@ public final class Headless {
         logger.log(Level.INFO, "running " + options.rom().getFileName()
                 + ", mapper " + cart.mapperNumber()
                 + ", " + region.label()
-                + ", " + options.frames() + " frames");
+                + ", " + frames + " frames");
 
         Files.createDirectories(options.outDir());
 
@@ -157,7 +172,14 @@ public final class Headless {
             // And a Game Genie is not machine state either, for the same reason and one more: the
             // cartridge it is plugged into is untouched, so a state taken with codes in has nothing
             // in it to say so.
-            for (var code : options.genie()) {
+            //
+            // A replay takes them from the movie rather than from the command line, which is the
+            // whole reason a movie carries them: the cartridge a code was played against is byte
+            // for byte the cartridge it was not, so nothing else in the file could say so. --genie
+            // and --play refuse each other, so these two are never both non-empty.
+            var codes = movie != null ? movie.genie() : options.genie();
+
+            for (var code : codes) {
                 var replaced = session.genie().add(code);
 
                 if (replaced != null) {
@@ -166,8 +188,8 @@ public final class Headless {
                 }
             }
 
-            if (!options.genie().isEmpty()) {
-                logger.log(Level.INFO, "put " + options.genie().size() + " Game Genie codes in;"
+            if (!codes.isEmpty()) {
+                logger.log(Level.INFO, "put " + codes.size() + " Game Genie codes in;"
                         + " the cartridge is unchanged, so run.genie rather than cart.sha256 is"
                         + " what tells this run from a plain one");
             }
@@ -192,11 +214,52 @@ public final class Headless {
                         "started from " + options.loadState() + ", at frame " + session.frame());
             }
 
+            // The other way of starting somewhere, and refused alongside --load-state rather than
+            // ordered against it: a movie already says where it begins.
+            if (movie != null) {
+                session.beginReplay(movie);
+                logger.log(Level.INFO, "playing " + options.play() + ", "
+                        + movie.frameCount() + " frames"
+                        + (movie.anchored() ? " from a state at frame " + movie.anchorFrame()
+                        : " from power on"));
+            }
+
+            // Last, so the first frame it writes down is the first frame that runs. A movie that
+            // carries no state is only honest when there is nothing to carry: --load-state has put
+            // the machine somewhere, and --sram-in has filled a battery a movie has no way to hold.
+            if (options.record() != null) {
+                session.startRecording(options.loadState() == null && options.sramIn() == null);
+            }
+
             var outcome = options.interactive()
                     ? interactive(options, session)
-                    : oneShot(options, session);
+                    : oneShot(options, session, frames, movie);
 
+            // Read before the movie is written, so what the report calls the run is the run and not
+            // the few milliseconds of filing that follow it.
             var wallClockMillis = (System.nanoTime() - startedNanos) / 1_000_000;
+
+            var recorded = outcome.recorded();
+            var recordedTo = outcome.recordedTo();
+
+            if (session.recording()) {
+                // Still running when the session ended, which is the ordinary case for --record and
+                // the forgetful one for a REPL that never said "record stop".
+                recorded = session.stopRecording();
+
+                if (options.record() != null) {
+                    recorded.write(options.record());
+                    recordedTo = options.record();
+
+                    logger.log(Level.INFO, "wrote a " + recorded.frameCount()
+                            + " frame movie to " + options.record());
+                } else {
+                    logger.log(Level.WARNING, "a recording of " + recorded.frameCount()
+                            + " frames was still running and nowhere was named to write it to,"
+                            + " so it was dropped");
+                    recorded = null;
+                }
+            }
 
             if (options.saveState() != null) {
                 session.saveState(options.saveState());
@@ -235,6 +298,9 @@ public final class Headless {
                             outcome.screenshots(),
                             dumps,
                             expectations,
+                            recorded,
+                            recordedTo,
+                            movie,
                             exitCode));
 
             publish(options, report);
@@ -249,9 +315,18 @@ public final class Headless {
 
     /**
      * What the run itself produced, before anything is asked of it.
+     *
+     * @param recorded   a movie the session itself wrote, which only an interactive one can do --
+     *                   {@code record stop PATH} is a command. Null otherwise, including for the
+     *                   ordinary {@code --record} case, which is finished off after the run.
+     * @param recordedTo where that went.
      */
     private record Outcome(
-            long frames, Report.StoppedBecause stoppedBecause, List<Long> screenshots) {
+            long frames,
+            Report.StoppedBecause stoppedBecause,
+            List<Long> screenshots,
+            Movie recorded,
+            Path recordedTo) {
     }
 
     /**
@@ -287,23 +362,40 @@ public final class Headless {
     }
 
     /**
-     * Plays the schedule.
+     * Plays the schedule, or the movie.
+     *
+     * @param frames how many to run, which is the movie's own length when there is one and nobody
+     *               named a number.
+     * @param movie  the movie to play, or null to walk {@code --input} and {@code --reset-at}.
      */
-    private static Outcome oneShot(final Options options, final Session session)
+    private static Outcome oneShot(
+            final Options options, final Session session, final long frames, final Movie movie)
             throws IOException {
         var resets = new HashSet<>(options.resetAt());
         var screenshots = new ArrayList<Long>();
         var deadline = System.nanoTime() + options.timeout().toNanos();
         var stoppedBecause = Report.StoppedBecause.FRAMES;
 
-        for (var frame = 1L; frame <= options.frames(); frame++) {
-            if (resets.contains(frame)) {
-                session.reset();
+        for (var frame = 1L; frame <= frames; frame++) {
+            if (movie != null) {
+                // Counted from the movie's own start rather than from the machine's, which are the
+                // same number only for a movie that begins at power on. Reset first, then the
+                // buttons, then the frame: the order a recorder wrote them down in.
+                if (movie.resetsAt(frame - 1)) {
+                    session.reset();
+                }
+
+                session.setButtons(movie.buttonsAt(frame - 1));
+            } else {
+                if (resets.contains(frame)) {
+                    session.reset();
+                }
+
+                // Set before the frame is emulated rather than after, so that a one frame press is
+                // held for the whole of the frame a game might read the pad anywhere in.
+                session.setButtons(options.input().buttonsAt(frame));
             }
 
-            // Set before the frame is emulated rather than after, so that a one frame press is
-            // held for the whole of the frame a game might read the pad anywhere in.
-            session.setButtons(options.input().buttonsAt(frame));
             session.advanceFrame();
 
             if (options.wantsScreenshotAt(frame)) {
@@ -313,7 +405,7 @@ public final class Headless {
 
             if (System.nanoTime() - deadline >= 0) {
                 stoppedBecause = Report.StoppedBecause.TIMEOUT;
-                logger.log(Level.WARNING, "timed out at frame " + frame + " of " + options.frames());
+                logger.log(Level.WARNING, "timed out at frame " + frame + " of " + frames);
                 break;
             }
         }
@@ -327,7 +419,8 @@ public final class Headless {
 
         screenshots.sort(Long::compare);
 
-        return new Outcome(session.frame(), stoppedBecause, List.copyOf(screenshots));
+        return new Outcome(
+                session.frame(), stoppedBecause, List.copyOf(screenshots), null, null);
     }
 
     /**
@@ -340,8 +433,14 @@ public final class Headless {
                 : new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
 
             var repl = new Repl(session, options, in, System.out, wantsText(options));
+            var frames = repl.run();
 
-            return new Outcome(repl.run(), Report.StoppedBecause.QUIT, List.of());
+            return new Outcome(
+                    frames,
+                    Report.StoppedBecause.QUIT,
+                    List.of(),
+                    repl.recordedMovie(),
+                    repl.recordedPath());
         }
     }
 
