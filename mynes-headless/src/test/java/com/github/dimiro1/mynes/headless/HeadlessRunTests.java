@@ -513,6 +513,96 @@ class HeadlessRunTests {
         assertEquals(2, run("--hack", "infinite-lives"));
     }
 
+    @Test
+    void theReportSaysHowManyLinesWereAdded() throws Exception {
+        run();
+
+        assertEquals(0, report().at("/run/hacks/overclock/beforeNmi").asInt(),
+                "always present, so two reports compare key for key");
+        assertEquals(0, report().at("/run/hacks/overclock/afterNmi").asInt());
+
+        run("--hack", "overclock=30+10");
+
+        assertEquals(30, report().at("/run/hacks/overclock/beforeNmi").asInt());
+        assertEquals(10, report().at("/run/hacks/overclock/afterNmi").asInt());
+    }
+
+    /**
+     * The whole of what the hack buys: cycles. 30 scanlines is 341 dots each and three dots to a
+     * cycle, so a frame is 3410 CPU cycles longer and sixty of them are 204600.
+     */
+    @Test
+    void anOverclockedFrameCostsTheCpuMoreCycles() throws Exception {
+        run();
+
+        var plain = report().at("/run/cpuCycles").asLong();
+
+        run("--hack", "overclock=30");
+
+        assertEquals(plain + 60L * 30 * 341 / 3, report().at("/run/cpuCycles").asLong(), 2.0);
+    }
+
+    /**
+     * And the whole of what it does not buy. The APU stands still through the extra lines, so a
+     * frame is a hardware frame's worth of sound however long the program had in it -- which is what
+     * keeps the music at pitch and what lets the desktop go on pacing itself on the sound card.
+     */
+    @Test
+    void anOverclockedRunStillMakesAHardwareFramesWorthOfSound() throws Exception {
+        run("--audio");
+
+        var plain = report().at("/audio/samples").asLong();
+
+        run("--audio", "--hack", "overclock=131");
+
+        // Within one: where the decimator's fractional cycle count happens to sit when the run
+        // stops decides whether the last sample was finished.
+        assertEquals(plain, report().at("/audio/samples").asLong(), 1.0,
+                "an overclocked frame is a hardware frame's worth of sound");
+        assertTrue(plain > 0, "and there was some sound to compare in the first place");
+    }
+
+    /**
+     * The APU's counter keeps moving even while the chip does nothing, because its parity is what
+     * {@code CPUBus.isGetCycle} reads and the MMU asks the same question of the CPU's.
+     */
+    @Test
+    void theTwoCycleCountersStillAgree() throws Exception {
+        run("--hack", "overclock=131+40");
+
+        assertEquals(
+                report().at("/run/cpuCycles").asLong(),
+                report().at("/run/apuCycles").asLong());
+    }
+
+    /**
+     * nestest keeps up with its frame comfortably, so the extra cycles have nothing to do with them
+     * -- which makes it the right cartridge for showing that the lines on their own change no
+     * pixels. {@code OverclockRunTests} is where a game that cannot keep up is run.
+     */
+    @Test
+    void anOverclockOnAGameThatKeepsUpLeavesThePictureExactlyAsItWas() throws Exception {
+        run();
+
+        var withoutIt = report().at("/video/finalFrame/hash").asText();
+
+        run("--hack", "overclock=131");
+
+        assertEquals(withoutIt, report().at("/video/finalFrame/hash").asText());
+    }
+
+    @Test
+    void anOverclockSetInTheReplIsInTheReport() throws Exception {
+        var script = Files.writeString(
+                out.resolve("overclock.txt"), "run 5\nhack overclock 40 20\nquit\n");
+
+        run("--script", script.toString());
+
+        assertEquals(40, report().at("/run/hacks/overclock/beforeNmi").asInt(),
+                "nobody put it on the command line, and it is on all the same");
+        assertEquals(20, report().at("/run/hacks/overclock/afterNmi").asInt());
+    }
+
     /**
      * The report reads the hacks back off the machine rather than off the command line, so a
      * session that switched one on half way through is described as it ended.

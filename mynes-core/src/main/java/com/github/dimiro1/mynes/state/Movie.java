@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.state;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
@@ -40,8 +41,10 @@ import java.util.zip.ZipException;
  * <p>
  * Those outside facts are the ones worth naming, because getting any of them wrong is a replay that
  * quietly diverges rather than one that refuses: the ROM's digest (of the <em>patched</em> image, so
- * a romhack is pinned for free), the region, and the Game Genie codes -- which are the sharp case,
- * since a cheated cartridge is byte for byte the honest one and nothing else in a file would say so.
+ * a romhack is pinned for free), the region, the Game Genie codes -- which are the sharp case, since
+ * a cheated cartridge is byte for byte the honest one and nothing else in a file would say so -- and
+ * the {@link Overclock}, which is here for the same reason and one more: unlike every other hack it
+ * changes how much of its work the game gets through in a frame.
  *
  * <h2>Rewinds are not in it</h2>
  *
@@ -154,6 +157,17 @@ public final class Movie {
      */
     private static final String TAG_GENIE = "GENI";
 
+    /**
+     * How many idle scanlines the machine was being given a frame: two u16s, before the NMI and
+     * after it. Absent altogether when there were none, which is the ordinary case.
+     * <p>
+     * In a movie for the reason the codes are, and more sharply. The overclock changes what the game
+     * <em>does</em> -- a main loop that fits in a longer frame runs a different number of times --
+     * so a take recorded with it and replayed without it diverges within a second, and nothing else
+     * in the file would say why.
+     */
+    private static final String TAG_OVERCLOCK = "OVCK";
+
     private static final int TAG_BYTES = 4;
 
     /**
@@ -185,6 +199,8 @@ public final class Movie {
     private final long[] resets;
 
     private final List<GameGenieCode> genie;
+
+    private final Overclock overclock;
 
     /**
      * What a file says about itself, without inflating it.
@@ -222,7 +238,8 @@ public final class Movie {
             final byte[] player1,
             final byte[] player2,
             final long[] resets,
-            final List<GameGenieCode> genie
+            final List<GameGenieCode> genie,
+            final Overclock overclock
     ) {
         this.header = header;
         this.anchor = anchor;
@@ -230,6 +247,7 @@ public final class Movie {
         this.player2 = player2;
         this.resets = resets;
         this.genie = List.copyOf(genie);
+        this.overclock = overclock;
     }
 
     public Header header() {
@@ -298,6 +316,16 @@ public final class Movie {
      */
     public List<GameGenieCode> genie() {
         return genie;
+    }
+
+    /**
+     * How many idle scanlines a frame the machine was being given, and {@link Overclock#NONE} for a
+     * take played on the hardware's own timing. A replay has to put this back for a stronger reason
+     * than the codes: the overclock decides how much of its work the game gets through in a frame,
+     * so a replay at the wrong setting is a replay of a different game.
+     */
+    public Overclock overclock() {
+        return overclock;
     }
 
     /**
@@ -430,6 +458,15 @@ public final class Movie {
             chunk(body, TAG_GENIE, codes.toByteArray());
         }
 
+        if (!overclock.isNone()) {
+            var lines = new byte[4];
+
+            SaveState.putShort(lines, 0, overclock.beforeNmi());
+            SaveState.putShort(lines, 2, overclock.afterNmi());
+
+            chunk(body, TAG_OVERCLOCK, lines);
+        }
+
         return body.toByteArray();
     }
 
@@ -533,7 +570,8 @@ public final class Movie {
                 player1,
                 header.ports() >= 2 ? chunks.get(TAG_CONTROLLER2) : null,
                 resets(chunks.get(TAG_RESETS), header.frameCount()),
-                codes(chunks.get(TAG_GENIE)));
+                codes(chunks.get(TAG_GENIE)),
+                overclock(chunks.get(TAG_OVERCLOCK)));
     }
 
     /**
@@ -703,5 +741,30 @@ public final class Movie {
         }
 
         return List.copyOf(codes);
+    }
+
+    /**
+     * The pinned overclock, checked here rather than on the way into a machine, for the reason the
+     * codes are: a file naming a line count no machine will accept is a damaged movie, and saying so
+     * beats a replay that quietly ran on the hardware's timing instead.
+     */
+    private static Overclock overclock(final byte[] payload) {
+        if (payload == null || payload.length == 0) {
+            return Overclock.NONE;
+        }
+
+        if (payload.length != 4) {
+            throw new MovieException(
+                    "that movie is damaged: its overclock is " + payload.length
+                            + " bytes, where a line count before the NMI and one after it are"
+                            + " four.");
+        }
+
+        try {
+            return new Overclock(
+                    SaveState.readShort(payload, 0), SaveState.readShort(payload, 2));
+        } catch (IllegalArgumentException e) {
+            throw new MovieException("that movie is damaged: " + e.getMessage(), e);
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Cart;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
@@ -45,6 +46,8 @@ import java.util.TreeSet;
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
  * @param hacks            which of the things the hardware does not do to switch on.
+ * @param overclock        how many idle scanlines a frame to add, which is the one hack that takes
+ *                         a number rather than a yes. {@link Overclock#NONE} unless one was named.
  * @param genie            Game Genie codes to put in the cartridge slot, already decoded.
  * @param dumps            which memories to write out when the run ends.
  * @param loadState        a save state to start from instead of power on, or null.
@@ -86,6 +89,7 @@ public record Options(
         NESPalette palette,
         boolean audio,
         Set<String> hacks,
+        Overclock overclock,
         List<GameGenieCode> genie,
         List<String> dumps,
         Path loadState,
@@ -122,9 +126,19 @@ public record Options(
     public static final String UNLIMITED_SPRITES = "unlimited-sprites";
 
     /**
+     * Extra idle scanlines a frame, so that a game whose main loop overruns stops dropping frames.
+     * The one hack that takes a number: {@code --hack overclock=131}, or {@code =131+20} to put some
+     * of them after the NMI as well.
+     * <p>
+     * Unlike {@link #UNLIMITED_SPRITES} this one changes the machine's timing and so what the game
+     * does, which is why {@code --play} refuses it and a movie carries its own.
+     */
+    public static final String OVERCLOCK = "overclock";
+
+    /**
      * Every hack there is, which is also what an unknown {@code --hack} is answered with.
      */
-    public static final Set<String> HACKS = Set.of(UNLIMITED_SPRITES);
+    public static final Set<String> HACKS = Set.of(UNLIMITED_SPRITES, OVERCLOCK);
 
     /**
      * Ten seconds of emulated time, which is about a second of real time and long enough for most
@@ -246,6 +260,27 @@ public record Options(
                                                           game can see changes: the overflow flag
                                                           still rises and the cartridge sees the
                                                           same address bus.
+                                      overclock=N[+M]     Give the program N extra idle scanlines a
+                                                          frame before the NMI, and M after it, so
+                                                          that a game whose main loop overruns its
+                                                          frame stops dropping one. A line is about
+                                                          113.67 CPU cycles on NTSC and 106.56 on
+                                                          PAL; 0 to 1000 each, and 0 is off.
+                                                          --hack overclock=131 is half an NTSC
+                                                          frame again.
+                                                          Unlike the one above this changes the
+                                                          machine's timing and so what the game
+                                                          does, which makes an overclocked run and
+                                                          a plain one two different games rather
+                                                          than two views of one. Reach for the
+                                                          before-NMI number: extra lines after the
+                                                          NMI move the picture relative to it, and
+                                                          break code that counts cycles down to a
+                                                          mid-screen split. The picture is drawn
+                                                          exactly as the hardware draws it either
+                                                          way, and the sound is a hardware frame's
+                                                          worth, since the APU stands still through
+                                                          the extra lines.
 
             Game Genie, which is a thing the console did do
               --genie CODE[,CODE..] Put a code in the cartridge slot. Repeatable. Six letters or
@@ -303,8 +338,11 @@ public record Options(
                                     with nothing held down, which is how to see what the game does
                                     when the player stops playing.
                                     The movie is the input, so --play refuses --record, --input,
-                                    --input-file, --reset-at, --genie, --load-state, --sram-in and
-                                    --interactive rather than letting one of them quietly win.
+                                    --input-file, --reset-at, --genie, --hack overclock,
+                                    --load-state, --sram-in and --interactive rather than letting
+                                    one of them quietly win. --hack unlimited-sprites still
+                                    combines with it, being a change to the picture and to nothing
+                                    the replay depends on.
                                     It has to be the same cartridge and the same region; anything
                                     else exits 2. run.replay in the report says what was played.
 
@@ -363,6 +401,7 @@ public record Options(
         NESPalette palette = null;
         var audio = false;
         var hacks = new LinkedHashSet<String>();
+        var overclock = Overclock.NONE;
         var genie = new ArrayList<GameGenieCode>();
         var dumps = new LinkedHashSet<String>();
         Path loadState = null;
@@ -411,7 +450,8 @@ public record Options(
                 case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--audio" -> audio = true;
-                case "--hack" -> parseHacks(value(args, ++i, flag), hacks);
+                case "--hack" -> overclock =
+                        parseHacks(value(args, ++i, flag), hacks, overclock);
                 case "--genie" -> parseGenie(value(args, ++i, flag), genie);
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
                 case "--load-state" -> loadState = Path.of(value(args, ++i, flag));
@@ -452,6 +492,9 @@ public record Options(
                     "the movie is the input");
             refuseWithPlay(!resetAt.isEmpty(), "--reset-at",
                     "the movie carries the frames Reset was pressed at");
+            refuseWithPlay(!overclock.isNone(), "--hack overclock",
+                    "the movie carries the overclock it was recorded with, and running it with"
+                            + " another would be a different run");
             refuseWithPlay(!genie.isEmpty(), "--genie",
                     "the movie carries the codes it was recorded with, and putting others in would"
                             + " be a different run");
@@ -488,6 +531,7 @@ public record Options(
                 palette,
                 audio,
                 Set.copyOf(hacks),
+                overclock,
                 List.copyOf(genie),
                 List.copyOf(dumps),
                 loadState,
@@ -660,8 +704,20 @@ public record Options(
      * An unknown name is refused rather than ignored, for the reason a misspelled palette is: a run
      * that quietly happened without the hack somebody asked for would look like it had worked, and
      * the picture is the only place the difference shows.
+     * <p>
+     * One of them takes a value and the rest do not, which is why a token is split on its first
+     * {@code =} before the name is looked up: {@code overclock} without a line count is a wish
+     * nobody can act on, and {@code unlimited-sprites=3} is somebody with the wrong idea of what
+     * it does. Both are refused by name rather than by shape.
+     *
+     * @param overclock what the overclock was before this list, so that several {@code --hack}
+     *                  flags accumulate rather than the last one wiping the rest.
+     * @return what it is after it.
      */
-    private static void parseHacks(final String text, final Set<String> hacks) {
+    private static Overclock parseHacks(
+            final String text, final Set<String> hacks, final Overclock overclock) {
+        var result = overclock;
+
         for (var token : text.split(",")) {
             var trimmed = token.trim().toLowerCase();
 
@@ -669,13 +725,64 @@ public record Options(
                 continue;
             }
 
-            if (!HACKS.contains(trimmed)) {
+            var equals = trimmed.indexOf('=');
+            var name = equals < 0 ? trimmed : trimmed.substring(0, equals);
+            var value = equals < 0 ? null : trimmed.substring(equals + 1);
+
+            if (!HACKS.contains(name)) {
                 throw new UsageException(
-                        "--hack does not know \"" + trimmed + "\". It knows "
+                        "--hack does not know \"" + name + "\". It knows "
                                 + String.join(", ", new TreeSet<>(HACKS)) + ".");
             }
 
-            hacks.add(trimmed);
+            if (OVERCLOCK.equals(name)) {
+                if (value == null) {
+                    throw new UsageException(
+                            "--hack overclock wants a number of scanlines, as in"
+                                    + " \"--hack overclock=131\", or \"=131+20\" to put some of"
+                                    + " them after the NMI as well.");
+                }
+
+                result = parseOverclock(value);
+            } else if (value != null) {
+                throw new UsageException(
+                        "--hack " + name + " is switched on by naming it and takes no value, so"
+                                + " \"=" + value + "\" is not something it can do.");
+            }
+
+            hacks.add(name);
+        }
+
+        return result;
+    }
+
+    /**
+     * Reads {@code LINES} or {@code LINES+MORE}: how many idle scanlines to add before the NMI, and
+     * how many after it.
+     * <p>
+     * Two numbers rather than one because they are not interchangeable -- extra post-render lines
+     * change nothing a game can observe, where extra vblank lines move the picture relative to the
+     * NMI -- and the shorter form is the one to reach for. {@code 0} is the hardware, and is how to
+     * write "off" in a script that builds its own command line.
+     */
+    private static Overclock parseOverclock(final String text) {
+        var plus = text.indexOf('+');
+        var before = plus < 0 ? text : text.substring(0, plus);
+        var after = plus < 0 ? "0" : text.substring(plus + 1);
+
+        try {
+            return new Overclock(scanlines(before), scanlines(after));
+        } catch (IllegalArgumentException e) {
+            throw new UsageException("--hack overclock: " + e.getMessage());
+        }
+    }
+
+    private static int scanlines(final String text) {
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            throw new UsageException(
+                    "--hack overclock wants a number of scanlines, not \"" + text + "\".");
         }
     }
 

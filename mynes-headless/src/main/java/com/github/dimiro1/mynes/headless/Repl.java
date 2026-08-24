@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
@@ -17,6 +18,7 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.TreeSet;
 
 /**
  * The machine, driven a command at a time.
@@ -54,6 +56,9 @@ public final class Repl {
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
             hack NAME on|off           unlimited-sprites, which --hack also switches on
+            hack overclock LINES [MORE]
+                                       extra scanlines a frame before the NMI, and after it; off
+                                       takes them away
             genie [CODE]               list the Game Genie codes, or put one in
             ungenie CODE               take one out
             genie clear                take them all out
@@ -518,40 +523,115 @@ public final class Repl {
     }
 
     /**
-     * Switches one of the things the console does not do on or off, mid-session.
+     * Switches one of the things the console does not do on, mid-session -- or, for the one that
+     * takes a number, sets how much of it.
      * <p>
      * Worth having as a command rather than only as a flag because the difference a hack makes is
      * something to look at: run to the frame the sprites flicker on, turn it on, take a screenshot,
-     * turn it off, take another. Nothing about the machine changes, so the two pictures are of the
-     * same moment.
+     * turn it off, take another. Nothing about the machine changes for that one, so the two pictures
+     * are of the same moment.
+     * <p>
+     * The overclock is not like that, and the command is here for a different reason. It changes the
+     * machine's timing, so the frame after it is set is not the frame that would have been drawn --
+     * what a session is for is watching a game that lags stop lagging, at whatever setting it takes.
      */
     private void hack(final String[] words) {
-        if (words.length < 3) {
+        if (words.length < 2) {
             throw new UsageException(
-                    "hack wants a name and on or off, as in \"hack "
-                            + Options.UNLIMITED_SPRITES + " on\".");
+                    "hack wants a name, as in \"hack " + Options.UNLIMITED_SPRITES + " on\".");
         }
 
         var name = words[1].toLowerCase(Locale.ROOT);
+        var ppu = session.nes().getPPU();
 
-        var on = switch (words[2].toLowerCase(Locale.ROOT)) {
+        // The name first, and the rest of the line read according to it: one of these is a switch
+        // and the other takes a number of scanlines, so a shape checked before the name was known
+        // would refuse one of the two forms whichever shape it insisted on.
+        switch (name) {
+            case Options.UNLIMITED_SPRITES -> {
+                ppu.setUnlimitedSprites(onOrOff(words));
+
+                reply("hack", node -> {
+                    node.put("hack", name);
+                    node.put("on", ppu.isUnlimitedSprites());
+                });
+            }
+            case Options.OVERCLOCK -> {
+                // A movie pins the overclock when it starts, for the reason it pins the codes and
+                // a sharper one: this decides how much of its work the game gets through in a
+                // frame, so a file naming one setting whose frames were played at another cannot
+                // be replayed and would not say so.
+                if (session.recording()) {
+                    throw new UsageException(
+                            "a movie is being recorded, and it pinned the overclock when it"
+                                    + " started. Stop the recording first, or set the overclock"
+                                    + " before starting one.");
+                }
+
+                ppu.setOverclock(overclock(words));
+
+                reply("hack", node -> {
+                    node.put("hack", name);
+                    node.put("on", !ppu.getOverclock().isNone());
+                    node.put("beforeNmi", ppu.getOverclock().beforeNmi());
+                    node.put("afterNmi", ppu.getOverclock().afterNmi());
+                });
+            }
+            default -> throw new UsageException(
+                    "hack does not know \"" + words[1] + "\". It knows "
+                            + String.join(", ", new TreeSet<>(Options.HACKS)) + ".");
+        }
+    }
+
+    /**
+     * The two-position form: {@code hack NAME on|off}.
+     */
+    private static boolean onOrOff(final String[] words) {
+        if (words.length < 3) {
+            throw new UsageException(
+                    "hack " + words[1] + " is switched on or off, as in \"hack " + words[1]
+                            + " on\".");
+        }
+
+        return switch (words[2].toLowerCase(Locale.ROOT)) {
             case "on" -> true;
             case "off" -> false;
             default -> throw new UsageException(
-                    "hack is switched on or off, not \"" + words[2] + "\".");
+                    "hack " + words[1] + " is switched on or off, not \"" + words[2] + "\".");
         };
+    }
 
-        switch (name) {
-            case Options.UNLIMITED_SPRITES -> session.nes().getPPU().setUnlimitedSprites(on);
-            default -> throw new UsageException(
-                    "hack does not know \"" + words[1] + "\". It knows "
-                            + String.join(", ", Options.HACKS) + ".");
+    /**
+     * The form that takes a number: {@code hack overclock LINES [MORE]}, or {@code off}.
+     * <p>
+     * {@code on} is not one of the answers, and that is the point of spelling this out: how many
+     * lines is the whole of the question, and a bare "on" is somebody who has not been asked it yet.
+     */
+    private static Overclock overclock(final String[] words) {
+        if (words.length < 3) {
+            throw new UsageException(
+                    "hack overclock wants a number of scanlines, as in \"hack overclock 131\","
+                            + " or \"hack overclock off\" to take them away.");
         }
 
-        reply("hack", node -> {
-            node.put("hack", name);
-            node.put("on", on);
-        });
+        if ("off".equalsIgnoreCase(words[2])) {
+            return Overclock.NONE;
+        }
+
+        try {
+            return new Overclock(scanlines(words[2]), words.length > 3 ? scanlines(words[3]) : 0);
+        } catch (IllegalArgumentException e) {
+            throw new UsageException("hack overclock: " + e.getMessage());
+        }
+    }
+
+    private static int scanlines(final String text) {
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            throw new UsageException(
+                    "hack overclock wants a number of scanlines, not \"" + text + "\".");
+        }
     }
 
     /**

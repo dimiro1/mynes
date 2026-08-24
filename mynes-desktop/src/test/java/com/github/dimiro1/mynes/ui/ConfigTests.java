@@ -304,6 +304,44 @@ class ConfigTests {
         void anythingElseLeavesItOff() throws IOException {
             assertFalse(Config.load(write("hacks.unlimited-sprites=yes\n")).unlimitedSprites());
         }
+
+        @Test
+        void aMissingOverclockLeavesTheFrameAsLongAsItWas() throws IOException {
+            assertEquals(
+                    OverclockSetting.OFF,
+                    Config.load(write("video.palette=nesdev\n")).overclock());
+        }
+
+        @Test
+        void aPercentageNamesItsPreset() throws IOException {
+            assertEquals(
+                    OverclockSetting.PLUS_50,
+                    Config.load(write("hacks.overclock=50\n")).overclock());
+            assertEquals(
+                    OverclockSetting.PLUS_200,
+                    Config.load(write("hacks.overclock= 200 \n")).overclock());
+        }
+
+        @Test
+        void aPercentageNobodyOffersFallsBackToOff() throws IOException {
+            // The mildest way to be wrong: the machine the cartridge was written for, which is what
+            // somebody who had not thought about it would have got anyway.
+            assertEquals(
+                    OverclockSetting.OFF,
+                    Config.load(write("hacks.overclock=lots\n")).overclock());
+            assertEquals(
+                    OverclockSetting.OFF,
+                    Config.load(write("hacks.overclock=33\n")).overclock());
+        }
+
+        @Test
+        void anOverclockSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setOverclock(OverclockSetting.PLUS_100);
+            config.save(config());
+
+            assertEquals(OverclockSetting.PLUS_100, Config.load(config()).overclock());
+        }
     }
 
     @Nested
@@ -523,6 +561,7 @@ class ConfigTests {
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
             config.setUnlimitedSprites(true);
+            config.setOverclock(OverclockSetting.PLUS_50);
             config.setRewindSeconds(45);
             config.setRewindKey(KeyEvent.VK_BACK_SPACE);
             config.save(config());
@@ -537,6 +576,7 @@ class ConfigTests {
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("hacks.unlimited-sprites=true"), text);
+            assertTrue(text.contains("hacks.overclock=50"), text);
             assertTrue(text.contains("rewind.seconds=45"), text);
             assertTrue(text.contains("rewind.key=VK_BACK_SPACE"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);

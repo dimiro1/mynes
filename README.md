@@ -169,7 +169,15 @@ chip would have dropped, so a scanline holding more than eight of them stops fli
 cannot tell, since the overflow flag still rises and the cartridge still sees the same address bus.
 It is off unless it is ticked, and the tick is remembered.
 
-**Game Genie codes**, from **Hacks > Game Genie...**, which is the other thing in that menu and the
+**Overclock** is the other one, and it is not that kind of hack: it gives the game extra idle
+scanlines a frame — +25%, +50%, +100% or +200% — so that a main loop which overruns its frame stops
+dropping one, which is what the every-other-frame stutter in Super Mario Bros. 3 and Gradius under
+load actually is. The picture is drawn exactly as the hardware draws it, and the music keeps its
+pitch and tempo, because the sound chip stands still through the extra lines. But the game does get
+more done between one frame and the next, so this is not the game as it shipped. It is remembered
+like the tick above, and it is greyed out while a movie is recording or playing.
+
+**Game Genie codes**, from **Hacks > Game Genie...**, which is the last thing in that menu and the
 one thing in it the console really did do. Six letters or eight, from the sixteen a code is spelled
 with; eight-letter codes carry a byte the cartridge has to answer with before they fire, which is
 what pins one to a single bank. Nothing is patched — the device sat between the cartridge and the
@@ -333,22 +341,26 @@ seconds to start up, the jar about a third of one.
   each one held, and `cart.sha256` is the digest of the patched image rather than the file on disk —
   a patch that turns out to hold no records is one cut against a different dump of the game.
 - **`--hack NAME`** switches on one of the things the console does not do, all of which are off
-  otherwise. There is one so far, `unlimited-sprites`, which draws the sprites the chip would have
-  dropped so that a scanline holding more than eight of them stops flickering. Nothing a game can
-  observe changes — the overflow flag still rises and the cartridge sees the same address bus — but
-  the picture is not the one the hardware would have produced, so `run.hacks` in the report is part
-  of what to check before diffing two of them.
+  otherwise, and `run.hacks` in the report is part of what to check before diffing two runs. There
+  are two. `unlimited-sprites` draws the sprites the chip would have dropped so that a scanline
+  holding more than eight of them stops flickering; nothing a game can observe changes — the
+  overflow flag still rises and the cartridge sees the same address bus — but the picture is not the
+  one the hardware would have produced. `overclock=N[+M]` adds N idle scanlines a frame before the
+  NMI and M after it, which is about 113.67 CPU cycles each on NTSC, so a game whose main loop
+  overruns its frame stops dropping one. That one is a *timing* hack: the picture is the hardware's
+  and so is the sound, but the game gets more done between frames, which makes an overclocked run
+  and a plain one two different games rather than two views of one.
 - **`--genie CODE`** puts a Game Genie code in the cartridge slot. Repeatable, and comma separated.
   Unlike `--patch` the cartridge is not modified at all — the device answered the bus in its place —
   so `cart.sha256` is the plain one and `run.genie` is the only thing in the report that tells a
   cheated run from an honest one. Which also means a save state taken with codes in will load into a
   machine with them out, without a word of complaint.
 - **`--record FILE` and `--play FILE`** write and replay a session. `--play` is the input, so it
-  refuses `--input`, `--reset-at`, `--genie`, `--load-state` and the rest of what a movie already
-  says, and it defaults `--frames` to the movie's own length -- ask for more and the run carries on
-  past the end with nothing held down. `run.record` and `run.replay` in the report join the list of
-  things to check before diffing two runs. `record start` and `record stop` are commands in the
-  interactive session as well.
+  refuses `--input`, `--reset-at`, `--genie`, `--hack overclock`, `--load-state` and the rest of
+  what a movie already says, and it defaults `--frames` to the movie's own length -- ask for more
+  and the run carries on past the end with nothing held down. `run.record` and `run.replay` in the
+  report join the list of things to check before diffing two runs. `record start` and `record stop`
+  are commands in the interactive session as well.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
   lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what

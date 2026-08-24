@@ -1,5 +1,5 @@
 Two cartridges copied from mynes-core/src/test/resources, where the originals live alongside the
-readmes and expected-output logs that came with them, one that has no original here, and one with no
+readmes and expected-output logs that came with them, one that has no original here, and two with no
 original anywhere.
 
 They are here rather than reached for across the module boundary because of what these tests do
@@ -55,3 +55,25 @@ change it. Only the first two can drift, and a test stops them.
                                  instruction for instruction through the emulator's own
                                  disassembler rather than by assembling it. Nothing enforces that,
                                  so a change to the program has to be made here as well by hand.
+
+The fifth is the same arrangement for the same reason, and it is a fifth rather than a variation on
+the fourth because the two demonstrate opposite things. Sprite-limit is a picture nothing changes the
+timing of; this is timing nothing changes the picture of. What --hack overclock undoes is a main loop
+overrunning its frame, which shipped games do only under load, in places a test cannot reliably reach
+and only for a handful of frames -- Super Mario Bros. 3 and Gradius are the ones everybody names. So
+this cartridge overruns on purpose and does it every time: its lap of work takes 42500 cycles, which
+is 1.43 NTSC frames, so on the hardware it finishes one lap every two frames and with 131 extra
+scanlines it finishes one a frame.
+
+  overclock/overclock.nes        Written here, no licence to worry about. NROM, 24592 bytes: a game
+                                 whose logic does not fit in a frame, which is what --hack overclock
+                                 gives it room for. It counts frames at $00-$01 and finished laps at
+                                 $02-$03, both sixteen bit, so --dump ram is how to read the result;
+                                 it also recolours the whole screen once a lap, so video.frameChanges
+                                 counts the same thing without a debugger.
+  OverclockROM.java              In this module's test sources, and the assembler, exactly as
+                                 SpriteLimitROM is for the cartridge above. OverclockRunTests asserts
+                                 the two agree and its failure says the command.
+  overclock/overclock.s          The same program for asm6, on the same terms as sprite-limit.s:
+                                 reference, checked through the emulator's own disassembler rather
+                                 than by assembling it, and nothing enforces that.

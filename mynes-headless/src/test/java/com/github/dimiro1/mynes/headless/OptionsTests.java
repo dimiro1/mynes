@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
@@ -223,6 +224,82 @@ class OptionsTests {
     }
 
     @Test
+    void anOverclockIsTakenAsLines() {
+        var options = parse("--rom", "x.nes", "--hack", "overclock=131");
+
+        assertEquals(new Overclock(131, 0), options.overclock());
+        assertEquals(Set.of(Options.OVERCLOCK), options.hacks(),
+                "it is named under --hack like every other one, so run.hacks reports it");
+    }
+
+    @Test
+    void anOverclockTakesLinesAfterTheNmiToo() {
+        assertEquals(
+                new Overclock(131, 20),
+                parse("--rom", "x.nes", "--hack", "overclock=131+20").overclock());
+    }
+
+    @Test
+    void noOverclockIsAskedForUnlessOneIsNamed() {
+        assertEquals(Overclock.NONE, parse("--rom", "x.nes").overclock(),
+                "the console's own frame is the default");
+    }
+
+    /**
+     * The one hack that takes a value, so the one that can be half typed. "overclock" on its own is
+     * a wish nobody can act on -- there is no obvious number of lines to pick -- and a run that
+     * quietly chose one would look like it had worked.
+     */
+    @Test
+    void anOverclockWithoutALineCountIsRejected() {
+        var message = refused("--rom", "x.nes", "--hack", "overclock").getMessage();
+
+        assertTrue(message.contains("scanlines"), message);
+        assertTrue(message.contains("overclock=131"), "and the message should show the form");
+    }
+
+    @Test
+    void anOverclockOutsideTheRangeIsRejected() {
+        assertTrue(refused("--rom", "x.nes", "--hack", "overclock=1001")
+                .getMessage().contains("0 to " + Overclock.MAX_SCANLINES));
+
+        assertTrue(refused("--rom", "x.nes", "--hack", "overclock=-1")
+                .getMessage().contains("0 to " + Overclock.MAX_SCANLINES));
+
+        assertTrue(refused("--rom", "x.nes", "--hack", "overclock=lots")
+                .getMessage().contains("lots"));
+    }
+
+    @Test
+    void zeroLinesIsHowToWriteOffOnACommandLineSomethingElseBuilt() {
+        assertEquals(Overclock.NONE, parse("--rom", "x.nes", "--hack", "overclock=0").overclock());
+    }
+
+    @Test
+    void aHackThatTakesNoValueRefusesOne() {
+        var message = refused("--rom", "x.nes", "--hack", "unlimited-sprites=3").getMessage();
+
+        assertTrue(message.contains("unlimited-sprites"), message);
+    }
+
+    @Test
+    void theHacksShareOneList() {
+        var options = parse("--rom", "x.nes", "--hack", "unlimited-sprites,overclock=30");
+
+        assertEquals(Set.of(Options.UNLIMITED_SPRITES, Options.OVERCLOCK), options.hacks());
+        assertEquals(new Overclock(30, 0), options.overclock());
+    }
+
+    @Test
+    void severalHackFlagsAccumulateRatherThanReplacingEachOther() {
+        var options = parse(
+                "--rom", "x.nes", "--hack", "overclock=30", "--hack", "unlimited-sprites");
+
+        assertEquals(new Overclock(30, 0), options.overclock(),
+                "the second flag said nothing about the overclock, so it kept the first's");
+    }
+
+    @Test
     void noGameGenieCodeIsInUnlessOneIsGiven() {
         assertTrue(parse("--rom", "x.nes").genie().isEmpty(), "the cartridge slot is the default");
     }
@@ -359,6 +436,7 @@ class OptionsTests {
                 List.of("--input", "60:start"),
                 List.of("--reset-at", "100"),
                 List.of("--genie", "SXIOPO"),
+                List.of("--hack", "overclock=131"),
                 List.of("--load-state", "in.mn"),
                 List.of("--sram-in", "in.sav"),
                 List.of("--interactive"));
@@ -373,6 +451,35 @@ class OptionsTests {
                     "the message has to name the flag that was typed: " + refused.getMessage());
             assertTrue(refused.getMessage().contains("--play"));
         }
+    }
+
+    /**
+     * The two hacks are not the same kind of thing to a replay, and this is the difference. The
+     * sprite limit changes only pixels, so a replay with it on is still the recorded session seen
+     * more clearly; the overclock changes how much of its work the game gets through in a frame,
+     * which makes it a different session.
+     */
+    @Test
+    void playRefusesAnOverclockButNotTheOtherHack() {
+        var refused = refused(
+                "--rom", "x.nes", "--play", "take.mnm", "--hack", "overclock=131");
+
+        assertTrue(refused.getMessage().contains("--hack overclock"), refused.getMessage());
+
+        assertEquals(
+                Set.of(Options.UNLIMITED_SPRITES),
+                parse("--rom", "x.nes", "--play", "take.mnm", "--hack", "unlimited-sprites")
+                        .hacks());
+    }
+
+    @Test
+    void theUsageSaysWhatAnOverclockedRunIsNotComparableWith() {
+        assertTrue(Options.usage().contains("--hack overclock"),
+                "somebody reading --help should learn that --play refuses it");
+        assertTrue(Options.usage().contains("overclock=N[+M]"),
+                "and what the flag looks like");
+        assertTrue(Options.usage().contains("stands still"),
+                "and that the sound is a hardware frame's worth however long the frame is");
     }
 
     /**

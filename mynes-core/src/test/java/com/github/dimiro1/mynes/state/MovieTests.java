@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.state;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import org.junit.jupiter.api.Test;
@@ -500,6 +501,117 @@ class MovieTests {
                 recorded(5), "GENI", new byte[]{6, 'G', 'O', 'S', 'S', 'I', 'B'});
 
         assertThrows(MovieException.class, () -> Movie.read(new ByteArrayInputStream(file)));
+    }
+
+    // ================================================================================ the overclock
+
+    /**
+     * The sharper half of what a movie carries beside the buttons. Game Genie codes change what the
+     * cartridge answers with; this changes how much of its work the game gets through in a frame, so
+     * a replay at the wrong setting is a replay of a different game -- and, like the codes, there is
+     * nothing about the cartridge that could say which it was.
+     */
+    @Test
+    void theOverclockIsPinnedInTheMovie() throws IOException {
+        var nes = load();
+        nes.getPPU().setOverclock(new Overclock(131, 20));
+
+        var recorder = MovieRecorder.atPowerOn(nes, List.of());
+        play(nes, recorder, 10, 0);
+
+        assertEquals(new Overclock(131, 20), roundTrip(recorder.movie()).overclock());
+    }
+
+    @Test
+    void theOverclockIsPinnedWhenTheRecordingStartsAndNotAfterwards() throws IOException {
+        var nes = load();
+        nes.getPPU().setOverclock(new Overclock(40, 0));
+
+        var recorder = MovieRecorder.atPowerOn(nes, List.of());
+        play(nes, recorder, 5, 0);
+
+        // Which neither front end allows while a take is running, and this is why: the file already
+        // says 40, and the frames after this one would have been played at 90.
+        nes.getPPU().setOverclock(new Overclock(90, 0));
+        play(nes, recorder, 5, 0);
+
+        assertEquals(new Overclock(40, 0), roundTrip(recorder.movie()).overclock());
+    }
+
+    @Test
+    void aMovieWithoutTheChunkMeansNoOverclock() throws IOException {
+        // Which is also every movie any earlier build wrote: the chunk is absent rather than zero,
+        // so the format did not have to change meaning for this to arrive.
+        assertEquals(
+                Overclock.NONE,
+                Movie.read(new ByteArrayInputStream(recorded(5))).overclock());
+    }
+
+    @Test
+    void aMovieCarryingAnImpossibleLineCountIsRefused() throws IOException {
+        // 0xFFFF lines, which no machine will accept. Refused as a damaged movie rather than
+        // clamped, for the reason a bad code is: a replay that quietly ran on some other timing
+        // would look exactly like one that worked.
+        var file = withExtraChunk(
+                recorded(5), "OVCK", new byte[]{(byte) 0xFF, (byte) 0xFF, 0, 0});
+
+        var refused = assertThrows(
+                MovieException.class, () -> Movie.read(new ByteArrayInputStream(file)));
+
+        assertTrue(refused.getMessage().contains("damaged"));
+    }
+
+    @Test
+    void aMovieWhoseOverclockIsTheWrongLengthIsRefused() throws IOException {
+        var file = withExtraChunk(recorded(5), "OVCK", new byte[]{0, 30});
+
+        assertThrows(MovieException.class, () -> Movie.read(new ByteArrayInputStream(file)));
+    }
+
+    /**
+     * The claim the whole feature rests on, end to end: a take recorded on a longer frame replays to
+     * the same bytes when the movie's own setting is put back.
+     */
+    @Test
+    void anOverclockedRecordingReplaysToByteIdenticalState() throws IOException {
+        var overclock = new Overclock(131, 0);
+
+        var nes = load();
+        nes.getPPU().setOverclock(overclock);
+
+        var recorder = MovieRecorder.atPowerOn(nes, List.of());
+        play(nes, recorder, 20, Controller.BUTTON_START);
+        play(nes, recorder, 20, 0);
+
+        var movie = roundTrip(recorder.movie());
+
+        var other = load();
+        other.getPPU().setOverclock(movie.overclock());
+        replay(other, movie, movie.frameCount());
+
+        assertArrayEquals(save(nes), save(other));
+    }
+
+    /**
+     * And the same take replayed without it is not the same run, which is what makes the chunk worth
+     * carrying rather than merely tidy.
+     */
+    @Test
+    void thatSameTakeReplayedWithoutItDivergesFromWhatWasRecorded() throws IOException {
+        var nes = load();
+        nes.getPPU().setOverclock(new Overclock(131, 0));
+
+        var recorder = MovieRecorder.atPowerOn(nes, List.of());
+        play(nes, recorder, 40, Controller.BUTTON_START);
+
+        var movie = roundTrip(recorder.movie());
+
+        var other = load();
+        replay(other, movie, movie.frameCount());
+
+        assertFalse(
+                Arrays.equals(save(nes), save(other)),
+                "the two runs agreed, so the movie would not have needed to carry the setting");
     }
 
     // ================================================================================== internals

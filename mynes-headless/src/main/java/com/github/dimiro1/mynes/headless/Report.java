@@ -145,6 +145,13 @@ public final class Report {
         var hacks = run.putObject("hacks");
         hacks.put("unlimitedSprites", ppu.isUnlimitedSprites());
 
+        // An object rather than a number, because "how many lines" is two questions with different
+        // answers -- and because a key that was sometimes a boolean and sometimes a count would not
+        // compare. Always present, and both zero on a machine nobody overclocked.
+        var overclock = hacks.putObject("overclock");
+        overclock.put("beforeNmi", ppu.getOverclock().beforeNmi());
+        overclock.put("afterNmi", ppu.getOverclock().afterNmi());
+
         // And which Game Genie codes were in, which is the fourth -- and the one that matters most,
         // because it is the only one of the four a digest cannot stand in for. A patched run has its
         // own cart.sha256; a run with codes in has the cartridge's, since the cartridge really is
@@ -247,6 +254,9 @@ public final class Report {
         picture.put("frame", ppu.getFrame());
         picture.put("scanline", ppu.getScanline());
         picture.put("dot", ppu.getDot());
+        // Whether the beam is on a line the overclock is running again, which is what explains a
+        // report that stopped on line 240 or the last line of blanking and looks stuck there.
+        picture.put("onExtraLine", ppu.isOnExtraLine());
         picture.put("v", ppu.getV());
         picture.put("t", ppu.getT());
         picture.put("fineX", ppu.getFineX());

@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.state.StateIO;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * PPU implements the picture processing unit: the 2C02 of the NTSC NES, or the 2C07 of the PAL one.
@@ -29,6 +30,14 @@ import java.util.Arrays;
  * <p>
  * With rendering enabled, an NTSC odd frame drops the last dot of the pre-render line, so a frame
  * is 89342 dots normally and 89341 then. PAL does not, and is 106392 dots every time.
+ * <p>
+ * An {@link Overclock} lengthens that frame, and is the one thing here that is not the hardware: the
+ * beam runs the post-render line or the last line of blanking again, as many times as it is asked
+ * to, so a game gets ~113.67 more CPU cycles a line to finish its work in. The line numbers never
+ * change, {@link #getScanline()} never names a line the chip does not have, and the picture is drawn
+ * dot for dot as it always was -- but the pre-render line arrives later in CPU cycles than it would
+ * on a console, which is a difference a program can measure. See {@link Overclock} for what that
+ * costs and which half of it to reach for.
  *
  * @see <a href="https://www.nesdev.org/wiki/PPU_rendering">NESdev: PPU rendering</a>
  * @see <a href="https://www.nesdev.org/wiki/PPU_scrolling">NESdev: PPU scrolling</a>
@@ -197,6 +206,29 @@ public class PPU {
      * pre-render line is skipped.
      */
     private boolean oddFrame = false;
+
+    /**
+     * How many extra idle scanlines to give the program per frame, which is a hack and not a
+     * machine: see {@link Overclock}.
+     * <p>
+     * <strong>Never null.</strong> {@code SaveStateCompletenessTests} walks the console field by
+     * field and names what it finds after the class it lives in, so a record here contributes
+     * {@code Overclock.beforeNmi} and {@code Overclock.afterNmi} to that walk -- and a null would
+     * contribute {@code PPU.overclock} instead, which is a different pair of names for its
+     * exclusion list to have to know.
+     */
+    private Overclock overclock = Overclock.NONE;
+
+    /**
+     * How many times the current scanline has already been run again, and 0 on a real one.
+     * <p>
+     * Counted up and compared at each line wrap against whatever {@link #overclock} says
+     * <em>now</em>, rather than latched when a frame starts. That is what makes switching the hack
+     * off mean off: a machine part way through a repeat simply moves on at the next wrap, and a
+     * state taken mid-repeat loads into a machine with no overclock without either of them having
+     * to know what the other was set to.
+     */
+    private int extraLine;
 
     /**
      * True while the PPU's internal reset signal is still held over $2000, $2001, $2005 and
@@ -419,6 +451,11 @@ public class PPU {
         dot = 0;
         oddFrame = false;
 
+        // The beam has been put back to the top left, so whatever repeats it was part way through
+        // are over. How many there are to run is the hack's setting and not the button's business,
+        // so that is left exactly as it was.
+        extraLine = 0;
+
         // The VBlank flag is untouched, but the NMI enable bit has just gone, so the line has to
         // be settled again.
         updateNMILine();
@@ -455,7 +492,14 @@ public class PPU {
         // idle counts this dot as idle if nothing on it touches the bus.
         mapper.ppuTick();
 
-        clock++;
+        // Not on a line the overclock is running again. What this clock is measured against is OAM
+        // losing its charge, and the charge leaks in the television's time rather than the
+        // emulator's -- an extra line takes none of it. Skipping it is also what stops a large
+        // setting wiping every sprite in the game once a frame: past 270 lines on NTSC a frame's
+        // blanking would otherwise outlast the window in Region.oamDecayDots.
+        if (extraLine == 0) {
+            clock++;
+        }
 
         settle();
 
@@ -571,6 +615,15 @@ public class PPU {
      * PAL does not do it. Its burst phase is corrected by alternating it every line -- which is
      * what the P in PAL is -- so the 2C07 has nothing left to fix, and every frame of it is the
      * same length.
+     * <p>
+     * An {@link Overclock} is a line the beam runs again rather than a line number the chip does not
+     * have, and this is the whole of where it happens. Repeating 240 or the last vblank line is
+     * indistinguishable from a longer idle one: nothing below {@link #tick()} keys on either of them
+     * -- rendering and sprite work are gated on {@link #isRenderingLine()}, the odd-frame skip and
+     * the warm-up release key on {@link #preRenderLine}, and the VBlank flag on 241 and on the
+     * pre-render line. So the extra post-render lines land between the picture and the flag going
+     * up, and the extra vblank lines between the end of blanking and the pre-render line, with the
+     * flag still up.
      */
     private void advance() {
         if (region.skipsDotOnOddFrames()
@@ -584,6 +637,15 @@ public class PPU {
 
         if (dot > LAST_DOT) {
             dot = 0;
+
+            if ((scanline == POST_RENDER_LINE && extraLine < overclock.beforeNmi())
+                    || (scanline == preRenderLine - 1 && extraLine < overclock.afterNmi())) {
+                // Run this line again: the beam stays where it is and the CPU gets the line.
+                extraLine++;
+                return;
+            }
+
+            extraLine = 0;
             scanline++;
 
             if (scanline > preRenderLine) {
@@ -2265,9 +2327,11 @@ public class PPU {
      *       computes it from {@link #vblankFlag} and {@link #ctrl}, so it is recomputed on the way
      *       in rather than restored. The CPU's own latches are a different matter and are in its
      *       chunk.</li>
-     *   <li><strong>The two layer switches</strong>, and {@link ExtraSprites#enabled} beside them,
-     *       which belong to whoever is watching rather than to the machine. Restoring them would
-     *       hide a layer while the Debug menu still said it was showing.</li>
+     *   <li><strong>The two layer switches</strong>, and {@link ExtraSprites#enabled} and
+     *       {@link #overclock} beside them, which belong to whoever is watching rather than to the
+     *       machine. Restoring them would hide a layer while the Debug menu still said it was
+     *       showing. {@link #extraLine} <em>is</em> on the list, being where the beam is rather
+     *       than what anybody asked for.</li>
      * </ul>
      * The two decay tables come with {@link #clock} and {@link #frame}, which is what they are
      * measured against -- a table restored without its clock would decay at the wrong time.
@@ -2374,6 +2438,13 @@ public class PPU {
         // Last for the same reason, and it is the whole of the sprite limit hack that travels:
         // whether anybody asked for it does not, any more than the layer switches do.
         extraSprites.serialize(io);
+
+        // And appended after it for the same reason again. This is the whole of the overclock that
+        // travels: how many repeats of this line have run, which is a beam position and belongs
+        // with the rest of one. How many there are meant to be is the Hacks menu's, so a state
+        // taken mid-repeat loads into a machine with the hack off and simply moves on at the next
+        // line wrap.
+        extraLine = io.u16(extraLine);
 
         if (!io.saving()) {
             updateNMILine();
@@ -2483,6 +2554,33 @@ public class PPU {
 
     public boolean isUnlimitedSprites() {
         return extraSprites.enabled;
+    }
+
+    /**
+     * Gives the program extra idle scanlines a frame, so that a main loop which overruns its frame
+     * stops dropping one. Off at power on, and unlike the sprite limit above the game <em>can</em>
+     * tell: see {@link Overclock}.
+     *
+     * @param overclock how many lines, and which side of the NMI. Never null; {@link Overclock#NONE}
+     *                  is how to say none.
+     */
+    public void setOverclock(final Overclock overclock) {
+        this.overclock = Objects.requireNonNull(
+                overclock, "there is no overclock at all; Overclock.NONE is how to say none");
+    }
+
+    public Overclock getOverclock() {
+        return overclock;
+    }
+
+    /**
+     * Whether the beam is on a line it is running again rather than one the console would have run.
+     * <p>
+     * {@link NES#tick()} asks once per CPU cycle, so that the APU can stand still through the extra
+     * lines and keep making a hardware frame's worth of sound.
+     */
+    public boolean isOnExtraLine() {
+        return extraLine != 0;
     }
 
     /**

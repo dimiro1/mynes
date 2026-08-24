@@ -169,6 +169,20 @@ public final class Headless {
             session.nes().getPPU().setUnlimitedSprites(
                     options.hacks().contains(Options.UNLIMITED_SPRITES));
 
+            // The other hack, and the one that has to come off the movie when there is one: it
+            // changes how much of its work the game gets through in a frame, so a replay at another
+            // setting is a replay of a different game. --play and --hack overclock refuse each
+            // other, so these two are never both asking for something.
+            var overclock = movie != null ? movie.overclock() : options.overclock();
+
+            session.nes().getPPU().setOverclock(overclock);
+
+            if (!overclock.isNone()) {
+                logger.log(Level.INFO, "running with " + overclock
+                        + "; the game gets more time a frame, so run.hacks rather than the picture"
+                        + " is what tells this run from a plain one");
+            }
+
             // And a Game Genie is not machine state either, for the same reason and one more: the
             // cartridge it is plugged into is untouched, so a state taken with codes in has nothing
             // in it to say so.

@@ -150,6 +150,14 @@ public class GameUIFrame extends JFrame {
     private JMenu machineMenuRegion;
 
     /**
+     * The Overclock submenu, built there for the same reason and kept for a second one: it is greyed
+     * out while a movie is running, exactly as the Game Genie item is. A movie pins the overclock
+     * when it starts, and this is the one hack that decides how much of its work the game gets
+     * through in a frame.
+     */
+    private JMenu hacksMenuOverclock;
+
+    /**
      * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
      * There is nothing to photograph until one is running, and a File menu greyed out as a whole
      * would take Open with it.
@@ -400,6 +408,9 @@ public class GameUIFrame extends JFrame {
         hacksMenuUnlimitedSprites.setMnemonic(KeyEvent.VK_U);
         hacksMenuUnlimitedSprites.setSelected(config.unlimitedSprites());
         hacksMenu.add(hacksMenuUnlimitedSprites);
+
+        hacksMenuOverclock = overclockMenu();
+        hacksMenu.add(hacksMenuOverclock);
 
         hacksMenuGameGenie.setMnemonic(KeyEvent.VK_G);
         hacksMenuGameGenie.setEnabled(false);
@@ -739,6 +750,51 @@ public class GameUIFrame extends JFrame {
                 config.setFastForwardSpeed(speed);
                 saveConfig();
                 applySpeed();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Builds the Overclock submenu, one item per percentage {@link OverclockSetting} offers.
+     * <p>
+     * A percentage rather than a number of scanlines because that is the question a player is
+     * asking: a game that drops frames wants more time to do its work in, and how many lines that
+     * comes to depends on which machine it turns out to be running on. Picking one applies it to the
+     * machine already running, so a scene that slows down can be watched doing it and then not.
+     * <p>
+     * <strong>Unlike the tick above it, this one changes what the game does.</strong> Nothing about
+     * the picture is faked -- the beam idles through extra blanking lines and draws the same frame
+     * -- but the main loop gets more cycles between one NMI and the next, so a game whose logic
+     * overran its frame stops skipping one. Which means an overclocked run is not the game as it
+     * shipped, and the every-other-frame stutter some of them were written around goes with it.
+     */
+    private JMenu overclockMenu() {
+        var menu = new JMenu("Overclock");
+        menu.setMnemonic(KeyEvent.VK_O);
+
+        // The group is what makes them one choice rather than five independent ticks.
+        var group = new ButtonGroup();
+
+        for (var setting : OverclockSetting.values()) {
+            var item = new JRadioButtonMenuItem(setting.label(), setting == config.overclock());
+
+            item.addActionListener(e -> {
+                config.setOverclock(setting);
+                saveConfig();
+
+                if (runner != null) {
+                    // Resolved here rather than on the emulation thread: the region is what turns a
+                    // percentage into scanlines, and it belongs to the machine this thread owns.
+                    var overclock = setting.resolve(nes.getRegion());
+                    var ppu = nes.getPPU();
+
+                    runner.post(() -> ppu.setOverclock(overclock));
+                }
             });
 
             group.add(item);
@@ -1213,7 +1269,9 @@ public class GameUIFrame extends JFrame {
         logger.log(Level.INFO, "playing " + path.getFileName() + ", " + movie.frameCount()
                 + " frames" + (movie.anchored() ? " from a state inside it" : " from power on")
                 + (movie.genie().isEmpty() ? ""
-                : ", with " + movie.genie().size() + " Game Genie codes it was recorded with"));
+                : ", with " + movie.genie().size() + " Game Genie codes it was recorded with")
+                + (movie.overclock().isNone() ? ""
+                : ", and " + movie.overclock() + ", which it was recorded with"));
 
         // Consumed by startMachine, after the codes have been replayed and before the thread starts.
         pendingMovie = movie;
@@ -1249,6 +1307,15 @@ public class GameUIFrame extends JFrame {
         keyboardInput.setPlaybackMuted(false);
         keyboardInput.setLatching(false);
 
+        // The machine spent the replay on the movie's overclock, which may not be the menu's. The
+        // runner is still alive and the game is somebody's again from the next frame, so the menu's
+        // answer goes back on -- which is also what makes the greyed-out submenu tell the truth
+        // about what is running the moment it comes back.
+        var overclock = config.overclock().resolve(nes.getRegion());
+        var ppu = nes.getPPU();
+
+        runner.post(() -> ppu.setOverclock(overclock));
+
         updateMovieItems();
         updateTitle();
     }
@@ -1270,7 +1337,8 @@ public class GameUIFrame extends JFrame {
      * Power Cycle and Region both build a new machine, and the take lives in the runner that would
      * be torn down. The Game Genie goes with them for a different reason: a movie pins the codes
      * when it starts, so changing them half way through would leave a file that cannot be replayed
-     * and does not say so.
+     * and does not say so. Overclock is pinned the same way and greyed out for the same reason,
+     * with more at stake -- it is the one hack a replay's frames actually depend on.
      */
     private void updateMovieItems() {
         var busy = movieRecording || moviePlaying;
@@ -1283,6 +1351,7 @@ public class GameUIFrame extends JFrame {
         machineMenuPowerCycle.setEnabled(!busy);
         machineMenuRegion.setEnabled(!busy);
         hacksMenuGameGenie.setEnabled(cart != null && !busy);
+        hacksMenuOverclock.setEnabled(!busy);
     }
 
     /**
@@ -1514,6 +1583,15 @@ public class GameUIFrame extends JFrame {
         nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
         nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
         nes.getPPU().setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
+
+        // A movie carries its own, for the reason it carries the codes and a sharper one: this is
+        // how much of its work the game gets through in a frame, so a replay at another setting is
+        // a replay of a different game. Off the config rather than off the last machine because the
+        // region can have changed under it, and a percentage is only scanlines once there is a
+        // machine to ask.
+        nes.getPPU().setOverclock(pendingMovie != null
+                ? pendingMovie.overclock()
+                : config.overclock().resolve(nes.getRegion()));
 
         // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
         // window as the two lines above: the runner does not exist yet, so this thread owns it.

@@ -110,6 +110,13 @@ public class NES {
      * dots do: a $4015 read has to see the interrupt flag the frame counter raised in the cycle
      * doing the reading. It is clocked here rather than from the CPU because it keeps running
      * through an OAM DMA transfer, which the CPU spends held off the bus.
+     * <p>
+     * It is the one chip the {@link Overclock} hack holds still. A cycle the PPU spends on a line it
+     * is running again is a cycle the game gets and the sound does not: the APU keeps its parity,
+     * which two chips have to agree on, and counts nothing else -- so an overclocked frame is longer
+     * for the program and exactly as long as a hardware one for the music. {@link APU#idle()} has
+     * the whole of why. Asked once per CPU cycle, which on a machine nobody is overclocking is one
+     * boolean read.
      *
      * @see CPU#sampleNMI()
      */
@@ -127,7 +134,12 @@ public class NES {
             ppu.tick();
         }
 
-        apu.tick();
+        if (ppu.isOnExtraLine()) {
+            apu.idle();
+        } else {
+            apu.tick();
+        }
+
         cpu.tick();
     }
 

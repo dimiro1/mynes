@@ -273,6 +273,49 @@ public class APU {
     }
 
     /**
+     * Advances the chip's parity and nothing else, for a CPU cycle the {@link Overclock} hack has
+     * added to the frame.
+     *
+     * <h2>Why the sound stands still</h2>
+     *
+     * An overclocked frame is longer in CPU cycles but is still one frame of the game. If the APU
+     * ran through the extra lines, everything it counts in cycles would run with them: the frame
+     * counter's quarter and half frames -- so every envelope, sweep and length counter -- the five
+     * timers, and the decimator that turns 1.79MHz into 44100 samples a second. The music would come
+     * out slow, the pitches flat and the frame a thousand samples instead of 735, which a front end
+     * pacing itself on a blocking write to the sound card would then run at the wrong speed. Mesen
+     * holds its APU on the extra lines for exactly this reason, and so does this.
+     *
+     * <h2>Why the counter still moves</h2>
+     *
+     * {@link #cycles} is not only a count of work done; its <em>parity</em> is what
+     * {@link CPUBus#isGetCycle} reads, and two chips have to agree about it. The MMU asks that
+     * question of the CPU's counter when it starts a DMA cycle and this chip asks it of its own, and
+     * the two answers only match because both counters advance once per {@link NES#tick()}. A
+     * counter that stood still for 131 scanlines would come back inverted, and a sprite DMA would
+     * take 513 cycles where the hardware takes 514.
+     * <p>
+     * A pending $4015 clear is honoured for the same reason: it is due on the next get cycle, and
+     * that cycle may well be one of these.
+     *
+     * <h2>What the phase costs</h2>
+     *
+     * A block of held cycles is a gap in the middle of the chip's sequences rather than a stretch of
+     * them, so the two one-cycle write delays -- {@code FrameCounter.writeDelay} and
+     * {@code DMC.loadDelay} -- land after the block rather than inside it, and a block of odd length
+     * moves which CPU cycle the pulse and noise dividers fall on by one. Neither is audible and
+     * neither accumulates: the divider keeps its own period, so what shifts is the phase of a
+     * waveform and not its frequency.
+     */
+    public void idle() {
+        if (frameIRQClearPending && CPUBus.isGetCycle(cycles)) {
+            setFrameIRQFlag(false);
+        }
+
+        cycles++;
+    }
+
+    /**
      * Takes this cycle's output into the running average, and finishes a sample when one falls
      * due.
      */
@@ -372,11 +415,13 @@ public class APU {
     }
 
     /**
-     * How many CPU cycles the chip has been clocked for since power on.
+     * How many CPU cycles the chip has been driven or held for since power on.
      * <p>
      * The APU's own clock, in the same sense that {@link PPU#getFrame()} is the PPU's: it is what
      * says the chip is being driven at the rate it should be, including through the cycles an OAM
-     * DMA transfer holds the CPU off the bus.
+     * DMA transfer holds the CPU off the bus. "Or held", because an {@link #idle()} cycle counts
+     * here too -- this is the parity two chips agree on before it is a measure of work done, and it
+     * is what keeps {@code run.apuCycles} equal to {@code run.cpuCycles} however long a frame is.
      */
     public long getCycles() {
         return cycles;

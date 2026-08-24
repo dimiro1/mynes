@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.state;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -180,6 +181,45 @@ class SaveStateDivergenceTests {
     }
 
     /**
+     * The one field the overclock puts in the state: how many repeats of the current line the beam
+     * is part way through.
+     * <p>
+     * The setting itself is deliberately left out, being the Hacks menu's rather than the machine's
+     * -- so this is what stops a state taken on the twentieth of 131 identical lines from resuming
+     * as though it were on the first. Both machines are told the same number of lines, because a
+     * replay of a run is a replay of the run that happened; what is being proved is that the count
+     * travelled, not that the setting did.
+     */
+    @Test
+    void aStateTakenOnAnExtraLineRunsOnExactlyAsTheMachineItCameFromDid() throws IOException {
+        var rom = "/ppu-sprite-overflow/04-obscure.nes";
+        var overclock = new Overclock(60, 0);
+
+        var original = load(rom);
+        original.getPPU().setOverclock(overclock);
+        runToSavePoint(original);
+        runOntoAnExtraLine(original);
+
+        var state = save(original);
+        var expected = traceOf(original, 40);
+
+        var other = load(rom);
+        other.getPPU().setOverclock(overclock);
+        runElsewhere(other);
+
+        SaveState.read(other, new ByteArrayInputStream(state));
+
+        var actual = traceOf(other, 40);
+
+        for (var i = 0; i < expected.size(); i++) {
+            assertEquals(
+                    expected.get(i).state(),
+                    actual.get(i).state(),
+                    "the machine diverged " + (i + 1) + " frames after the state was loaded");
+        }
+    }
+
+    /**
      * The picture is not needed to put the machine back -- every visible pixel is rewritten every
      * frame -- but it is needed for the machine to <em>look</em> like it came back, which is what
      * somebody loading a slot in the window sees.
@@ -225,6 +265,26 @@ class SaveStateDivergenceTests {
         for (var i = 0; i < MID_FRAME_CYCLES; i++) {
             nes.tick();
         }
+    }
+
+    /**
+     * Runs on until the beam is on a line the overclock is running again, and then some way into it
+     * -- so that the state is taken where the count of repeats is a number nothing else could
+     * reconstruct.
+     */
+    private static void runOntoAnExtraLine(final NES nes) {
+        var ppu = nes.getPPU();
+
+        while (!ppu.isOnExtraLine()) {
+            nes.tick();
+        }
+
+        // Twenty lines in, counted in CPU cycles because that is what a tick is: three dots each.
+        for (var i = 0; i < 20 * 341 / 3; i++) {
+            nes.tick();
+        }
+
+        assertTrue(ppu.isOnExtraLine(), "twenty lines on and still repeating, which is the point");
     }
 
     /**
