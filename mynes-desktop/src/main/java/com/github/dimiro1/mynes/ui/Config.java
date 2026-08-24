@@ -45,6 +45,7 @@ public final class Config {
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
     private static final String UNLIMITED_SPRITES_KEY = "hacks.unlimited-sprites";
+    private static final String OVERCLOCK_KEY = "hacks.overclock";
     private static final String REWIND_SECONDS_KEY = "rewind.seconds";
     private static final String REWIND_KEY_KEY = "rewind.key";
 
@@ -119,10 +120,17 @@ public final class Config {
             """;
 
     private static final String HACKS_HEADER = """
-            # Things the console does not do, from the Hacks menu. All of them off unless this
-            # says true; anything that is not true is off. Unlimited sprites draws the sprites the
-            # chip would have dropped, so a scanline holding more than eight of them stops
-            # flickering -- which is a change to the picture and to nothing the game can see.
+            # Things the console does not do, from the Hacks menu, and both off unless this says
+            # otherwise. Unlimited sprites draws the sprites the chip would have dropped, so a
+            # scanline holding more than eight of them stops flickering -- a change to the picture
+            # and to nothing the game can see. It is true or false; anything that is not true is
+            # off.
+            #
+            # The overclock is off, 25, 50, 100 or 200: that many percent of a frame in extra idle
+            # scanlines, so a game whose main loop overruns its frame stops dropping one. A
+            # percentage rather than a line count because a frame is 262 lines on NTSC and 312 on
+            # PAL, and the setting should mean the same on both. Unlike the tick above this changes
+            # the machine's timing and so what the game does.
             """;
 
     private static final String REWIND_HEADER = """
@@ -145,6 +153,7 @@ public final class Config {
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
     private boolean unlimitedSprites;
+    private OverclockSetting overclock;
     private int rewindSeconds;
     private int rewindKey;
 
@@ -158,6 +167,7 @@ public final class Config {
             final EmulationSpeed fastForwardSpeed,
             final boolean muted,
             final boolean unlimitedSprites,
+            final OverclockSetting overclock,
             final int rewindSeconds,
             final int rewindKey) {
         this.keyBindings = keyBindings;
@@ -169,6 +179,7 @@ public final class Config {
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
         this.unlimitedSprites = unlimitedSprites;
+        this.overclock = overclock;
         this.rewindSeconds = rewindSeconds;
         this.rewindKey = rewindKey;
     }
@@ -206,6 +217,8 @@ public final class Config {
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, MUTED_KEY),
                 flagFrom(properties, UNLIMITED_SPRITES_KEY),
+                OverclockSetting.byId(
+                        properties.getProperty(OVERCLOCK_KEY, OverclockSetting.OFF.id()).trim()),
                 rewindSecondsFrom(properties),
                 KeyBindings.codeOf(
                         properties.getProperty(REWIND_KEY_KEY),
@@ -361,6 +374,10 @@ public final class Config {
                 .append(UNLIMITED_SPRITES_KEY)
                 .append('=')
                 .append(unlimitedSprites)
+                .append('\n')
+                .append(OVERCLOCK_KEY)
+                .append('=')
+                .append(overclock.id())
                 .append("\n\n");
 
         text.append(REWIND_HEADER)
@@ -489,6 +506,19 @@ public final class Config {
 
     public void setUnlimitedSprites(final boolean unlimitedSprites) {
         this.unlimitedSprites = unlimitedSprites;
+    }
+
+    /**
+     * How much extra time a frame Hacks &gt; Overclock is giving the game. Remembered for the reason
+     * the tick above is, and kept as a percentage rather than as a number of scanlines so that it
+     * means the same thing after a region switch.
+     */
+    public OverclockSetting overclock() {
+        return overclock;
+    }
+
+    public void setOverclock(final OverclockSetting overclock) {
+        this.overclock = overclock;
     }
 
     /**

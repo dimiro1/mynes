@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.state;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 
@@ -36,12 +37,12 @@ import java.util.List;
  *
  * <h2>What is pinned, and when</h2>
  *
- * The cartridge digest, the mapper number, the region and the Game Genie codes are read once, at
- * construction. The first three cannot change under a running machine: a save state from another
- * cartridge or another region is refused, and the chips are built around their region. The codes
- * can, which is why both front ends refuse to change them while a recording is running -- a movie
- * whose header pinned one set of codes and whose frames were played against another is a file that
- * cannot be replayed and does not say so.
+ * The cartridge digest, the mapper number, the region, the Game Genie codes and the overclock are
+ * read once, at construction. The first three cannot change under a running machine: a save state
+ * from another cartridge or another region is refused, and the chips are built around their region.
+ * The last two can, which is why both front ends refuse to change either while a recording is
+ * running -- a movie whose header pinned one set of codes, or one number of extra scanlines, and
+ * whose frames were played against another is a file that cannot be replayed and does not say so.
  */
 public final class MovieRecorder {
 
@@ -62,6 +63,7 @@ public final class MovieRecorder {
     private final int mapperNumber;
     private final Region region;
     private final List<GameGenieCode> genie;
+    private final Overclock overclock;
 
     /**
      * The whole save state the movie starts from, or null when it starts at power on.
@@ -91,6 +93,11 @@ public final class MovieRecorder {
         this.mapperNumber = nes.getCart().mapperNumber();
         this.region = nes.getRegion();
         this.genie = List.copyOf(codes);
+
+        // Off the machine rather than out of a parameter, so that neither front end has to be told
+        // about it twice: it is already on the PPU, and a caller that passed one could pass a
+        // different one.
+        this.overclock = nes.getPPU().getOverclock();
         this.anchor = anchor;
         this.anchorFrame = nes.getPPU().getFrame();
     }
@@ -241,7 +248,8 @@ public final class MovieRecorder {
                 Arrays.copyOf(buttons, recorded),
                 null,
                 Arrays.copyOf(resets, resetCount),
-                genie);
+                genie,
+                overclock);
     }
 
     private void reanchor(final NES nes) {

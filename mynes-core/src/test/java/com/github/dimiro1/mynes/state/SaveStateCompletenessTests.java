@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.state;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -68,6 +69,19 @@ class SaveStateCompletenessTests {
                             + " menu's tick rather than anything the machine holds. The units it"
                             + " loads do travel, so a state taken mid-scanline still draws the rest"
                             + " of that line the way running straight through would have"),
+            Map.entry("Overclock.beforeNmi",
+                    "how many idle scanlines a frame the machine is being given, which is the Hacks"
+                            + " menu's tick rather than anything the machine holds -- so a state"
+                            + " taken with the hack on loads into a machine with it off without"
+                            + " complaining, exactly as one taken with Game Genie codes in does."
+                            + " PPU.extraLine, the count of repeats the beam is part way through,"
+                            + " does travel: it is where the beam is, so a state taken mid-repeat"
+                            + " runs on the way the machine it came from did, and one loaded into a"
+                            + " machine with the hack off moves on at the next line wrap. Named"
+                            + " after the record rather than after the field because the walk below"
+                            + " steps into it -- which means the PPU's field must never be null, or"
+                            + " these two become one entry called PPU.overclock"),
+            Map.entry("Overclock.afterNmi", "the other half of the same setting"),
             Map.entry("MMU.writeListener",
                     "where a debugger's watchpoints wire in -- whoever is watching the machine"
                             + " rather than the machine, and a state that put one back would be"
@@ -169,6 +183,7 @@ class SaveStateCompletenessTests {
         original.getController1().setButtons(Controller.BUTTON_START | Controller.BUTTON_B);
         original.getPPU().setBackgroundLayerVisible(false);
         original.getPPU().setUnlimitedSprites(true);
+        original.getPPU().setOverclock(new Overclock(131, 0));
 
         var state = save(original);
 
@@ -177,6 +192,7 @@ class SaveStateCompletenessTests {
         other.getController1().setButtons(0);
         other.getPPU().setBackgroundLayerVisible(true);
         other.getPPU().setUnlimitedSprites(false);
+        other.getPPU().setOverclock(Overclock.NONE);
 
         SaveState.read(other, new ByteArrayInputStream(state));
 
@@ -188,6 +204,9 @@ class SaveStateCompletenessTests {
                 "a state overrode the Debug menu");
         assertEquals("false", fields.get("ExtraSprites.enabled"),
                 "and a state overrode the Hacks menu");
+        assertEquals("0", fields.get("Overclock.beforeNmi"),
+                "and a state overrode the Hacks menu's other tick, which would have been the"
+                        + " sharper one: it decides how much of its work the game gets done");
     }
 
     /**

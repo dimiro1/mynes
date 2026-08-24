@@ -140,6 +140,34 @@ and they mostly manage it -- Punch-Out!!'s first fight peaks at seven, Battletoa
 eight -- so the demonstration is `sprite-limit/sprite-limit.nes`, which puts all sixty four on one
 line and is assembled by `SpriteLimitROM` beside it rather than vendored as bytes.
 
+**The other hack is a timing hack, and that is a different kind of thing.** `--hack overclock=131`
+makes the PPU idle through 131 extra scanlines a frame, which is about 113.67 CPU cycles each on
+NTSC, so a game whose main loop overruns its frame stops dropping one -- the every-other-frame
+stutter Super Mario Bros. 3 and Gradius get under load. The picture is the hardware's, dot for dot,
+because the extra lines are lines the beam is already idle on; the sound is a hardware frame's worth
+too, because `APU.idle()` holds the sound chip still through them, so `audio.samples` and the music's
+pitch and tempo do not move. What does move is **what the game does**, so two runs that disagree
+about `run.hacks.overclock` are two different games rather than two views of one -- which is why,
+unlike unlimited-sprites, it rides inside a movie, is refused while one is recording, and is refused
+alongside `--play`.
+
+`--hack overclock=131+20` puts twenty of the lines after the NMI instead. **Reach for the
+before-NMI number.** Extra post-render lines break nothing a game observes except that the frame is
+longer; extra vblank lines move the pre-render line -- and so the picture -- relative to the NMI,
+which is exactly what code that cycle-counts down to a mid-screen split is measuring. Either way the
+pre-render line arrives later in CPU cycles, so a program that waits out the PPU's warm-up by
+counting 29658 cycles rather than by waiting for two VBlanks has its first `$2000`/`$2001` writes
+dropped -- the same class of difference PAL's fifty extra lines make. `hack overclock LINES [MORE]`
+and `hack overclock off` do it inside an interactive session, and `Overclock.percentOf` is what turns
+the desktop's percentages into lines.
+
+Do not go looking for a game to see this one on either. A game only lags where it is loaded, which
+is not somewhere a test can reliably reach, so the demonstration is `overclock/overclock.nes`: a lap
+of its main loop takes 42500 cycles, which is 1.43 NTSC frames, so it finishes one lap every two
+frames on the hardware and one a frame at `overclock=131`. It counts frames at `$00-$01` and laps at
+`$02-$03`, so `--dump ram` reads the answer, and it recolours the whole screen once a lap so
+`video.frameChanges` says the same thing. `OverclockROM` assembles it, beside `SpriteLimitROM`.
+
 Everything that differs is in `Region`, including the PPU's OAM decay window, which has to outlast
 the machine's own blanking interval or every sprite in the game vanishes once a frame. Its tables
 are `static` on purpose: `SaveStateCompletenessTests` vandalises every primitive array it can reach
@@ -216,14 +244,16 @@ composes out of the rewind claim above: a rewound machine is byte for byte the m
 went forward, so there is nothing lost by truncating the log to match.
 
 `--play` is the input, so it refuses `--record`, `--input`, `--input-file`, `--reset-at`, `--genie`,
-`--load-state`, `--sram-in` and `--interactive` -- each of those would be a second answer to a
-question the movie has already answered. It defaults `--frames` to the movie's own length; asking for
-more runs past the end with nothing held down.
+`--hack overclock`, `--load-state`, `--sram-in` and `--interactive` -- each of those would be a
+second answer to a question the movie has already answered. `--hack unlimited-sprites` still combines
+with it, being a change to the picture and to nothing the replay depends on. It defaults `--frames`
+to the movie's own length; asking for more runs past the end with nothing held down.
 
 `record`, `record start` and `record stop [PATH]` do the same inside an interactive session -- the
 shape of `rewind` rather than of `hack`, since the interesting form is the one that takes a file.
-Mutating `genie`/`ungenie`/`genie clear` are refused while recording, because a movie pins the codes
-at the moment it starts and a file naming one set that was played against another cannot be replayed.
+Mutating `genie`/`ungenie`/`genie clear` and `hack overclock` are refused while recording, because a
+movie pins both at the moment it starts and a file naming one set of codes, or one number of extra
+scanlines, that was played against another cannot be replayed.
 
 **`run.record` and `run.replay` join the comparability checklist**, beside `run.state`, `run.region`,
 `run.hacks` and `run.genie`. Both are always present with explicit nulls. A run that started at power
@@ -234,13 +264,15 @@ a `--sram-in`, a loaded state mid-session, or a rewind that went back past the s
 
 The Game Genie codes ride inside the movie and are put back on replay. They have to: a cheated
 cartridge is byte for byte an honest one, so `cart.sha256` cannot tell them apart and nothing else in
-the file would.
+the file would. **The overclock rides in an `OVCK` chunk beside them**, for the same reason and a
+sharper one: it decides how much of its work the game gets through in a frame, so a replay at the
+hardware's timing is a replay of a different game rather than of the same game seen differently.
 
 The desktop has **Machine > Record Movie... / Play Movie...**. While either is running the pad is
 latched once a frame on the emulation thread rather than reaching the controller the moment a key
-moves, and Power Cycle, Region and the Game Genie item are greyed out -- the first two would build a
-new machine and take the recorder with it. Rewinding during playback stops it and hands the game
-back.
+moves, and Power Cycle, Region, the Game Genie item and the Overclock submenu are greyed out -- the
+first two would build a new machine and take the recorder with it. Rewinding during playback stops it
+and hands the game back, and the menu's own overclock goes back on when it does.
 
 ### Running a romhack
 
@@ -357,7 +389,8 @@ Four Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
-  mynes/              the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, controllers
+  mynes/              the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, Overclock,
+                      controllers
   mynes/mappers/      mappers 0 to 4
   mynes/state/        save states, battery .sav files, and .mnm session recordings
   mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL

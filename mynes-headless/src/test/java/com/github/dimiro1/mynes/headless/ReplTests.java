@@ -248,6 +248,75 @@ class ReplTests {
     }
 
     /**
+     * The other hack, which takes a number rather than a switch -- so the arity of the command
+     * depends on which one was named, and "hack overclock on" is not a thing anybody can mean.
+     */
+    @Test
+    void theOverclockCanBeSetAndClearedMidSession() throws Exception {
+        var replies = session(
+                "run 5",
+                "hack overclock 131",
+                "hack overclock 40 20",
+                "hack overclock off",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals("overclock", replies.get(1).get("hack").asText());
+        assertTrue(replies.get(1).get("on").asBoolean(), "so jq .on works for both hacks");
+        assertEquals(131, replies.get(1).get("beforeNmi").asInt());
+        assertEquals(0, replies.get(1).get("afterNmi").asInt());
+
+        assertEquals(40, replies.get(2).get("beforeNmi").asInt());
+        assertEquals(20, replies.get(2).get("afterNmi").asInt());
+
+        assertFalse(replies.get(3).get("on").asBoolean());
+        assertEquals(0, replies.get(3).get("beforeNmi").asInt());
+    }
+
+    @Test
+    void anOverclockThatIsNotANumberIsAnError() throws Exception {
+        var replies = session(
+                "hack overclock",
+                "hack overclock on",
+                "hack overclock lots",
+                "hack overclock 2000",
+                "quit");
+
+        for (var i = 0; i < 4; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean(), replies.get(i).toString());
+        }
+
+        assertTrue(replies.get(1).get("error").asText().contains("scanlines"),
+                "\"on\" is somebody who has not been asked how many yet");
+        assertTrue(replies.get(2).get("error").asText().contains("lots"));
+        assertTrue(replies.get(3).get("error").asText().contains("0 to 1000"));
+    }
+
+    /**
+     * A movie pins the overclock at the moment it starts, for the reason it pins the codes and a
+     * sharper one: this is the one hack a replay's frames actually depend on.
+     */
+    @Test
+    void anOverclockCannotChangeWhileAMovieIsRecording() throws Exception {
+        var replies = session(
+                "hack overclock 40",
+                "record start",
+                "hack unlimited-sprites on",
+                "hack overclock 90",
+                "hack overclock off",
+                "quit");
+
+        assertTrue(replies.get(2).get("ok").asBoolean(),
+                "the sprite limit changes only pixels, so a movie does not care");
+
+        for (var refused : List.of(replies.get(3), replies.get(4))) {
+            assertFalse(refused.get("ok").asBoolean(), refused.toString());
+            assertTrue(refused.get("error").asText().contains("pinned"));
+        }
+    }
+
+    /**
      * Which is what the command is for: run to the frame that matters, put the code in, look, take it
      * out, look again. The cartridge underneath never changed, so the two are of the same moment.
      */
