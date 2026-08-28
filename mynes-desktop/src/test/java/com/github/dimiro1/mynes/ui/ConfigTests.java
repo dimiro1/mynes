@@ -50,6 +50,38 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the status bar")
+    class LoadingStatusBar {
+        /**
+         * The one entry here whose default is yes. Everything else in this file is something the
+         * emulator does when asked, and the bar is something it does until told not to.
+         */
+        @Test
+        void aMissingEntryLeavesTheBarOn() {
+            assertTrue(Config.load(directory.resolve("not-there.properties")).statusBar());
+        }
+
+        @Test
+        void falseTakesItAway() throws IOException {
+            assertFalse(Config.load(write("ui.status-bar=false\n")).statusBar());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertTrue(Config.load(write("ui.status-bar=  true  \n")).statusBar());
+        }
+
+        /**
+         * A value that is not {@code true} means no, the same as everywhere else in the file. It is
+         * only the missing entry the two disagree about.
+         */
+        @Test
+        void anythingThatIsNotTrueIsNo() throws IOException {
+            assertFalse(Config.load(write("ui.status-bar=maybe\n")).statusBar());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the bindings")
     class LoadingBindings {
         @Test
@@ -595,6 +627,7 @@ class ConfigTests {
             config.setPalette(Region.NTSC, OTHER);
             config.setScreenScale(ScreenScale.THREE_TIMES);
             config.setScreenshotScale(ScreenScale.FOUR_TIMES);
+            config.setStatusBar(false);
             config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
@@ -610,6 +643,7 @@ class ConfigTests {
             assertTrue(text.contains("video.palette.pal=" + Palettes.PAL_ID), text);
             assertTrue(text.contains("video.scale=3"), text);
             assertTrue(text.contains("video.screenshot.scale=4"), text);
+            assertTrue(text.contains("ui.status-bar=false"), text);
             assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
