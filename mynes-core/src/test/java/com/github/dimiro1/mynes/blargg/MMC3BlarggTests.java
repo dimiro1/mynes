@@ -15,17 +15,16 @@ import java.util.Set;
  * boundary A12 sits on, rather than by rendering -- so they pin down the address bus plumbing as
  * much as the mapper.
  * <p>
- * Two of the six are left out, for reasons that are not going to change.
+ * One of the six is left out, for a reason that is not going to change: {@code 6-MMC3_alt} is the
+ * MMC3 revision A counter, which reloads a beat differently from the revision B and C chips almost
+ * every game shipped on. It contradicts {@code 5-MMC3} by design: no chip passes both, and this one
+ * implements the revision Super Mario Bros. 3 came on.
  * <p>
- * {@code 4-scanline_timing} measures the gap between the VBlank flag going up and the interrupt
- * arriving, and insists on it to the dot. That needs the PPU to present each fetch address on the
- * dot the hardware does and to leave it on the bus in between, where this PPU tells the cartridge
- * about an access when the access happens. The counter still fires once a scanline, in the right
- * half of the picture, which is what a split screen needs; it is a dot or so out on where.
- * <p>
- * {@code 6-MMC3_alt} is the MMC3 revision A counter, which reloads a beat differently from the
- * revision B and C chips almost every game shipped on. It contradicts {@code 5-MMC3} by design:
- * no chip passes both, and this one implements the revision Super Mario Bros. 3 came on.
+ * {@code 4-scanline_timing} is the strictest of the five. It measures the gap between the VBlank
+ * flag going up and the interrupt arriving and insists on it to the dot, twelve times down the
+ * picture and in both of the ways a game can arrange its pattern tables -- so it holds the PPU's
+ * fetch schedule, the two dots each of those fetches takes, and
+ * {@link com.github.dimiro1.mynes.mappers.Mapper4}'s filter against each other all at once.
  *
  * @see <a href="https://github.com/christopherpow/nes-test-roms">blargg's test ROMs</a>
  */
@@ -37,8 +36,8 @@ public class MMC3BlarggTests {
             "/mmc3-test-2/1-clocking.nes",
             "/mmc3-test-2/2-details.nes",
             "/mmc3-test-2/3-A12_clocking.nes",
+            "/mmc3-test-2/4-scanline_timing.nes",
             "/mmc3-test-2/5-MMC3.nes",
-//            "/mmc3-test-2/4-scanline_timing.nes", // Dot exact bus timing required
 //            "/mmc3-test-2/6-MMC3_alt.nes", // The other revision; excludes 5-MMC3
     })
     void scanlineCounter(final String filename) throws IOException {

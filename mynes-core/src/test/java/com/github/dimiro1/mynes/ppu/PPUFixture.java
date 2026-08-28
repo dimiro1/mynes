@@ -35,6 +35,16 @@ abstract class PPUFixture {
      */
     static final int ADDRESS_UPDATE_DOTS = 2;
 
+    /**
+     * How many dots a $2007 read takes to become the fetch that fills the read buffer.
+     * <p>
+     * A real program cannot see the wait -- the soonest it can read $2007 again is four CPU cycles
+     * later, and the fetch is long done by then -- but a test that calls {@code ppu.read} twice in
+     * a row without clocking anything in between can, and would find the buffer still holding what
+     * it did before.
+     */
+    static final int DATA_FETCH_DOTS = 6;
+
     protected StubMapper mapper;
     protected RecordingPPUBus bus;
     protected PPU ppu;
@@ -109,6 +119,7 @@ abstract class PPUFixture {
     protected int readVRAM(final int address) {
         setVRAMAddress(address);
         ppu.read(PPUDATA);
+        run(DATA_FETCH_DOTS);
         setVRAMAddress(address);
         return ppu.read(PPUDATA);
     }

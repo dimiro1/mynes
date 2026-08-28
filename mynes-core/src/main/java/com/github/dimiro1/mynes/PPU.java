@@ -116,6 +116,27 @@ public class PPU {
     private static final int ADDRESS_WRITE_DELAY_DOTS = 2;
 
     /**
+     * How long a $2007 read takes to become a fetch, and where the two dots of that fetch fall
+     * inside the wait.
+     * <p>
+     * The register is not a door onto memory. A read of it starts a chain of five latches running
+     * off the PPU clock, and the access only happens when the pulse reaches the far end: ALE two
+     * dots after the CPU let go of the bus, and the read itself two dots after that. AccuracyCoin's
+     * {@code $2007 Stress Test} walks a read across all 341 dots of a visible line and checks what
+     * the buffer caught on each one, which is what pins both numbers down -- and {@code ALE + Read}
+     * needs the gap to be a gap at all, since what it measures is this fetch turning up in the
+     * middle of somebody else's access.
+     * <p>
+     * The counting starts a dot later than the wiki's does, because a CPU cycle's dots are spent
+     * before the cycle's own bus access here -- see {@link NES#tick()}. The dot the read ends on
+     * has already been run by the time this is armed, so the two and the four become a three and
+     * a five.
+     */
+    private static final int DATA_FETCH_DOTS = 6;
+    private static final int DATA_FETCH_ALE = DATA_FETCH_DOTS - 3;
+    private static final int DATA_FETCH_READ = DATA_FETCH_DOTS - 5;
+
+    /**
      * The registers the warm-up window covers, one bit per register number: $2000, $2001, $2005
      * and $2006.
      */
@@ -361,6 +382,59 @@ public class PPU {
     private int readBuffer;
 
     /**
+     * Dots left before the fetch a $2007 read owes, or 0 when it owes none. See
+     * {@link #DATA_FETCH_DOTS}.
+     */
+    private int dataFetch;
+
+    /**
+     * The address that fetch is for, taken when the CPU read happened rather than when it runs --
+     * {@link #v} has moved on by then, and it is the address the program asked about that the
+     * buffer is supposed to come back with.
+     */
+    private int dataFetchAddress;
+
+    /**
+     * Whether that read still owes the counter its increment. See {@link #settleOwedIncrement}.
+     */
+    private boolean incrementOwed;
+
+    // ---------------------------------------------------------------- the address bus
+
+    /**
+     * The fourteen address lines the PPU is driving.
+     * <p>
+     * Only the top six are pins of their own. The bottom eight share the data pins, which is what
+     * {@link #addressLatch} is for.
+     */
+    private int busAddress;
+
+    /**
+     * The octal latch on the board, holding A0-A7 between the two dots of an access.
+     * <p>
+     * Every PPU access is two dots long. On the first the address goes out whole -- the low eight
+     * lines on the shared pins, where ALE latches them into a 74LS373 sitting between the chip and
+     * everything on its bus -- and on the second the pins turn round and the byte comes back, while
+     * the top six lines stay where the chip is holding them. So the address a read reaches is the
+     * top six of {@link #busAddress} <em>as they are on the second dot</em> and the bottom eight as
+     * they were on the first, and anything that moves the counter in between is answered with a
+     * hybrid of the two. AccuracyCoin's {@code Hybrid Addresses} builds one on purpose out of a
+     * $2006 write, and the sprite fetch's first dummy nametable read builds one every scanline,
+     * because the horizontal reset lands between its two dots.
+     */
+    private int addressLatch;
+
+    /**
+     * The byte the last read left on the shared pins.
+     * <p>
+     * Which matters on one kind of dot: one where a $2007 read's fetch lands on the first dot of
+     * somebody else's access. The pins are inputs for the read, so the PPU never gets to drive the
+     * address low byte onto them, and what the latch takes instead is whatever was still sitting
+     * there. See {@link #openAddress}.
+     */
+    private int busData;
+
+    /**
      * Where in OAM the sprite hardware is pointing.
      * <p>
      * On the PPU rather than inside {@link OAM} or {@link SpriteEvaluation} because there is one of
@@ -529,6 +603,12 @@ public class PPU {
         // idle counts this dot as idle if nothing on it touches the bus.
         mapper.ppuTick();
 
+        // Likewise before it: everything below asks which of a $2007 fetch's dots this one is, and
+        // the answer has to be the same for all of them.
+        if (dataFetch > 0) {
+            dataFetch--;
+        }
+
         // Not on a line the overclock is running again. What this clock is measured against is OAM
         // losing its charge, and the charge leaks in the television's time rather than the
         // emulator's -- an extra line takes none of it. Skipping it is also what stops a large
@@ -550,6 +630,15 @@ public class PPU {
             if (isRenderingEnabled()) {
                 backgroundTick();
                 spriteTick();
+
+                if (dot == 257) {
+                    // After the sprite fetch has put its first dummy nametable address out, so the
+                    // low byte the board latched is the one the counter was still holding. The
+                    // read on the next dot then takes its top six lines from the counter as reset
+                    // -- a hybrid address, and the one AccuracyCoin's $2007 Stress Test finds the
+                    // buffer holding at this point in the line.
+                    copyHorizontalPosition();
+                }
             }
 
             // The picture comes out whether or not anything is being rendered: with rendering off
@@ -567,18 +656,25 @@ public class PPU {
             startVBlank();
         }
 
+        // After the pipeline, because the pipeline gets the bus first and this has to make do with
+        // whatever it finds there.
+        dataFetchTick();
+        settleAddress();
+
         advance();
     }
 
     /**
-     * The four things decided on an earlier dot that land on this one, before the dot does any work
-     * of its own.
+     * The three things decided on an earlier dot that land on this one, before the dot does any
+     * work of its own.
      * <p>
      * They are in this order because they feed each other. The mask has to land before the check
      * that reads it, and the fact that it has just landed with rendering switched <em>off</em> is
      * exactly why the corruption cannot also happen on this dot -- it waits for the dot rendering
-     * comes back on. And the address load goes ahead of the fetch pipeline rather than behind it,
-     * so the dot the load lands on already reads from the new address.
+     * comes back on.
+     * <p>
+     * The fourth is {@link #settleAddress}, which is not here: it lands at the end of the dot
+     * rather than the start, for the reason spelled out there.
      */
     private void settle() {
         if (warmingUp && scanline == preRenderLine) {
@@ -600,23 +696,49 @@ public class PPU {
                 corruptionSeed = secondaryOAMAddress();
                 corruptionPending = true;
             }
+
+            // What keeps OAM alive is the evaluation hardware cycling it, and that hardware starts
+            // the moment rendering comes on rather than only at dot 65 -- so switching it on part
+            // way through the evaluation refreshes OAM just as the start of a line does. Without
+            // this a game that renders for a slice of each frame loses its sprites to decay, which
+            // is what AccuracyCoin's $2007 Stress Test does 341 times over: it enables rendering a
+            // hundred cycles before the read it is measuring and turns it off again straight after.
+            if (!wasRendering && isRenderingEnabled()
+                    && scanline < POST_RENDER_LINE && dot > 65 && dot <= 256) {
+                oam.refreshEveryRow();
+            }
         }
 
         if (corruptionPending && isRenderingEnabled() && isRenderingLine()) {
             corruptOAM();
         }
+    }
 
-        if (addressDelay > 0 && --addressDelay == 0) {
-            // A coarse X increment that fell into the gap between the write and this is overwritten
-            // rather than kept, which is what the hardware does.
-            v = t;
-
-            // The counter drives the address bus, so loading it puts the address out there with
-            // no access going with it. That is how a game with the picture switched off clocks an
-            // MMC3's scanline counter, and it happens here rather than at the write because until
-            // this dot the bus is still holding the old address.
-            mapper.ppuAddress(v & 0x3FFF);
+    /**
+     * The second $2006 write's {@code v <- t}, on the dot it finally lands.
+     * <p>
+     * At the <em>end</em> of that dot rather than the start of it, which is the whole of why
+     * {@link #addressLatch} can end up holding one address's low byte under another's high one.
+     * The wiki puts the load "1 to 1.5 dots after the write completes", and a load that lands in
+     * the middle of a dot lands after the address has gone out on that dot and before the byte
+     * comes back on the next -- so a write timed at the first dot of a nametable fetch leaves the
+     * board holding the old low byte and gives the read the new high one. AccuracyCoin's
+     * {@code Hybrid Addresses} does exactly that, and reads a tile the nametable does not contain.
+     */
+    private void settleAddress() {
+        if (addressDelay == 0 || --addressDelay > 0) {
+            return;
         }
+
+        // A coarse X increment that fell into the gap between the write and this is overwritten
+        // rather than kept, which is what the hardware does.
+        v = t;
+
+        // The counter drives the address bus, so loading it puts the address out there with
+        // no access going with it. That is how a game with the picture switched off clocks an
+        // MMC3's scanline counter, and it happens here rather than at the write because until
+        // this dot the bus is still holding the old address.
+        mapper.ppuAddress(v & 0x3FFF);
     }
 
     /**
@@ -715,6 +837,96 @@ public class PPU {
         colourPhase = (colourPhase + thirds) % COLOUR_PHASES;
     }
 
+    // ================================================================ the address bus
+
+    /**
+     * The first dot of an access: the address goes out, and the board latches its low byte.
+     * <p>
+     * The one thing that is not obvious is the branch. A $2007 read whose own fetch lands on this
+     * dot has the shared pins turned round as inputs, so the PPU never gets to drive the address
+     * low byte onto them and the latch takes the byte the last read left there instead. That is
+     * not a guess about analogue behaviour: AccuracyCoin's {@code ALE + Read} arranges for exactly
+     * this dot and then reads a bit plane out of the address it produces, which on that ROM's
+     * nametable is a row of solid pixels where the tile is empty.
+     */
+    private void openAddress(final int address) {
+        busAddress = address & 0x3FFF;
+        addressLatch = dataFetch == DATA_FETCH_READ ? busData : busAddress & 0xFF;
+
+        // The cartridge is wired to the latch, not to the pins, so what it sees is the same
+        // half-and-half address a read on the next dot would reach.
+        mapper.ppuAddress(latchedAddress());
+    }
+
+    /**
+     * The second dot: the byte comes back from wherever the two halves of the address point.
+     *
+     * @param address what the chip is driving on the top six lines now, which is recomputed rather
+     *                than remembered -- that is the whole of why a hybrid address is possible.
+     */
+    private int fetch(final int address) {
+        busAddress = address & 0x3FFF;
+
+        return busData = vram.read(latchedAddress());
+    }
+
+    /**
+     * @return where the address bus is actually pointing: the top six lines as the chip is driving
+     * them now, and the bottom eight as the latch is holding them.
+     */
+    private int latchedAddress() {
+        return (busAddress & 0x3F00) | addressLatch;
+    }
+
+    /**
+     * Whether the fetch pipeline has the bus on this dot, and so whether a $2007 read's own access
+     * has to make do with what it finds there.
+     * <p>
+     * Every dot of a rendering line but the first is half of an access: the odd ones put an address
+     * out, the even ones take the byte back. That holds without a gap from dot 1 to dot 340 --
+     * through the sprite fetches, which read the nametable twice over where a background fetch
+     * would read an attribute, and through the two dummy nametable fetches the line ends with.
+     */
+    private boolean pipelineHasTheBus() {
+        return dot >= 1 && isRenderingLine() && isRenderingEnabled();
+    }
+
+    /**
+     * The two dots a $2007 read owes the bus, whenever they come round.
+     * <p>
+     * With the picture off this is an ordinary read of the address the program asked about. With it
+     * on, the pipeline is already using every dot, and what the buffer ends up holding is a byte
+     * from the picture rather than the one asked for -- which is the whole of AccuracyCoin's
+     * {@code $2007 Stress Test}, and the reason a game cannot read VRAM mid-frame.
+     */
+    private void dataFetchTick() {
+        if (dataFetch == DATA_FETCH_ALE) {
+            if (!pipelineHasTheBus()) {
+                openAddress(dataFetchAddress);
+            }
+
+            return;
+        }
+
+        if (dataFetch != DATA_FETCH_READ) {
+            return;
+        }
+
+        if (!pipelineHasTheBus()) {
+            readBuffer = fetch(dataFetchAddress);
+        } else if ((dot & 1) == 0) {
+            // The pipeline took a byte off the bus on this dot, and there is only one bus: the
+            // buffer catches the same byte the picture did.
+            readBuffer = busData;
+        } else {
+            // The pipeline put an address out on this dot, so the top six lines are its and the
+            // bottom eight are whatever the latch was left holding. See openAddress.
+            readBuffer = fetch(busAddress);
+        }
+
+        settleOwedIncrement();
+    }
+
     // ================================================================ background pipeline
 
     /**
@@ -727,6 +939,11 @@ public class PPU {
      * scanline fetch the first two tiles of the next one, which is why the scroll registers can be
      * changed mid-frame at all: by the time the beam reaches a scanline, its first two tiles have
      * already been read.
+     * <p>
+     * Four bytes over eight dots is <em>two</em> dots per byte, and the switch below is written as
+     * eight cases rather than four because both of them matter. The odd dot puts the address out,
+     * the even one takes the byte back, and the address is recomputed on the second of the two: see
+     * {@link #addressLatch} for what that is worth.
      *
      * @see <a href="https://www.nesdev.org/wiki/PPU_rendering#Cycles_1-256">NESdev: PPU rendering</a>
      */
@@ -745,41 +962,62 @@ public class PPU {
 
         if (fetching) {
             switch (dot & 7) {
-                case 1 -> background.nameTableLatch = vram.read(0x2000 | (v & 0x0FFF));
-                case 3 -> background.attributeLatch = fetchAttribute();
-                case 5 -> background.patternLowLatch = vram.read(patternAddress());
-                case 7 -> background.patternHighLatch = vram.read(patternAddress() + 8);
-                case 0 -> incrementCoarseX();
-                default -> { /* the odd dots drive the address, the even ones take the byte */ }
+                case 1 -> openAddress(nameTableAddress());
+                case 2 -> background.nameTableLatch = fetch(nameTableAddress());
+                case 3 -> openAddress(attributeAddress());
+                case 4 -> background.attributeLatch =
+                        (fetch(attributeAddress()) >> attributeShift()) & 0x03;
+                case 5 -> openAddress(patternAddress());
+                case 6 -> background.patternLowLatch = fetch(patternAddress());
+                case 7 -> openAddress(patternAddress() + 8);
+                default -> {
+                    background.patternHighLatch = fetch(patternAddress() + 8);
+                    incrementCoarseX();
+                }
             }
         }
 
         if (dot == 256) {
             incrementY();
-        } else if (dot == 257) {
-            copyHorizontalPosition();
         } else if (scanline == preRenderLine && dot >= 280 && dot <= 304) {
             copyVerticalPosition();
         } else if (dot == 337 || dot == 339) {
             // Two more nametable reads that nothing uses. They exist because the fetch machinery
-            // has nothing else to do, and mappers that watch the address bus can see them.
-            vram.read(0x2000 | (v & 0x0FFF));
+            // has nothing else to do, and mappers that watch the address bus can see them -- as
+            // does a $2007 read whose fetch lands here, which is how AccuracyCoin knows they are
+            // nametable reads rather than the attribute reads the same dots would take in the
+            // middle of a line.
+            openAddress(nameTableAddress());
+        } else if (dot == 338 || dot == 340) {
+            fetch(nameTableAddress());
         }
     }
 
     /**
-     * Reads the attribute byte covering the tile being fetched and picks out its two bits.
+     * @return the nametable address the counter is naming, which the background fetch reads once a
+     * tile and the sprite fetch reads twice a slot without wanting either byte.
+     */
+    private int nameTableAddress() {
+        return 0x2000 | (v & 0x0FFF);
+    }
+
+    /**
+     * @return the address of the attribute byte covering the tile being fetched.
+     */
+    private int attributeAddress() {
+        return 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+    }
+
+    /**
+     * Which two bits of that byte belong to this tile.
      * <p>
      * One attribute byte covers a four tile by four tile block and packs four two bit palette
      * numbers, one per two by two quadrant. Bit 1 of coarse X picks the left or right half and
      * bit 1 of coarse Y the top or bottom, so the pair wanted is at bit
      * {@code (coarseY & 2) << 1 | (coarseX & 2)}.
      */
-    private int fetchAttribute() {
-        var address = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
-        var shift = ((v >> 4) & 0x04) | (v & 0x02);
-
-        return (vram.read(address) >> shift) & 0x03;
+    private int attributeShift() {
+        return ((v >> 4) & 0x04) | (v & 0x02);
     }
 
     /**
@@ -977,19 +1215,24 @@ public class PPU {
             // the bytes -- the sprite's tile number came out of secondary OAM, not out of a
             // nametable -- but a mapper watching the address bus can see them, and so does a
             // $2007 read waiting for the next byte off the pipeline.
-            case 0 -> vram.read(0x2000 | (v & 0x0FFF));
+            case 0 -> openAddress(nameTableAddress());
+            case 1 -> fetch(nameTableAddress());
 
             // The attribute latch and the X counter are loaded during the second of those two
             // reads, one on each of its dots.
             case 2 -> {
-                vram.read(0x2000 | (v & 0x0FFF));
+                openAddress(nameTableAddress());
                 unit.attributes = secondaryOAM[slot * 4 + 2];
             }
-            case 3 -> unit.counter = secondaryOAM[slot * 4 + 3];
+            case 3 -> {
+                fetch(nameTableAddress());
+                unit.counter = secondaryOAM[slot * 4 + 3];
+            }
 
-            case 4 -> unit.patternLow = fetchSpritePattern(slot, 0);
-            case 6 -> unit.patternHigh = fetchSpritePattern(slot, 8);
-            default -> { /* the dots that only put an address out */ }
+            case 4 -> openAddress(spriteFetchAddress(slot, 0));
+            case 5 -> unit.patternLow = fetchSpritePattern(slot, 0);
+            case 6 -> openAddress(spriteFetchAddress(slot, 8));
+            default -> unit.patternHigh = fetchSpritePattern(slot, 8);
         }
 
         // The fetch window is over, so the eight units are loaded and the evaluation's answer for
@@ -1442,27 +1685,43 @@ public class PPU {
      */
     private int fetchSpritePattern(final int unit, final int plane) {
         var base = unit * 4;
-        var y = secondaryOAM[base];
-        var tile = secondaryOAM[base + 1];
         var attributes = secondaryOAM[base + 2];
+        var row = (scanline & 0xFF) - secondaryOAM[base];
 
-        var height = spriteHeight();
-        var row = (scanline & 0xFF) - y;
-        var inRange = row >= 0 && row < height;
+        var data = fetch(spriteFetchAddress(unit, plane));
 
-        if (!inRange) {
-            row = 0;
-        }
-
-        var data = vram.read(spritePatternAddress(tile, attributes, row, height) + plane);
-
-        if (!inRange) {
+        if (row < 0 || row >= spriteHeight()) {
             return 0;
         }
 
         // A horizontally flipped sprite is loaded into the shift register back to front rather
         // than shifted the other way.
         return (attributes & 0x40) != 0 ? reverseBits(data) : data;
+    }
+
+    /**
+     * The address one of a unit's two pattern bytes is fetched from.
+     * <p>
+     * Answers for a slot the evaluation never filled as well, because the hardware spends the fetch
+     * either way: the $FF secondary OAM was wiped with names tile $FF at a row nowhere near this
+     * scanline, and the byte that comes back is thrown away rather than not read. Which is why this
+     * is a separate answer from {@link #fetchSpritePattern} -- the address goes out on one dot and
+     * the decision about the byte is made on the next.
+     */
+    private int spriteFetchAddress(final int unit, final int plane) {
+        var base = unit * 4;
+        var y = secondaryOAM[base];
+        var tile = secondaryOAM[base + 1];
+        var attributes = secondaryOAM[base + 2];
+
+        var height = spriteHeight();
+        var row = (scanline & 0xFF) - y;
+
+        if (row < 0 || row >= height) {
+            row = 0;
+        }
+
+        return spritePatternAddress(tile, attributes, row, height) + plane;
     }
 
     /**
@@ -2062,6 +2321,12 @@ public class PPU {
             return;
         }
 
+        // Before the load is scheduled rather than after, so that an increment a $2007 read owed
+        // lands on the counter this write is about to replace and is lost with it -- which is the
+        // same thing that happens to a coarse X increment caught in the gap. Nothing a program can
+        // write gets in this window; a test writing registers with no dots in between does.
+        settleOwedIncrement();
+
         t = (t & 0x7F00) | value;
         addressDelay = ADDRESS_WRITE_DELAY_DOTS;
         writeLatch = false;
@@ -2074,7 +2339,14 @@ public class PPU {
      * needs a bus cycle to fetch the byte, so it hands over the previous one and starts the fetch
      * for the next. Palette RAM is inside the chip and needs no bus cycle, so it comes back
      * immediately -- but the fetch still happens, from the nametable that lies under the palette
-     * in the address space, so the buffer is left holding that instead.
+     * in the address space, so the buffer is left holding that instead. The palette address itself
+     * goes on the bus for it: only thirteen of the fourteen lines reach the nametable RAM, but A12
+     * is high and a mapper watching the bus sees that, so reading $3F05 and reading $2F05 fetch the
+     * same byte and differ only in what the cartridge saw go past.
+     * <p>
+     * <b>Starts</b> the fetch rather than doing it. It happens a few dots later, and this is where
+     * the address it will use is taken, because {@link #v} has moved on by then. See
+     * {@link #DATA_FETCH_DOTS}.
      */
     private int readData() {
         var address = v & 0x3FFF;
@@ -2082,23 +2354,24 @@ public class PPU {
 
         if (address >= 0x3F00) {
             value = (openBus.read() & 0xC0) | (readPalette(address) & greyscaleMask());
-            // The palette address itself goes on the bus -- the nametable below it is what
-            // answers, because only thirteen of the fourteen lines reach the nametable RAM, but
-            // A12 is high and a mapper watching the bus sees that. Reading $3F05 and reading
-            // $2F05 fetch the same byte and differ only in what the cartridge saw go past.
-            readBuffer = vram.read(address);
             openBus.drive(value, 0x3F);
         } else {
             value = readBuffer;
-            readBuffer = vram.read(address);
             openBus.drive(value, 0xFF);
         }
 
-        incrementAddress();
+        settleOwedIncrement();
+
+        dataFetchAddress = address;
+        dataFetch = DATA_FETCH_DOTS;
+        incrementOwed = true;
+
         return value;
     }
 
     private void writeData(final int value) {
+        settleOwedIncrement();
+
         var address = v & 0x3FFF;
 
         if (address >= 0x3F00) {
@@ -2110,6 +2383,29 @@ public class PPU {
             vram.write(address, value);
         }
 
+        incrementAddress();
+    }
+
+    /**
+     * Takes the increment a $2007 read owed but has not had its dot for yet.
+     * <p>
+     * The wait exists so that the fetch happens before the counter moves, and nothing a program can
+     * do gets between the two -- except another access to the same register, which two things
+     * manage. A transfer that halts the CPU on a read of $2007 makes it re-issue the read every
+     * cycle it is held off the bus, and every one of those moves the counter on, which is what
+     * {@code DMA + $2007 Read} counts. And {@code STA $2000,Y} with Y=7 issues a dummy read of
+     * $2007 and then writes to it a cycle later, which blargg's {@code test_ppu_read_buffer}
+     * insists lands one address further on than the read did.
+     * <p>
+     * So the increment is taken here rather than lost. It is early by a dot or two, but only ever
+     * by less than the access that asked for it took.
+     */
+    private void settleOwedIncrement() {
+        if (!incrementOwed) {
+            return;
+        }
+
+        incrementOwed = false;
         incrementAddress();
     }
 
@@ -2501,6 +2797,17 @@ public class PPU {
         // taken mid-repeat loads into a machine with the hack off and simply moves on at the next
         // line wrap.
         extraLine = io.u16(extraLine);
+
+        // Appended for the same reason once more: where the address bus and the $2007 fetch it
+        // owes have got to, which is state a state taken between the two dots of an access needs
+        // if it is to give back the same picture. A file written before any of it existed loads
+        // with the bus idle, which is what a machine that has just been handed one looks like.
+        dataFetch = io.u8(dataFetch);
+        dataFetchAddress = io.u16(dataFetchAddress);
+        incrementOwed = io.bool(incrementOwed);
+        busAddress = io.u16(busAddress);
+        addressLatch = io.u8(addressLatch);
+        busData = io.u8(busData);
 
         if (!io.saving()) {
             updateNMILine();

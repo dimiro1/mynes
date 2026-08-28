@@ -212,6 +212,7 @@ class PPUMemoryTests extends PPUFixture {
 
             setVRAMAddress(0x3F05);
             assertEquals(0x2A, ppu.read(PPUDATA) & 0x3F, "the palette entry, straight away");
+            run(DATA_FETCH_DOTS);
 
             setVRAMAddress(0x2100);
             assertEquals(0x5A, ppu.read(PPUDATA), "and the buffer was left holding the nametable");
@@ -238,8 +239,23 @@ class PPUMemoryTests extends PPUFixture {
 
             setVRAMAddress(0x2000);
             assertNotEquals(0xAA, ppu.read(PPUDATA), "the first read is whatever was in the buffer");
+            run(DATA_FETCH_DOTS);
             assertEquals(0xAA, ppu.read(PPUDATA), "and now the byte turns up, one read late");
+            run(DATA_FETCH_DOTS);
             assertEquals(0xBB, ppu.read(PPUDATA));
+        }
+
+        @Test
+        void andOnlyOnceThePpuHasHadTheDotsToFetchIt() {
+            // Four CPU cycles is the soonest a program can read $2007 twice, and the fetch is done
+            // well inside that -- so nothing a game does can see this. Reading twice with no dots
+            // in between is a thing only a test can do, and what it finds is the buffer unchanged.
+            writeVRAM(0x2000, 0xAA);
+
+            setVRAMAddress(0x2000);
+            var first = ppu.read(PPUDATA);
+
+            assertEquals(first, ppu.read(PPUDATA), "the fetch has not happened yet");
         }
     }
 

@@ -485,6 +485,12 @@ class Mapper4Tests {
         }
 
         mapper.ppuAddress(0x1000);
+
+        // What the chip counts is the rise of its filtered copy of the line, which arrives a
+        // couple of dots after the address that caused it. Two more dots, then, or nothing has
+        // happened yet.
+        mapper.ppuTick();
+        mapper.ppuTick();
     }
 
     /**
