@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
@@ -41,6 +42,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Locale;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
 import java.util.function.IntConsumer;
@@ -64,6 +66,19 @@ public class GameUIFrame extends JFrame {
      * $6000, which a dirty flag on the mapper would have been.
      */
     private static final int BATTERY_AUTOSAVE_MILLIS = 60_000;
+
+    /**
+     * How often the status bar is worked out again, and so the window the frame rate is measured
+     * over.
+     * <p>
+     * A second, because the counter it divides is a whole number: half a second catches either 30
+     * frames or 31, which is a reading two frames wide before the machine has done anything, and a
+     * quarter is four. A second brings that to one frame, which is what
+     * {@link FrameRate#sample}'s deadband then absorbs. Nothing is lost by waiting, since
+     * everything on the bar apart from the rate is put there by whatever changed it -- this tick
+     * is the measurement, not the refresh.
+     */
+    private static final int STATUS_INTERVAL_MILLIS = 1_000;
 
     /**
      * The Open dialog, kept between openings so that the next one starts in the folder the last one
@@ -95,7 +110,15 @@ public class GameUIFrame extends JFrame {
     private final SystemFileChooser movieChooser;
 
     private final ScreenComponent screen = new ScreenComponent();
+    private final StatusBar statusBar = new StatusBar();
     private final KeyboardInput keyboardInput;
+
+    /**
+     * Where the number on the bar comes from. Belongs to the window rather than to a machine, so
+     * that it survives the moment one is swapped for another -- {@link FrameRate#reset} is how it
+     * is told that happened.
+     */
+    private final FrameRate frameRate = new FrameRate();
 
     /**
      * Everything remembered between runs, and the only thing that writes the config file.
@@ -122,6 +145,7 @@ public class GameUIFrame extends JFrame {
      */
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
+    private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
     /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
@@ -251,6 +275,13 @@ public class GameUIFrame extends JFrame {
      */
     private Movie pendingMovie;
 
+    /**
+     * The overclock the machine is actually running, which is the menu's answer except while a
+     * movie is playing: one pins its own when it starts, and the status bar describes the machine
+     * rather than the menu. Written wherever the PPU's is.
+     */
+    private Overclock overclock = Overclock.NONE;
+
     public GameUIFrame() {
         super("MyNES");
 
@@ -286,6 +317,12 @@ public class GameUIFrame extends JFrame {
 
     private void init() {
         add(screen, BorderLayout.CENTER);
+
+        // Straight onto the field rather than through applyStatusBar, which resizes the window: at
+        // this point there is no window to resize, and pack() below is about to take the row into
+        // account or not according to exactly this.
+        statusBar.setVisible(config.statusBar());
+        add(statusBar, BorderLayout.SOUTH);
 
         var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
@@ -435,6 +472,12 @@ public class GameUIFrame extends JFrame {
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
 
+        // Under the sizes rather than beside the palette: what this changes is the shape of the
+        // window, not the picture in it.
+        settingsMenuStatusBar.setMnemonic(KeyEvent.VK_B);
+        settingsMenuStatusBar.setSelected(config.statusBar());
+        settingsMenu.add(settingsMenuStatusBar);
+
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
 
@@ -484,6 +527,12 @@ public class GameUIFrame extends JFrame {
 
                     saveConfig();
                 }).setVisible(true));
+
+        settingsMenuStatusBar.addActionListener(e -> {
+            config.setStatusBar(settingsMenuStatusBar.isSelected());
+            saveConfig();
+            applyStatusBar(settingsMenuStatusBar.isSelected());
+        });
 
         fileMenuScreenshot.addActionListener(e -> takeScreenshot());
 
@@ -581,7 +630,7 @@ public class GameUIFrame extends JFrame {
                 }
             }
 
-            updateTitle();
+            describeMachine();
         });
 
         machineMenuFastForward.addActionListener(e -> applySpeed());
@@ -592,6 +641,7 @@ public class GameUIFrame extends JFrame {
         machineMenuMute.addActionListener(e -> {
             config.setMuted(machineMenuMute.isSelected());
             saveConfig();
+            updateStatusBar();
 
             if (runner != null) {
                 runner.setMuted(machineMenuMute.isSelected());
@@ -619,6 +669,7 @@ public class GameUIFrame extends JFrame {
         hacksMenuUnlimitedSprites.addActionListener(e -> {
             config.setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
             saveConfig();
+            updateStatusBar();
 
             if (runner != null) {
                 var ppu = nes.getPPU();
@@ -634,6 +685,8 @@ public class GameUIFrame extends JFrame {
         hacksMenuGameGenie.addActionListener(e ->
                 new GameGenieDialog(this, genieCodes, updated -> {
                     genieCodes = updated;
+
+                    updateStatusBar();
 
                     if (runner != null) {
                         runner.post(() -> {
@@ -735,6 +788,22 @@ public class GameUIFrame extends JFrame {
         autosave.setRepeats(true);
         autosave.start();
 
+        // The frame rate is the one thing on the bar that nothing announces: it is a measurement
+        // rather than a setting, so it has to be gone and looked at. Everything else the bar says
+        // is worked out on the same tick as well, which is the backstop for a state nobody thought
+        // to refresh it from.
+        var status = new Timer(STATUS_INTERVAL_MILLIS, e -> {
+            measureFrameRate();
+            updateStatusBar();
+        });
+
+        status.setRepeats(true);
+        status.start();
+
+        // Once before the first tick, so the bar opens describing the settings the next cartridge
+        // will run under rather than blank.
+        updateStatusBar();
+
         pack();
         setLocationRelativeTo(null);
     }
@@ -802,10 +871,16 @@ public class GameUIFrame extends JFrame {
                 if (runner != null) {
                     // Resolved here rather than on the emulation thread: the region is what turns a
                     // percentage into scanlines, and it belongs to the machine this thread owns.
-                    var overclock = setting.resolve(nes.getRegion());
+                    overclock = setting.resolve(nes.getRegion());
+
+                    // Copied out of the field before the lambda closes over it. A lambda reading
+                    // the field would read it on the emulation thread, whenever the queue got to
+                    // it, which is neither this thread's value nor safe to ask for.
+                    var chosen = overclock;
                     var ppu = nes.getPPU();
 
-                    runner.post(() -> ppu.setOverclock(overclock));
+                    runner.post(() -> ppu.setOverclock(chosen));
+                    updateStatusBar();
                 }
             });
 
@@ -953,13 +1028,114 @@ public class GameUIFrame extends JFrame {
      * does nothing.
      */
     private void applyVideoFilter() {
-        var pal = currentRegion() == Region.PAL;
-        var filter = pal ? VideoFilter.NONE : config.videoFilter();
+        var filter = currentVideoFilter();
 
         screen.setVideoFilter(filter, config.filterStrength());
-        settingsMenuVideoFilter.setEnabled(!pal);
+        settingsMenuVideoFilter.setEnabled(currentRegion() != Region.PAL);
         settingsMenuFilterStrength.setEnabled(filter == VideoFilter.NTSC);
         settingsMenuPalette.setEnabled(filter == VideoFilter.NONE);
+
+        updateStatusBar();
+    }
+
+    /**
+     * Which filter the picture is actually being coloured through, which is not always the one the
+     * menu has ticked: a PAL machine draws a signal this decoder is not for, so it falls back to
+     * the palette while the tick stays where it was. Both the screen and the status bar ask this
+     * rather than the config, so that neither can describe a picture nobody is looking at.
+     */
+    private VideoFilter currentVideoFilter() {
+        return currentRegion() == Region.PAL ? VideoFilter.NONE : config.videoFilter();
+    }
+
+    /**
+     * Shows the status bar or hides it, and gives the window the row rather than taking it out of
+     * the picture.
+     * <p>
+     * The height is added to the window instead of the whole thing being packed, which is the
+     * difference between a window that keeps whatever size it has been dragged to and one that
+     * snaps back to a whole multiple of the picture every time this is ticked. A maximized window
+     * cannot be resized at all and simply lays itself out again, which costs it the row.
+     */
+    private void applyStatusBar(final boolean show) {
+        if (statusBar.isVisible() == show) {
+            return;
+        }
+
+        // Asked of the content pane rather than of the bar, because a BorderLayout leaves a hidden
+        // component out of its own preferred size: the difference between the two answers is the
+        // row, however tall a look and feel decided that is, and neither reading depends on what a
+        // component that is not being laid out would say about itself.
+        var before = getContentPane().getPreferredSize().height;
+
+        statusBar.setVisible(show);
+
+        var after = getContentPane().getPreferredSize().height;
+
+        if (getExtendedState() == Frame.NORMAL) {
+            setSize(getWidth(), getHeight() + after - before);
+        }
+
+        validate();
+    }
+
+    /**
+     * Reads the frame counter and puts what the machine has been running at onto the bar.
+     * <p>
+     * From the timer and from nowhere else, which is the whole of why it is not part of
+     * {@link #updateStatusBar}. A rate is measured across the gap between two readings, so one
+     * taken because somebody opened a menu would measure a tenth of a second of a machine -- six
+     * frames, which rounds to anything -- and would leave the tick after it measuring nine tenths.
+     * The description has no such memory and can be rewritten as often as anything changes.
+     */
+    private void measureFrameRate() {
+        if (runner == null) {
+            statusBar.setFrameRate(FrameRate.UNKNOWN);
+            return;
+        }
+
+        statusBar.setFrameRate(frameRate.sample(runner.getFramesRun(), System.nanoTime()));
+    }
+
+    /**
+     * Puts what the machine is and what it is doing onto the status bar.
+     * <p>
+     * Called from {@link #describeMachine} whenever something changes, so that a setting somebody
+     * has just picked is on the bar before they have let go of the menu, and again on the timer as
+     * the backstop for anything nobody thought to call it from. It runs on the event dispatch
+     * thread and asks the emulation thread for nothing: all of this is the window's own state.
+     * <p>
+     * The description is written even with no cartridge loaded, because every part of it is a
+     * setting the next one will run under. The activity is not: there is nothing being done to a
+     * machine that does not exist.
+     * <p>
+     * The whole of it is rebuilt each time rather than the changed part, because most of what goes
+     * into it only ever appears in the tooltip -- and a screen size or a rewind length that had to
+     * remember to announce itself to the bar would be the one that eventually did not.
+     */
+    private void updateStatusBar() {
+        // With no machine there is no overclock on one, so the menu's answer stands in -- otherwise
+        // the bar would say a machine is running the hardware's timing while the Hacks menu has
+        // +50% ticked. Everything else here is read the same way for the same reason: what is on
+        // the bar before a cartridge is loaded is what the next one will run under.
+        var extra = runner == null ? config.overclock().resolve(currentRegion()) : overclock;
+
+        statusBar.setMachine(new StatusBar.Machine(
+                currentRegion(),
+                config.region(),
+                extra,
+                genieCodes.size(),
+                config.unlimitedSprites(),
+                currentVideoFilter(),
+                config.filterStrength(),
+                config.palette(currentRegion()).name(),
+                config.screenScale(),
+                config.screenshotScale(),
+                config.fastForwardSpeed(),
+                config.rewindSeconds(),
+                config.muted()));
+
+        statusBar.setActivity(machineState());
     }
 
     /**
@@ -982,6 +1158,7 @@ public class GameUIFrame extends JFrame {
                 config.setScreenScale(scale);
                 saveConfig();
                 applyScreenScale(scale);
+                updateStatusBar();
             });
 
             group.add(item);
@@ -1013,6 +1190,7 @@ public class GameUIFrame extends JFrame {
             item.addActionListener(e -> {
                 config.setScreenshotScale(scale);
                 saveConfig();
+                updateStatusBar();
             });
 
             group.add(item);
@@ -1297,7 +1475,7 @@ public class GameUIFrame extends JFrame {
         logger.log(Level.INFO, "recording to " + recordingTo.getFileName());
 
         updateMovieItems();
-        updateTitle();
+        describeMachine();
     }
 
     private void stopRecording() {
@@ -1320,7 +1498,7 @@ public class GameUIFrame extends JFrame {
         keyboardInput.setLatching(false);
 
         updateMovieItems();
-        updateTitle();
+        describeMachine();
     }
 
     /**
@@ -1411,13 +1589,17 @@ public class GameUIFrame extends JFrame {
         // runner is still alive and the game is somebody's again from the next frame, so the menu's
         // answer goes back on -- which is also what makes the greyed-out submenu tell the truth
         // about what is running the moment it comes back.
-        var overclock = config.overclock().resolve(nes.getRegion());
+        overclock = config.overclock().resolve(nes.getRegion());
+
+        // Copied out of the field for the reason the overclock menu copies it: a lambda that read
+        // the field would read it on the emulation thread and at some later moment.
+        var restored = overclock;
         var ppu = nes.getPPU();
 
-        runner.post(() -> ppu.setOverclock(overclock));
+        runner.post(() -> ppu.setOverclock(restored));
 
         updateMovieItems();
-        updateTitle();
+        describeMachine();
     }
 
     /**
@@ -1529,7 +1711,7 @@ public class GameUIFrame extends JFrame {
                 ? config.fastForwardSpeed()
                 : EmulationSpeed.NORMAL);
 
-        updateTitle();
+        describeMachine();
     }
 
     /**
@@ -1694,9 +1876,11 @@ public class GameUIFrame extends JFrame {
         // a replay of a different game. Off the config rather than off the last machine because the
         // region can have changed under it, and a percentage is only scanlines once there is a
         // machine to ask.
-        nes.getPPU().setOverclock(pendingMovie != null
+        overclock = pendingMovie != null
                 ? pendingMovie.overclock()
-                : config.overclock().resolve(nes.getRegion()));
+                : config.overclock().resolve(nes.getRegion());
+
+        nes.getPPU().setOverclock(overclock);
 
         // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
         // window as the two lines above: the runner does not exist yet, so this thread owns it.
@@ -1740,6 +1924,12 @@ public class GameUIFrame extends JFrame {
         // Seconds is what the setting says and frames is what a ring holds, and only here is it
         // known which machine the cartridge turned out to run on -- 1803 frames for thirty seconds
         // of NTSC against 1500 of PAL. Zero seconds builds no ring at all.
+        //
+        // The rate goes with it: the new runner's frame counter starts again from zero, so an
+        // interval measured across the changeover would be the outgoing machine's rate divided by
+        // however long building this one took.
+        frameRate.reset();
+
         runner = new EmulatorRunner(nes, screen, debugger,
                 Rewind.framesFor(nes.getRegion(), config.rewindSeconds()));
         runner.setStopListener(this::stopped);
@@ -1781,7 +1971,7 @@ public class GameUIFrame extends JFrame {
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
         updateMovieItems();
-        updateTitle();
+        describeMachine();
     }
 
     /**
@@ -1805,13 +1995,29 @@ public class GameUIFrame extends JFrame {
         }
     }
 
+    /**
+     * Brings both descriptions of the machine into line: the one in the title bar, which is for a
+     * window list and a dock, and the one along the bottom, which is for whoever is playing.
+     * <p>
+     * One call rather than two at each of the places something changes, because the two say
+     * overlapping things and a caller that remembered one of them would leave the window
+     * disagreeing with itself.
+     */
+    private void describeMachine() {
+        updateTitle();
+        updateStatusBar();
+    }
+
     private void updateTitle() {
         if (cart == null) {
             setTitle("MyNES");
             return;
         }
 
-        setTitle("MyNES - " + cart.filename() + patched() + machineKind() + machineState());
+        var state = machineState();
+
+        setTitle("MyNES - " + cart.filename() + patched() + machineKind()
+                + (state.isEmpty() ? "" : " (" + state.toLowerCase(Locale.ROOT) + ")"));
     }
 
     /**
@@ -1836,8 +2042,12 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * What the title says the machine is doing, when it is doing anything other than simply
-     * running. Pause wins over fast forward: a machine that is not running is not running fast.
+     * What the machine is doing, when it is doing anything other than simply running. Pause wins
+     * over fast forward: a machine that is not running is not running fast.
+     * <p>
+     * One sentence for two places. The status bar shows it as it is and the title bar puts it in
+     * brackets in lower case, which is what keeps the two from drifting into describing the same
+     * machine differently.
      */
     private String machineState() {
         if (runner == null) {
@@ -1845,22 +2055,22 @@ public class GameUIFrame extends JFrame {
         }
 
         if (runner.isPaused()) {
-            return " (paused)";
+            return "Paused";
         }
 
         // Above fast forward, because what the machine is doing to a file is a bigger surprise than
         // how fast it is going -- and a recording somebody has forgotten about is the one state
         // worth being reminded of on every glance at the window.
         if (moviePlaying) {
-            return " (playback)";
+            return "Playback";
         }
 
         if (movieRecording) {
-            return " (recording)";
+            return "Recording";
         }
 
         if (runner.getSpeed() != EmulationSpeed.NORMAL) {
-            return " (fast forward)";
+            return "Fast forward";
         }
 
         return "";
@@ -1893,7 +2103,7 @@ public class GameUIFrame extends JFrame {
     private void stopped(final Debugger.Stop stop) {
         machineMenuPause.setSelected(true);
         keyboardInput.releaseAll();
-        updateTitle();
+        describeMachine();
 
         if (debuggerFrame != null) {
             debuggerFrame.stopped(stop);
