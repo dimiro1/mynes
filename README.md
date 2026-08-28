@@ -65,6 +65,7 @@ page carries is never anything a build here has not already made.
 | Quick Load | F7 |
 | Rewind (hold) | Backspace |
 | Screenshot | F12 |
+| Copy Screenshot | Cmd/Ctrl+F12 |
 
 Rewind runs the game backwards through the last thirty seconds, sound and all, for as long as you
 hold the key; let go and it plays on from there. Fast Forward applies while you hold it, so the two
@@ -151,8 +152,10 @@ to keep its shape; the menu is how to get back to a clean multiple.
 
 **Screenshots** from **File > Screenshot**, or `F12`, which writes a PNG beside the ROM named after
 it and stamped with the time — no dialog, since a picture that took one to save would be a picture
-of the moment after the one worth keeping. **Settings > Screenshot Size** magnifies it by 1x to 4x
-on the way out; 1x is the 256x224 the machine drew. It is the picture rather than the window: the
+of the moment after the one worth keeping. **File > Copy Screenshot**, or `Cmd/Ctrl+F12`, puts the
+same picture on the clipboard and writes no file, which is the one to use for a picture headed
+straight into a message or a bug report. **Settings > Screenshot Size** magnifies either by 1x to
+4x on the way out; 1x is the 256x224 the machine drew. It is the picture rather than the window: the
 overscan is cropped the way the window crops it, the magnification is a whole number whatever size
 the window has been dragged to, and it works on a machine that is paused or stopped at a breakpoint.
 

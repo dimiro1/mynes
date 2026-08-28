@@ -106,10 +106,10 @@ public final class Config {
             """;
 
     private static final String SCREENSHOT_SCALE_HEADER = """
-            # How many times File > Screenshot magnifies the picture on its way into the file:
-            # 1, 2, 3 or 4. 1 is the 256x224 the machine drew and is what to keep; the rest are
-            # for a picture headed somewhere that will not scale it with square pixels. The files
-            # land beside the ROM, named after it and stamped with the time.
+            # How many times File > Screenshot and File > Copy Screenshot magnify the picture on
+            # its way out: 1, 2, 3 or 4. 1 is the 256x224 the machine drew and is what to keep; the
+            # rest are for a picture headed somewhere that will not scale it with square pixels.
+            # The files land beside the ROM, named after it and stamped with the time.
             """;
 
     private static final String STATUS_BAR_HEADER = """
@@ -530,9 +530,10 @@ public final class Config {
     }
 
     /**
-     * How big File &gt; Screenshot writes the picture. A setting of its own rather than the window's
-     * size, because the two are asked for different reasons: the window is as big as the display
-     * allows, and a picture file wants to be the size it is going to be looked at.
+     * How big File &gt; Screenshot writes the picture, and how big File &gt; Copy Screenshot puts it
+     * on the clipboard. A setting of its own rather than the window's size, because the two are
+     * asked for different reasons: the window is as big as the display allows, and a picture that
+     * has left the emulator wants to be the size it is going to be looked at.
      */
     public ScreenScale screenshotScale() {
         return screenshotScale;
