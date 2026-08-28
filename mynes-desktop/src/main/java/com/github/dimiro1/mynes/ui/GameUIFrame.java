@@ -187,11 +187,13 @@ public class GameUIFrame extends JFrame {
     private JMenu settingsMenuFilterStrength;
 
     /**
-     * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
-     * There is nothing to photograph until one is running, and a File menu greyed out as a whole
-     * would take Open with it.
+     * The two pictures, kept because they are the items in an always-enabled menu that need a
+     * machine. There is nothing to photograph until one is running, and a File menu greyed out as a
+     * whole would take Open with it.
      */
     private final JMenuItem fileMenuScreenshot = new JMenuItem("Screenshot", KeyEvent.VK_S);
+    private final JMenuItem fileMenuCopyScreenshot =
+            new JMenuItem("Copy Screenshot", KeyEvent.VK_C);
 
     /**
      * The breakpoints, which belong to the window rather than to any one machine.
@@ -347,6 +349,16 @@ public class GameUIFrame extends JFrame {
         fileMenuScreenshot.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F12, 0));
         fileMenuScreenshot.setEnabled(false);
         fileMenu.add(fileMenuScreenshot);
+
+        // The screenshot key with the copy modifier on it, rather than Cmd-C, and for the reason
+        // the function keys are here at all: a letter is somewhere different on every keyboard
+        // layout. Cmd-C reads as the obvious choice and is not one -- on Colemak-DH the letter c
+        // sits on the key labelled X, so the key somebody actually presses for copy sends Cmd-D
+        // and nothing happens, which looks exactly like a broken shortcut. F12 is in the same
+        // place on every layout there is, and this is F12's other half.
+        fileMenuCopyScreenshot.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F12, command));
+        fileMenuCopyScreenshot.setEnabled(false);
+        fileMenu.add(fileMenuCopyScreenshot);
 
         fileMenu.addSeparator();
 
@@ -535,6 +547,7 @@ public class GameUIFrame extends JFrame {
         });
 
         fileMenuScreenshot.addActionListener(e -> takeScreenshot());
+        fileMenuCopyScreenshot.addActionListener(e -> copyScreenshot());
 
         fileMenuOpen.addActionListener(e -> {
             if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
@@ -1170,7 +1183,7 @@ public class GameUIFrame extends JFrame {
 
     /**
      * Builds the Screenshot Size submenu: how many times File &gt; Screenshot magnifies the picture
-     * on its way into the file.
+     * on its way out, into the file or onto the clipboard.
      * <p>
      * The same four multiples the window offers, asked separately because they are asked for
      * different reasons -- the window is as big as the display allows, and a file is as big as
@@ -1236,6 +1249,48 @@ public class GameUIFrame extends JFrame {
             JOptionPane.showMessageDialog(
                     this,
                     "Could not write " + path.getFileName() + ": " + e.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * Puts the same picture on the system clipboard instead, at the same magnification.
+     * <p>
+     * The other half of taking a picture, and the half the file is in the way of: a screenshot
+     * headed straight for a message, a bug report or a wiki is one nobody wants a copy of left
+     * beside the ROM afterwards. Which is why it is the screenshot size that decides how big this
+     * one is, rather than a setting of its own -- the question a picture leaving the emulator asks
+     * is the same question whichever way it leaves.
+     * <p>
+     * The picture comes off the frame this thread is already holding, exactly as
+     * {@link #takeScreenshot} takes it and for the same reasons, so it works on a machine that is
+     * paused or stopped at a breakpoint. There is no ROM path in it: nothing here is named after
+     * the game, because nothing here is a file.
+     */
+    private void copyScreenshot() {
+        var image = screen.snapshot(config.screenshotScale());
+
+        if (image == null) {
+            // The same sixtieth of a second between a machine starting and its first finished
+            // frame that takeScreenshot steps around.
+            return;
+        }
+
+        try {
+            Toolkit.getDefaultToolkit()
+                    .getSystemClipboard()
+                    .setContents(new ImageSelection(image), null);
+
+            logger.log(Level.INFO, "copied the picture to the clipboard");
+        } catch (IllegalStateException e) {
+            // Another program has the clipboard open and has not given it back. Rare, and worth a
+            // dialog rather than a log line: the failure is otherwise invisible until somebody
+            // pastes and gets whatever they copied before this.
+            logger.log(Level.ERROR, "could not reach the clipboard", e);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not put the picture on the clipboard: " + e.getMessage(),
                     "Error",
                     JOptionPane.ERROR_MESSAGE);
         }
@@ -1970,6 +2025,7 @@ public class GameUIFrame extends JFrame {
         machineMenu.setEnabled(true);
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
+        fileMenuCopyScreenshot.setEnabled(true);
         updateMovieItems();
         describeMachine();
     }
