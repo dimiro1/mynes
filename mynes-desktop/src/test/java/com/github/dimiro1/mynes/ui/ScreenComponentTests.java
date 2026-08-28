@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
@@ -134,15 +135,41 @@ class ScreenComponentTests {
 
         var throughThePalette = painted(screen, 0, OVERSCAN_TOP);
 
-        screen.setVideoFilter(VideoFilter.NTSC);
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength());
 
         var decoded = painted(screen, 0, OVERSCAN_TOP);
 
         assertNotEquals(throughThePalette, decoded, "the decoder is not the palette");
 
-        screen.setVideoFilter(VideoFilter.NONE);
+        screen.setVideoFilter(VideoFilter.NONE, FilterStrength.defaultStrength());
 
         assertEquals(throughThePalette, painted(screen, 0, OVERSCAN_TOP), "and back again");
+    }
+
+    /**
+     * The strength is the same property again, and for the same reason: the way to see what it does
+     * is to take one frame at two settings, which wants the picture already here to be redrawn.
+     */
+    @Test
+    void changingTheStrengthRecoloursTheFrameAlreadyHere() {
+        var screen = new ScreenComponent();
+
+        // A vertical edge, since a flat field decodes the same at every strength on purpose and
+        // would say nothing about whether the setting arrived.
+        var frame = frameOf(0x0F);
+        for (var y = 0; y < PPU.SCREEN_HEIGHT; y++) {
+            frame[y * PPU.SCREEN_WIDTH + 1] = 0x30;
+        }
+
+        screen.present(frame, 0);
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.STRONG);
+
+        var soft = painted(screen, 2, OVERSCAN_TOP);
+
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.LOW);
+
+        assertNotEquals(soft, painted(screen, 2, OVERSCAN_TOP),
+                "less of the pixel next door should reach this one");
     }
 
     /**
@@ -157,7 +184,7 @@ class ScreenComponentTests {
 
         var throughThePalette = screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0);
 
-        screen.setVideoFilter(VideoFilter.NTSC);
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength());
 
         assertNotEquals(
                 throughThePalette, screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0));

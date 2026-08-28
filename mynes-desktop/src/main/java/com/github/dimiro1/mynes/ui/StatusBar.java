@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import net.miginfocom.swing.MigLayout;
 
@@ -88,6 +89,8 @@ final class StatusBar extends JPanel {
      * @param filter           how the picture is being coloured. What is actually in force rather
      *                         than what the menu has ticked, which are two different things on a
      *                         PAL machine.
+     * @param strength         how much of the detail the decoder's chroma trap costs it gives
+     *                         back, which the filter can make irrelevant the other way round.
      * @param palette          the name of the table the picture is drawn through, which the filter
      *                         can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -108,6 +111,7 @@ final class StatusBar extends JPanel {
             int genieCodes,
             boolean unlimitedSprites,
             VideoFilter filter,
+            FilterStrength strength,
             String palette,
             ScreenScale screenScale,
             ScreenScale screenshotScale,
@@ -355,7 +359,12 @@ final class StatusBar extends JPanel {
         }
 
         if (machine.filter() != VideoFilter.NONE) {
-            parts.add(machine.filter().label() + " filter");
+            // The strength rides on the filter's own part rather than taking one of its own. It is
+            // a setting on something already named, and an item of its own would push the console
+            // off the end of a narrow window to say how soft a picture is.
+            parts.add(machine.strength() == FilterStrength.defaultStrength()
+                    ? machine.filter().label() + " filter"
+                    : machine.filter().label() + " filter (" + machine.strength().label() + ")");
         }
 
         // Last, because it changes nothing until a file is written -- which also makes it the one
@@ -386,6 +395,12 @@ final class StatusBar extends JPanel {
         row(rows, "Game Genie", machine.genieCodes() == 0 ? "None" : codes(machine.genieCodes()));
         row(rows, "Unlimited sprites", machine.unlimitedSprites() ? "On" : "Off");
         row(rows, "Video filter", machine.filter().label());
+
+        // The other way round from the palette below, and the same news the greyed-out Strength
+        // submenu carries: a lookup table has no chroma trap for a strength to be the strength of.
+        row(rows, "Filter strength", machine.filter() == VideoFilter.NONE
+                ? "Not decoding"
+                : machine.strength().label());
 
         // Said rather than left blank, and it is the same news the greyed-out Palette item carries:
         // a decoder works its colours out of the signal and never opens the table at all.

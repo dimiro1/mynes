@@ -78,6 +78,7 @@ the palette, screen size, fast forward speed and how much rewind keeps:
 video.palette=nesdev
 video.palette.pal=2c07
 video.filter=none
+video.filter.strength=medium
 video.scale=2
 video.screenshot.scale=1
 emulation.region=auto
@@ -143,6 +144,15 @@ out itself on a PAL machine, whose 2C07 draws a different signal that would need
 own. Nothing measured moves -- the frame hash and the colour counts are taken over the colour
 indices the chip emits -- so it changes the picture and nothing else. `--filter ntsc` does the same
 from the command line.
+
+**Settings > Video Filter > Strength** says how soft it draws. Every receiver had to keep the
+subcarrier out of luma, and the bluntest way to do it is to average a whole colour cycle -- which
+takes every luma detail finer than that cycle down with the chroma, and is the whole of why a
+decoded picture is softer than a palette's. A television with a proper trap in it did not pay that
+price, so this is how much of the detail to give back: **Strong** is the bare average and the
+softest of the three, **Low** is nearly as sharp as the palette and still bleeds its colours, and
+**Medium** is where it starts. The colours do not move at any of them -- only the detail between
+them. `--filter ntsc=low` does the same from the command line.
 
 **Screen size** at 1x, 2x, 3x or 4x of the 256x224 picture, from **Settings > Screen Size**, which
 packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
@@ -365,7 +375,9 @@ seconds to start up, the jar about a third of one.
   come from. It bypasses `--palette`, and it is refused on a PAL machine. Unlike everything else in
   this list it does **not** join the things to check before diffing two runs: everything the report
   measures is taken over colour indices, so `video.finalFrame` is identical with it on and off and
-  only the PNGs differ. `filter` is a command in the interactive session too.
+  only the PNGs differ. `--filter ntsc=low`, `=medium` or `=strong` says how much of the fine detail
+  the decoder's chroma trap costs to give back; `filter` is a command in the interactive session
+  too, and takes the strength as a second word.
 - **`--region ntsc|pal`** overrides what the cartridge's header asks for. Two runs in different
   regions are not two measurements of the same thing — a frame is 106392 dots on one machine and
   89342 on the other — so `run.region` in the report is part of what to check before diffing them.

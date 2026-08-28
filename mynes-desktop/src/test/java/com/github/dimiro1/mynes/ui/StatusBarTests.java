@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -40,6 +41,7 @@ class StatusBarTests {
         private int genieCodes;
         private boolean unlimitedSprites;
         private VideoFilter filter = VideoFilter.NONE;
+        private FilterStrength strength = FilterStrength.defaultStrength();
         private String palette = "NESdev";
         private ScreenScale screenScale = ScreenScale.TWO_TIMES;
         private ScreenScale screenshotScale = ScreenScale.ONE_TIMES;
@@ -73,6 +75,11 @@ class StatusBarTests {
             return this;
         }
 
+        Setup at(final FilterStrength strength) {
+            this.strength = strength;
+            return this;
+        }
+
         Setup colouredBy(final String palette) {
             this.palette = palette;
             return this;
@@ -95,8 +102,8 @@ class StatusBarTests {
 
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
-                    unlimitedSprites, filter, palette, screenScale, screenshotScale, fastForward,
-                    rewindSeconds, muted);
+                    unlimitedSprites, filter, strength, palette, screenScale, screenshotScale,
+                    fastForward, rewindSeconds, muted);
         }
     }
 
@@ -121,6 +128,36 @@ class StatusBarTests {
         void aPALMachineSaysSo() {
             assertEquals(List.of("PAL"),
                     StatusBar.parts(setup().on(Region.PAL, RegionSetting.PAL).machine()));
+        }
+
+        /**
+         * The strength qualifies the filter's own part rather than taking one of its own, and only
+         * once it is not the one it starts at -- so the ordinary decoded line is unchanged and the
+         * window has the same number of parts to fit either way.
+         */
+        @Test
+        void aStrengthThatIsNotTheDefaultQualifiesTheFilterRatherThanJoiningIt() {
+            assertEquals(
+                    List.of("NTSC", "NTSC filter"),
+                    StatusBar.parts(setup().through(VideoFilter.NTSC).machine()));
+
+            assertEquals(
+                    List.of("NTSC", "NTSC filter (Low)"),
+                    StatusBar.parts(setup()
+                            .through(VideoFilter.NTSC)
+                            .at(FilterStrength.LOW)
+                            .machine()));
+        }
+
+        /**
+         * And nothing at all when the palette is drawing, since there is no filter for it to
+         * qualify.
+         */
+        @Test
+        void aStrengthSaysNothingWhileThePaletteIsDrawing() {
+            assertEquals(
+                    List.of("NTSC"),
+                    StatusBar.parts(setup().at(FilterStrength.LOW).machine()));
         }
 
         /**
@@ -293,7 +330,8 @@ class StatusBarTests {
             var detail = StatusBar.detail(setup().machine());
 
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
-                    "Unlimited sprites", "Video filter", "Palette", "Screen size",
+                    "Unlimited sprites", "Video filter", "Filter strength", "Palette",
+                    "Screen size",
                     "Screenshot size", "Fast forward speed", "Rewind history", "Sound"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
             }
@@ -321,6 +359,20 @@ class StatusBarTests {
             assertTrue(detail.contains("Game Genie&nbsp;&nbsp;&nbsp;</td><td>None"), detail);
             assertTrue(detail.contains("Unlimited sprites&nbsp;&nbsp;&nbsp;</td><td>Off"), detail);
             assertTrue(detail.contains("Sound&nbsp;&nbsp;&nbsp;</td><td>On"), detail);
+        }
+
+        /**
+         * The palette row the other way round, and the same news the greyed-out Strength submenu
+         * carries: a lookup table has no chroma trap for a strength to be the strength of.
+         */
+        @Test
+        void anUnfilteredPictureHasNoStrengthToReport() {
+            assertTrue(StatusBar.detail(setup().machine())
+                    .contains("Filter strength&nbsp;&nbsp;&nbsp;</td><td>Not decoding"));
+
+            assertTrue(StatusBar.detail(
+                            setup().through(VideoFilter.NTSC).at(FilterStrength.LOW).machine())
+                    .contains("Filter strength&nbsp;&nbsp;&nbsp;</td><td>Low"));
         }
 
         /**

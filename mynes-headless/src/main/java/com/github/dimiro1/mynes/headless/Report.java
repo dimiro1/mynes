@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.state.Movie;
+import com.github.dimiro1.mynes.video.VideoFilter;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -273,6 +274,15 @@ public final class Report {
         var video = report.putObject("video");
         video.put("palette", options.paletteFor(region).id());
         video.put("filter", session.filter().id());
+
+        // Explicitly null rather than absent when the palette is drawing, the way run.record and
+        // run.replay are: the question "how soft was this drawn" has an answer of "it was not".
+        if (session.filter() == VideoFilter.NTSC) {
+            video.put("filterStrength", session.strength().id());
+        } else {
+            video.putNull("filterStrength");
+        }
+
         video.put("overscan", options.fullFrame() ? "full" : "cropped");
         video.put("scale", options.scale());
 
