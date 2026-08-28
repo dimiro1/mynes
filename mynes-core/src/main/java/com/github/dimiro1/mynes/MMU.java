@@ -29,7 +29,7 @@ public class MMU {
     private final int[] internalRAM = new int[0x0800];
 
     /**
-     * The last byte anything drove onto the CPU's data bus.
+     * The last byte anything drove onto the 2A03's data <em>pins</em>.
      * <p>
      * The eight data pins are a wire, not a memory, but a wire with enough capacitance to hold its
      * last level for far longer than a cycle. So a read of an address nothing answers to leaves the
@@ -38,15 +38,33 @@ public class MMU {
      * is not a curiosity: AccuracyCoin's own timing routine executes from it, and a machine that
      * returns zero here hangs in a loop waiting for a value it will never see.
      * <p>
-     * Every driven read and <em>every</em> write refreshes it. Two things do not:
+     * Every driven read and <em>every</em> write refreshes it, whoever made it -- a transfer's read
+     * counts, which is what {@code DMA + Open Bus} measures. Two things do not:
      * <ul>
      *   <li>{@link #peek}, which is not a bus cycle at all.</li>
-     *   <li>Reading $4015. Everything that register reports is internal to the 2A03 and reaches the
-     *       CPU on a bus of its own, so the external pins keep whatever they held -- and bit 5,
-     *       which the register has nothing to say about, reads back off them.</li>
+     *   <li>Reading $4015, which never reaches these pins. See {@link #internalDataBus}.</li>
      * </ul>
      */
-    private int dataBus;
+    private int externalDataBus;
+
+    /**
+     * The last byte on the bus the 6502 core sits on, inside the 2A03.
+     * <p>
+     * There are two of these buses and a buffer between them, and the difference is measurable in
+     * both directions -- AccuracyCoin's {@code Internal Data Bus} takes one measurement each way:
+     * <ul>
+     *   <li><b>Outwards.</b> $4015 reports over this bus and never opens the buffer, so a read of
+     *       it leaves the pins holding whatever they held. Read $4015 and then read open bus, and
+     *       what comes back is the byte from before the $4015 read, not the status.</li>
+     *   <li><b>Inwards.</b> A transfer's read drives the pins but not this bus, because the core is
+     *       off it. So bit 5 of a $4015 read -- the one bit the register has nothing to say about,
+     *       and so the one that comes off the floating lines -- shows what the <em>CPU</em> last
+     *       saw, and a DMC sample fetched a cycle earlier cannot put it there.</li>
+     * </ul>
+     * Every other read and every write refreshes both, so on a machine that never touches $4015 the
+     * two hold the same byte and only one of them need have existed.
+     */
+    private int internalDataBus;
 
     // --------------------------------------------------------------------- the transfer engine
     //
@@ -183,10 +201,15 @@ public class MMU {
     /**
      * Reads a byte from the specified address, as a bus cycle: whatever is driven onto the pins
      * stays on them.
+     * <p>
+     * The byte the processor ends up with is by definition the one on the bus it sits on, so this
+     * is the one place {@link #internalDataBus} is refreshed by a read. A transfer's read goes
+     * through {@link #transferRead} instead and leaves it alone, which is the whole difference
+     * between the two buses.
      */
     public int read(final int address) {
         cpuAddress = address & 0xFFFF;
-        return busRead(cpuAddress);
+        return internalDataBus = busRead(cpuAddress);
     }
 
     /**
@@ -204,12 +227,12 @@ public class MMU {
 
         // Internal RAM and mirrors ($0000-$1FFF)
         if (addr < 0x2000) {
-            return dataBus = internalRAM[addr & 0x07FF];
+            return externalDataBus = internalRAM[addr & 0x07FF];
         }
 
         // PPU Registers and mirrors ($2000-$3FFF)
         if (addr < 0x4000) {
-            return dataBus = ppu.read(addr & 0x0007);
+            return externalDataBus = ppu.read(addr & 0x0007);
         }
 
         // APU and I/O Registers ($4000-$401F), most of which are write only
@@ -219,23 +242,23 @@ public class MMU {
 
         // Expansion ($4020-$5FFF): nothing on the cartridge answers, so the pins float
         if (addr < 0x6000) {
-            return dataBus;
+            return externalDataBus;
         }
 
         // Cartridge RAM ($6000-$7FFF) - mapper controlled
         if (addr < 0x8000) {
-            return dataBus = mapper.prgRAMRead(addr);
+            return externalDataBus = mapper.prgRAMRead(addr);
         }
 
         // PRG ROM ($8000-$FFFF) - mapper controlled, and the one window a Game Genie can reach.
         //
-        // The substituted byte is what lands on dataBus, because it is the Genie driving the pins and
-        // not the cartridge: open bus keeps what was last put out, and AccuracyCoin executes from it.
+        // The substituted byte is what lands on the pins, because it is the Genie driving them and not
+        // the cartridge: open bus keeps what was last put out, and AccuracyCoin executes from it.
         // Here rather than in read(), so that an OAM transfer out of a PRG page and a DMC sample fetch
         // both see it -- the device sits on /ROMSEL and has no idea which unit is driving the address.
         var fromTheCartridge = mapper.prgRead(addr);
 
-        return dataBus = genie == null
+        return externalDataBus = genie == null
                 ? fromTheCartridge
                 : genie.substitute(addr, fromTheCartridge);
     }
@@ -248,8 +271,8 @@ public class MMU {
      * memory has to go around those. Registers read back as zero here rather than as whatever
      * the hardware would have returned.
      * <p>
-     * Unmapped space reads back as {@link #dataBus}, which is what the CPU would find there. That
-     * is an observation rather than a bus cycle: looking does not refresh it.
+     * Unmapped space reads back as {@link #externalDataBus}, which is what the CPU would find
+     * there. That is an observation rather than a bus cycle: looking does not refresh it.
      * <p>
      * A Game Genie's substitutions <em>are</em> shown, because the device is on the console side of
      * the cartridge and its byte is the one the CPU executes -- a disassembly that showed the
@@ -268,15 +291,15 @@ public class MMU {
         }
 
         if (addr < 0x6000) {
-            return dataBus;
+            return externalDataBus;
         }
 
         if (addr < 0x8000) {
             return mapper.prgRAMRead(addr);
         }
 
-        // Spelled out rather than shared with busRead, which assigns dataBus on its way past. Looking
-        // is not a bus cycle and must not refresh the pins.
+        // Spelled out rather than shared with busRead, which drives the pins on its way past. Looking
+        // is not a bus cycle and must not refresh them.
         var fromTheCartridge = mapper.prgRead(addr);
 
         return genie == null ? fromTheCartridge : genie.substitute(addr, fromTheCartridge);
@@ -285,16 +308,17 @@ public class MMU {
     /**
      * Writes a byte to the specified address.
      * <p>
-     * A write drives the pins whether or not anything is listening, so the data bus is refreshed
-     * before the destination is even decoded -- including for $4015, which has nothing to say when
-     * read but is an ordinary write like any other.
+     * A write drives both buses whether or not anything is listening, so they are refreshed before
+     * the destination is even decoded -- including for $4015, which has nothing to say when read
+     * but is an ordinary write like any other, and drives the pins like one.
      */
     public void write(final int address, final int data) {
         int addr = address & 0xFFFF;
         int value = data & 0xFF;
 
         cpuAddress = addr;
-        dataBus = value;
+        externalDataBus = value;
+        internalDataBus = value;
         lastPortRead = 0;
 
         if (writeListener != null) {
@@ -341,8 +365,9 @@ public class MMU {
      * Three of the thirty-two answer at all, and each answers differently.
      * <p>
      * $4015 reports the APU's own state over the chip's internal bus and leaves the external pins
-     * alone, so it neither refreshes {@link #dataBus} nor supplies bit 5: that bit belongs to no
-     * counter and comes straight back off the floating pins.
+     * alone, so it neither refreshes {@link #externalDataBus} nor supplies bit 5: that bit belongs
+     * to no counter and comes back off the floating lines of {@link #internalDataBus}, which is the
+     * bus it is on.
      * <p>
      * $4016 and $4017 drive only what the port carries. On a front-loader that is one bit -- the
      * serial line from the controller -- with bits 1 to 4 pulled low by the port itself and the top
@@ -353,10 +378,10 @@ public class MMU {
      */
     private int readIORegister(int address) {
         return switch (address) {
-            case 0x4015 -> (apu.readStatus() & 0xDF) | (dataBus & 0x20);
-            case 0x4016 -> dataBus = openBusHighBits() | readPort(controller1, 0x4016);
-            case 0x4017 -> dataBus = openBusHighBits() | readPort(controller2, 0x4017);
-            default -> dataBus;
+            case 0x4015 -> (apu.readStatus() & 0xDF) | (internalDataBus & 0x20);
+            case 0x4016 -> externalDataBus = openBusHighBits() | readPort(controller1, 0x4016);
+            case 0x4017 -> externalDataBus = openBusHighBits() | readPort(controller2, 0x4017);
+            default -> externalDataBus;
         };
     }
 
@@ -386,7 +411,7 @@ public class MMU {
      * The three bits of a controller port read that nothing on the port drives.
      */
     private int openBusHighBits() {
-        return dataBus & 0xE0;
+        return externalDataBus & 0xE0;
     }
 
     // ------------------------------------------------------------------ whose address bus it is
@@ -426,7 +451,7 @@ public class MMU {
         if (!apuRegistersActive()) {
             // The registers are switched off, so the window has nothing behind it at all and the
             // pins keep what they had.
-            return inWindow ? dataBus : busRead(addr);
+            return inWindow ? externalDataBus : busRead(addr);
         }
 
         if (inWindow) {
@@ -458,8 +483,8 @@ public class MMU {
     }
 
     /**
-     * What comes back when a mirrored register and the memory at the full address drive the pins
-     * at the same time.
+     * What the unit takes away when a mirrored register and the memory at the full address answer
+     * the same read.
      * <p>
      * Not a collision so much as a sharing out, because none of the three readable registers
      * drives all eight lines. A controller port drives the bottom five and leaves the top three to
@@ -467,11 +492,15 @@ public class MMU {
      * $4016 mirror comes back as $E1: the cartridge's top three bits, the port's four low zeroes,
      * and the button.
      * <p>
-     * $4015 is the opposite. It reports over the chip's own internal bus, and a cartridge holding
-     * the lines against it wins, so a sample byte comes back untouched. Where nothing else is
-     * driving -- the open stretch between the registers and the cartridge -- it does reach the
-     * pins, minus the one bit it has nothing to say about. Either way the read happens, and
-     * acknowledges the frame counter's interrupt on the way past.
+     * $4015 wins its seven bits the same way, with bit 5 -- the one it has nothing to say about --
+     * coming off whatever else is on the lines. What is different is where the answer goes. The
+     * register is on the chip's own bus, so it is the <em>transfer</em> that always gets the
+     * composite, while the pins only take it where nothing else was driving them. Read a $4015
+     * mirror out of memory and the transfer is handed the status byte while the pins keep the
+     * memory's: AccuracyCoin measures both ends of that on the same cycle, finding $24 in OAM
+     * where page 2 held $FF, and the sample byte still on the pins a cycle after a DMC fetch.
+     * <p>
+     * Either way the read happens, and acknowledges the frame counter's interrupt on the way past.
      *
      * @param addr     what the unit put on the pins.
      * @param memory   what that address selected.
@@ -481,10 +510,11 @@ public class MMU {
         return switch (register) {
             case 0x4015 -> {
                 final var status = (apu.readStatus() & 0xDF) | (memory & 0x20);
-                yield drivesTheBus(addr) ? memory : (dataBus = status);
+
+                yield drivesTheBus(addr) ? status : (externalDataBus = status);
             }
-            case 0x4016 -> dataBus = (memory & 0xE0) | readPort(controller1, 0x4016);
-            case 0x4017 -> dataBus = (memory & 0xE0) | readPort(controller2, 0x4017);
+            case 0x4016 -> externalDataBus = (memory & 0xE0) | readPort(controller1, 0x4016);
+            case 0x4017 -> externalDataBus = (memory & 0xE0) | readPort(controller2, 0x4017);
             default -> memory;
         };
     }
@@ -763,7 +793,7 @@ public class MMU {
         // And a third, where the DMC's four cycle countdown was.
         io.skip(1);
 
-        dataBus = io.u8(dataBus);
+        externalDataBus = io.u8(externalDataBus);
         halted = io.bool(halted);
         dmcFetching = io.bool(dmcFetching);
         dmcPrepared = io.u8(dmcPrepared);
@@ -772,5 +802,6 @@ public class MMU {
         lastPortRead = io.u16(lastPortRead);
         pendingStrobe = io.u8(pendingStrobe + 1) - 1;
         cpuAddress = io.u16(cpuAddress);
+        internalDataBus = io.u8(internalDataBus);
     }
 }

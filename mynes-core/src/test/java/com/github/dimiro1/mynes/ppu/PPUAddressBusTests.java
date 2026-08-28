@@ -17,6 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The bus is not private to the PPU: all fourteen lines run out to the cartridge connector, and
  * MMC3 counts scanlines by watching one of them. So which addresses appear there, and when, is
  * behaviour a mapper depends on rather than an implementation detail.
+ * <p>
+ * Every access is two dots long -- the address goes out on the first and the byte comes back on
+ * the second -- so an address the chip reads once appears here twice, and the pairs below are that
+ * rather than a duplicate.
  */
 class PPUAddressBusTests extends PPUFixture {
     private RecordingMapper recorder;
@@ -77,7 +81,14 @@ class PPUAddressBusTests extends PPUFixture {
             ppu.read(PPUDATA);
 
             assertEquals(
-                    List.of(0x2000, 0x2001), recorder.addresses(),
+                    List.of(), recorder.addresses(),
+                    "the register is not a door onto memory: the fetch is a few dots off yet"
+            );
+
+            run(DATA_FETCH_DOTS);
+
+            assertEquals(
+                    List.of(0x2000, 0x2000, 0x2001), recorder.addresses(),
                     "outside rendering nothing else is driving the bus, so it holds the address"
             );
         }
@@ -100,8 +111,9 @@ class PPUAddressBusTests extends PPUFixture {
             recorder.clear();
 
             ppu.read(PPUDATA);
+            run(DATA_FETCH_DOTS);
 
-            assertEquals(List.of(0x0FFF, 0x1000), recorder.addresses());
+            assertEquals(List.of(0x0FFF, 0x0FFF, 0x1000), recorder.addresses());
         }
 
         @Test
@@ -113,8 +125,9 @@ class PPUAddressBusTests extends PPUFixture {
             recorder.clear();
 
             ppu.read(PPUDATA);
+            run(DATA_FETCH_DOTS);
 
-            assertEquals(List.of(0x3F05, 0x3F06), recorder.addresses());
+            assertEquals(List.of(0x3F05, 0x3F05, 0x3F06), recorder.addresses());
         }
     }
 
@@ -127,12 +140,13 @@ class PPUAddressBusTests extends PPUFixture {
             runTo(0, 0);
             recorder.clear();
 
-            run(8);  // one whole tile fetch: dots 0 to 7 of the first visible line
+            run(9);  // one whole tile fetch: the idle dot 0, then four two dot accesses
 
             assertEquals(
                     // $2002 rather than $2000: the last two fetches of the previous line have
                     // already moved coarse X on twice.
-                    List.of(0x2002, 0x23C0, 0x1000, 0x1008), recorder.addresses(),
+                    List.of(0x2002, 0x2002, 0x23C0, 0x23C0, 0x1000, 0x1000, 0x1008, 0x1008),
+                    recorder.addresses(),
                     "nametable, attribute, then the two halves of the pattern"
             );
         }
@@ -143,9 +157,12 @@ class PPUAddressBusTests extends PPUFixture {
             runTo(0, 0);
             recorder.clear();
 
-            run(8);
+            run(9);
 
-            assertEquals(List.of(0x2002, 0x23C0, 0x0000, 0x0008), recorder.addresses());
+            assertEquals(
+                    List.of(0x2002, 0x2002, 0x23C0, 0x23C0, 0x0000, 0x0000, 0x0008, 0x0008),
+                    recorder.addresses()
+            );
         }
 
         @Test
@@ -159,8 +176,16 @@ class PPUAddressBusTests extends PPUFixture {
             assertEquals(
                     // OAM is all zeros at power on, so every slot found on line 0 is tile 0 of
                     // the sprite pattern table.
-                    List.of(0x2000, 0x2000, 0x1000, 0x1008), recorder.addresses(),
-                    "the two halves of a sprite pattern arrive in one dot"
+                    //
+                    // $2400 is the counter as it stood when the first of those nametable reads put
+                    // its address out, one dot before the horizontal reset: coarse X has wrapped
+                    // and taken the nametable bit with it. The read on the next dot has the reset
+                    // counter on the top six lines and that address's low byte still latched on
+                    // the bottom eight, which is $2000 and is the same hybrid the $2007 Stress
+                    // Test finds at this point in the line.
+                    List.of(0x2400, 0x2000, 0x2000, 0x2000, 0x1000, 0x1000, 0x1008, 0x1008),
+                    recorder.addresses(),
+                    "two dummy nametable reads, then the two halves of a sprite pattern"
             );
         }
 

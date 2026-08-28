@@ -64,6 +64,24 @@ public class Mapper4 implements Mapper {
      */
     private static final int DOTS_LOW_CAP = 1000;
 
+    /**
+     * How long after a rise on the line the counter is clocked.
+     * <p>
+     * The chip does not count the rises of A12, it counts the rises of a filtered copy of it -- and
+     * a low pass filter's output crosses its threshold some way after its input does, so the clock
+     * lands after the address that caused it went out. Two dots is what blargg's
+     * {@code 4-scanline_timing} accepts, and that ROM is the measurement: it times the gap between
+     * the VBlank flag going up and the interrupt arriving, to the dot, at twelve points down the
+     * picture and in both of the ways a game can arrange its pattern tables.
+     * <p>
+     * Two dots is also about the width of the gap between when this emulator lets an interrupt
+     * reach the CPU and when a 6502 would sample it -- the dots of a CPU cycle are spent before the
+     * cycle's own work here, so a line raised on the last of them is seen at once rather than in the
+     * cycle after. So the figure covers both, and the honest thing to say is that the ROM is what
+     * pins it down rather than either explanation on its own.
+     */
+    private static final int A12_RISE_DOTS = 2;
+
     // Bank select ($8000) fields.
     private static final int SELECT_TARGET = 0x07;
     private static final int SELECT_PRG_MODE = 0x40;
@@ -123,6 +141,12 @@ public class Mapper4 implements Mapper {
      */
     private boolean a12;
     private int dotsLow;
+
+    /**
+     * Dots left before a rise that got through the filter clocks the counter, or 0 when none is on
+     * its way. See {@link #A12_RISE_DOTS}.
+     */
+    private int rising;
 
     public Mapper4(final byte[] prgROM, final byte[] chrROM, final Mirroring mirroring) {
         this.prgROM = prgROM;
@@ -212,7 +236,7 @@ public class Mapper4 implements Mapper {
 
         if (high && !a12) {
             if (dotsLow >= A12_FILTER_DOTS) {
-                clockScanlineCounter();
+                rising = A12_RISE_DOTS;
             }
         } else if (!high && a12) {
             dotsLow = 0;
@@ -223,6 +247,10 @@ public class Mapper4 implements Mapper {
 
     @Override
     public void ppuTick() {
+        if (rising > 0 && --rising == 0) {
+            clockScanlineCounter();
+        }
+
         if (!a12 && dotsLow < DOTS_LOW_CAP) {
             dotsLow++;
         }
@@ -308,10 +336,10 @@ public class Mapper4 implements Mapper {
      * The banking, the scanline counter, and where the A12 filter has got to.
      * <p>
      * The filter is the part that is easy to leave out and expensive to get wrong. Saving in the
-     * middle of a scanline and restoring without {@code a12} and {@code dotsLow} gives back a chip
-     * that has forgotten how long the line has been quiet, so the next rise either counts when it
-     * should not or fails to when it should. That is one scanline of one split screen, once, which
-     * is exactly the sort of thing that gets mistaken for a mapper bug.
+     * middle of a scanline and restoring without {@code a12}, {@code dotsLow} and {@code rising}
+     * gives back a chip that has forgotten how long the line has been quiet, so the next rise
+     * either counts when it should not or fails to when it should. That is one scanline of one
+     * split screen, once, which is exactly the sort of thing that gets mistaken for a mapper bug.
      * <p>
      * What is <em>not</em> here is whether the chip is currently pulling /IRQ low. Nothing on the
      * board remembers it -- $E000 drops the line without emptying the counter, $E001 arms the
@@ -339,5 +367,10 @@ public class Mapper4 implements Mapper {
         if (chrIsRAM) {
             io.bytes(chr);
         }
+
+        // Appended rather than put beside the two fields it belongs with, because the order of this
+        // method is the file format. A state written before the filter's own rise time existed
+        // loads with no rise on its way, which is what all but two dots of any scanline look like.
+        rising = io.u8(rising);
     }
 }

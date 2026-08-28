@@ -107,7 +107,7 @@ final class AccuracyCoinTests {
             entry("DMA + $4016 Read", "PASS 1"),
             entry("Implicit DMA Abort", "PASS 2"),
 
-            entry("APU Register Activation", "FAIL 7"),
+            entry("APU Register Activation", "PASS 2"),
             entry("Controller Clocking", "PASS 1"),
 
             entry("PPU Read Buffer", "PASS G"),
@@ -116,12 +116,7 @@ final class AccuracyCoinTests {
 
             entry("BG Serial In", "FAIL 2"),
             entry("Sprites On Scanline 0", "PASS 1"),
-            entry("$2004 Stress Test", "FAIL 2"),
-            entry("$2007 Stress Test", "FAIL 2"),
-            entry("ALE + Read", "FAIL 2"),
-            entry("Hybrid Addresses", "FAIL 2"),
-
-            entry("Internal Data Bus", "FAIL 2")
+            entry("$2004 Stress Test", "FAIL 2")
     );
 
     /**
