@@ -50,6 +50,35 @@ class FrameRendererTests {
      * colour with one of them dimmed. Getting this wrong would show up as a picture that ignored
      * $2001 entirely.
      */
+    /**
+     * The other overload, which takes a decoder in place of the palette. What it shares with the
+     * palette one is everything below the colours -- the crop, the magnification, the size of the
+     * picture -- and that is what is checked here; what the decoder itself does is
+     * {@code NTSCFilterTests}.
+     */
+    @Test
+    void aFilteredFrameIsCroppedAndMagnifiedTheSameWay() {
+        var image = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, true, 3);
+
+        assertEquals(PPU.SCREEN_WIDTH * 3, image.getWidth());
+        assertEquals(FrameRenderer.VISIBLE_HEIGHT * 3, image.getHeight());
+
+        var full = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, false, 1);
+
+        assertEquals(PPU.SCREEN_HEIGHT, full.getHeight());
+    }
+
+    /**
+     * The point of the overload: the palette is not a parameter because it is not consulted.
+     */
+    @Test
+    void aFilteredFrameIsNotColouredThroughThePalette() {
+        var palette = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1).getRGB(0, 0);
+        var filtered = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, true, 1).getRGB(0, 0);
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(palette, filtered);
+    }
+
     @Test
     void emphasisPicksTheDimmedCopyOfTheColour() {
         var plain = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1).getRGB(0, 0);

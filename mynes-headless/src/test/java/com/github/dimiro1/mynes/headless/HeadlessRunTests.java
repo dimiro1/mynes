@@ -162,6 +162,43 @@ class HeadlessRunTests {
         assertEquals("full", report().at("/video/overscan").asText());
     }
 
+    /**
+     * The whole of what the filter is and is not.
+     * <p>
+     * It changes the picture and nothing that is measured, because everything measured is taken
+     * over the colour <em>indices</em> the chip emits rather than over the colours somebody chose to
+     * draw them in. So it does not join {@code run.state}, {@code run.region}, {@code run.hacks}
+     * and {@code run.genie} on the list of things to check before diffing two runs -- two runs that
+     * disagree about it are still two measurements of the same thing.
+     */
+    @Test
+    void theNtscFilterChangesThePictureAndNothingThatIsMeasured() throws Exception {
+        run("--screenshot", "60");
+
+        var plain = Files.readAllBytes(out.resolve("frame-000060.png"));
+        var plainFrame = report().get("video").get("finalFrame");
+
+        assertEquals("none", report().at("/video/filter").asText());
+
+        run("--screenshot", "60", "--filter", "ntsc");
+
+        assertEquals("ntsc", report().at("/video/filter").asText());
+        assertEquals(plainFrame, report().get("video").get("finalFrame"),
+                "the hash, the colour counts and the blank flag are over indices, not colours");
+        assertFalse(
+                Arrays.equals(plain, Files.readAllBytes(out.resolve("frame-000060.png"))),
+                "but the picture is a different picture");
+    }
+
+    /**
+     * The 2C07 draws a different signal, so there is nothing here that decodes it. Refused rather
+     * than quietly falling back to the palette, for the reason a misspelled {@code --palette} is.
+     */
+    @Test
+    void theNtscFilterIsRefusedOnAPalMachine() {
+        assertEquals(Headless.EXIT_USAGE, run("--filter", "ntsc", "--region", "pal"));
+    }
+
     @Test
     void lastIsWhicheverFrameTheRunEndedOn() {
         run("--screenshot", "last");

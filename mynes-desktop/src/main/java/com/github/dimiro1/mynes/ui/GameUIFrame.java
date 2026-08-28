@@ -17,6 +17,7 @@ import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 
 import javax.imageio.ImageIO;
@@ -119,6 +120,7 @@ public class GameUIFrame extends JFrame {
      * until there is a game to type it for.
      */
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
+    private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
 
     /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
@@ -156,6 +158,7 @@ public class GameUIFrame extends JFrame {
      * through in a frame.
      */
     private JMenu hacksMenuOverclock;
+    private JMenu settingsMenuVideoFilter;
 
     /**
      * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
@@ -422,8 +425,10 @@ public class GameUIFrame extends JFrame {
         JMenuItem settingsMenuController = new JMenuItem("Controller...", KeyEvent.VK_C);
         settingsMenu.add(settingsMenuController);
 
-        JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
         settingsMenu.add(settingsMenuPalette);
+
+        settingsMenuVideoFilter = videoFilterMenu();
+        settingsMenu.add(settingsMenuVideoFilter);
 
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
@@ -442,6 +447,11 @@ public class GameUIFrame extends JFrame {
         menuBar.add(helpMenu);
 
         setJMenuBar(menuBar);
+
+        // Once the menu bar exists, because this greys two of its items out. The filter itself is
+        // a setting the config already holds; what is being applied here is the pair of
+        // consequences.
+        applyVideoFilter();
 
         // Every key event in the application comes past here before anything else sees it, which
         // is how the game gets the arrow keys without taking them off the menu bar.
@@ -860,6 +870,58 @@ public class GameUIFrame extends JFrame {
         }
 
         return cart == null ? Region.NTSC : config.region().resolve(cart);
+    }
+
+    /**
+     * Builds the Video Filter submenu: how a frame of colour indices becomes colours.
+     * <p>
+     * Beside the palette rather than in the Hacks menu, because it is not one. A hack is the
+     * console doing something it did not do; this is a television doing what it always did, and the
+     * question it answers -- what colour is entry $21 -- is the palette's question asked a second
+     * way. Which is also why the two are mutually exclusive and why {@link #applyVideoFilter} greys
+     * one out while the other is on.
+     */
+    private JMenu videoFilterMenu() {
+        var menu = new JMenu("Video Filter");
+        menu.setMnemonic(KeyEvent.VK_V);
+
+        var group = new ButtonGroup();
+
+        for (var filter : VideoFilter.values()) {
+            var item = new JRadioButtonMenuItem(filter.label(), filter == config.videoFilter());
+
+            item.addActionListener(e -> {
+                config.setVideoFilter(filter);
+                saveConfig();
+                applyVideoFilter();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Points the screen at whichever filter is in force, and greys out whatever the choice makes
+     * meaningless.
+     * <p>
+     * Two things can make the choice meaningless. A PAL machine is one: the 2C07 draws a different
+     * signal and the decoder here is not it, so the whole submenu goes grey and the picture falls
+     * back to the palette -- while the tick stays where it was, because the setting is somebody's
+     * preference about NTSC games and a European cartridge should not take it away. The palette
+     * dialog is the other: a decoder works its colours out from the signal and never opens the
+     * table, so offering a choice of table while it is running would be offering a setting that
+     * does nothing.
+     */
+    private void applyVideoFilter() {
+        var pal = currentRegion() == Region.PAL;
+        var filter = pal ? VideoFilter.NONE : config.videoFilter();
+
+        screen.setVideoFilter(filter);
+        settingsMenuVideoFilter.setEnabled(!pal);
+        settingsMenuPalette.setEnabled(filter == VideoFilter.NONE);
     }
 
     /**
@@ -1577,6 +1639,11 @@ public class GameUIFrame extends JFrame {
         // Which television this machine is plugged into. Only here, rather than everywhere a
         // palette is chosen, because this is the one moment the kind of machine can change.
         screen.setPalette(config.palette(nes.getRegion()));
+
+        // And which decoder, for the same reason and one more: the NTSC filter has no meaning on a
+        // 2C07, so this is where a European cartridge takes it away and an American one gives it
+        // back.
+        applyVideoFilter();
 
         // A fresh PPU has both layers on and no hacks, but the menus remember what the last one was
         // told. The runner has not started yet, so the machine is still this thread's to touch.

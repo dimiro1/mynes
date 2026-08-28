@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 
 import java.awt.event.KeyEvent;
 import java.io.IOException;
@@ -38,6 +39,7 @@ public final class Config {
             Path.of(System.getProperty("user.home"), ".mynes", "config.properties");
 
     private static final String PALETTE_KEY = "video.palette";
+    private static final String FILTER_KEY = "video.filter";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -86,6 +88,14 @@ public final class Config {
             # One for each kind of machine, because the PAL PPU generates its colours from a
             # different burst phase and an NTSC table is simply wrong for it. Picking a palette
             # while a PAL game is running sets the second of these.
+            """;
+
+    private static final String FILTER_HEADER = """
+            # How a frame becomes colours: none to look each pixel up in the palette above, or
+            # ntsc to rebuild the composite signal the chip drew and decode it, which is where
+            # colour bleed, dot crawl and artefact colours come from. The palette is not consulted
+            # while ntsc is set, and it is ignored on a PAL machine, whose signal is a different
+            # signal. Settings > Video Filter is the same setting.
             """;
 
     private static final String SCALE_HEADER = """
@@ -147,6 +157,7 @@ public final class Config {
     private KeyBindings keyBindings;
     private NESPalette palette;
     private NESPalette palPalette;
+    private VideoFilter videoFilter;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private RegionSetting region;
@@ -161,6 +172,7 @@ public final class Config {
             final KeyBindings keyBindings,
             final NESPalette palette,
             final NESPalette palPalette,
+            final VideoFilter videoFilter,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final RegionSetting region,
@@ -173,6 +185,7 @@ public final class Config {
         this.keyBindings = keyBindings;
         this.palette = palette;
         this.palPalette = palPalette;
+        this.videoFilter = videoFilter;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.region = region;
@@ -211,6 +224,7 @@ public final class Config {
                 KeyBindings.from(properties),
                 paletteFrom(properties, PALETTE_KEY, Region.NTSC),
                 paletteFrom(properties, PAL_PALETTE_KEY, Region.PAL),
+                videoFilterFrom(properties),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 regionFrom(properties),
@@ -283,6 +297,29 @@ public final class Config {
         return Palettes.byId(id.trim());
     }
 
+    /**
+     * Which filter to colour with, falling back with a word in the log rather than refusing to
+     * start, the way every other entry in this file does.
+     */
+    private static VideoFilter videoFilterFrom(final Properties properties) {
+        var id = properties.getProperty(FILTER_KEY);
+
+        if (id == null) {
+            return VideoFilter.NONE;
+        }
+
+        var filter = VideoFilter.byId(id);
+
+        if (filter == null) {
+            logger.log(Level.WARNING,
+                    id.trim() + " is not a video filter, falling back to " + VideoFilter.NONE.id());
+
+            return VideoFilter.NONE;
+        }
+
+        return filter;
+    }
+
     private static RegionSetting regionFrom(final Properties properties) {
         var id = properties.getProperty(REGION_KEY);
 
@@ -338,6 +375,12 @@ public final class Config {
                 .append(PAL_PALETTE_KEY)
                 .append('=')
                 .append(palPalette.id())
+                .append("\n\n");
+
+        text.append(FILTER_HEADER)
+                .append(FILTER_KEY)
+                .append('=')
+                .append(videoFilter.id())
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
@@ -430,6 +473,18 @@ public final class Config {
         } else {
             this.palette = palette;
         }
+    }
+
+    /**
+     * How a frame becomes colours. One setting rather than two, unlike the palette above: the NTSC
+     * decoder does not run on a PAL machine at all, so there is no PAL preference for it to hold.
+     */
+    public VideoFilter videoFilter() {
+        return videoFilter;
+    }
+
+    public void setVideoFilter(final VideoFilter videoFilter) {
+        this.videoFilter = videoFilter;
     }
 
     /**

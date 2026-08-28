@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.input.KeyBindings.Button;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -136,6 +137,34 @@ class ConfigTests {
         void aMissingPALEntryGivesThePALPalette() throws IOException {
             assertSame(Palettes.defaultPalette(Region.PAL),
                     Config.load(write("video.palette=nesdev\n")).palette(Region.PAL));
+        }
+    }
+
+    @Nested
+    @DisplayName("loading the video filter")
+    class LoadingVideoFilter {
+        @Test
+        void aMissingEntryLeavesThePaletteToDoIt() throws IOException {
+            assertSame(VideoFilter.NONE,
+                    Config.load(write("video.palette=nesdev\n")).videoFilter());
+        }
+
+        @Test
+        void anIdNamesItsFilter() throws IOException {
+            assertSame(VideoFilter.NTSC,
+                    Config.load(write("video.filter=ntsc\n")).videoFilter());
+        }
+
+        @Test
+        void surroundingSpaceIsIgnored() throws IOException {
+            assertSame(VideoFilter.NTSC,
+                    Config.load(write("video.filter= ntsc \n")).videoFilter());
+        }
+
+        @Test
+        void anUnknownIdFallsBackToThePalette() throws IOException {
+            assertSame(VideoFilter.NONE,
+                    Config.load(write("video.filter=composite\n")).videoFilter());
         }
     }
 
@@ -430,6 +459,15 @@ class ConfigTests {
             config.save(config());
 
             assertSame(OTHER, Config.load(config()).palette(Region.NTSC));
+        }
+
+        @Test
+        void theVideoFilterSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setVideoFilter(VideoFilter.NTSC);
+            config.save(config());
+
+            assertSame(VideoFilter.NTSC, Config.load(config()).videoFilter());
         }
 
         @Test

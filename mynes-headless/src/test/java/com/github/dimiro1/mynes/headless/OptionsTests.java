@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -135,6 +136,25 @@ class OptionsTests {
     void aKnownPaletteIsTakenAsAsked() {
         assertEquals("wavebeam",
                 parse("--rom", "x.nes", "--palette", "wavebeam").paletteFor(Region.NTSC).id());
+    }
+
+    @Test
+    void theFilterIsNoneUnlessOneIsNamed() {
+        assertEquals(VideoFilter.NONE, parse("--rom", "x.nes").filter());
+        assertEquals(VideoFilter.NTSC, parse("--rom", "x.nes", "--filter", "ntsc").filter());
+    }
+
+    /**
+     * Refused rather than fallen back from, for the reason an unknown palette is. Whether the
+     * machine can actually use it is a different question and cannot be asked here: it depends on
+     * the cartridge, so {@code Headless} asks it once one has been read.
+     */
+    @Test
+    void anUnknownFilterIsRefused() {
+        var message = refused("--rom", "x.nes", "--filter", "composite").getMessage();
+
+        assertTrue(message.contains("composite"));
+        assertTrue(message.contains("ntsc"), "the message should offer the real ids");
     }
 
     @Test

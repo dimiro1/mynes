@@ -272,6 +272,7 @@ public final class Report {
 
         var video = report.putObject("video");
         video.put("palette", options.paletteFor(region).id());
+        video.put("filter", session.filter().id());
         video.put("overscan", options.fullFrame() ? "full" : "cropped");
         video.put("scale", options.scale());
 

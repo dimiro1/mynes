@@ -41,7 +41,7 @@ import java.util.function.IntSupplier;
  * <p>
  * Emulation cannot happen on the event dispatch thread: a machine that never stops running would
  * never let the EDT paint a menu. So this is the only thread that touches the NES, and the only
- * thing it touches on the UI side is {@link ScreenComponent#present(int[])}, which is written to
+ * thing it touches on the UI side is {@link ScreenComponent#present(int[], int)}, which is written to
  * be called from here. {@link #start()} and {@link #stop()} are for the EDT, and anything else
  * the UI wants done to the machine -- a reset, a debug switch -- goes through {@link #post} and
  * runs here, between frames.
@@ -650,7 +650,7 @@ public class EmulatorRunner {
                         var now = System.nanoTime();
 
                         if (rewindSpeed == EmulationSpeed.NORMAL || now - nextPresent >= 0) {
-                            screen.present(ppu.getFrameBuffer());
+                            screen.present(ppu.getFrameBuffer(), ppu.getFramePhase());
 
                             nextPresent += frameNanos;
                             if (nextPresent - now < 0) {
@@ -783,7 +783,7 @@ public class EmulatorRunner {
                     // the APU's ring does not carry this frame across the stop and play it on the
                     // far side -- and the rewind ring kept it, so going back over a stepped frame
                     // still has its sound.
-                    screen.present(ppu.getFrameBuffer());
+                    screen.present(ppu.getFrameBuffer(), ppu.getFramePhase());
                     continue;
                 }
 
@@ -808,7 +808,7 @@ public class EmulatorRunner {
                 // and the overshoot is what decides which -- the drift costs a quarter of them.
                 var now = System.nanoTime();
                 if (speed == EmulationSpeed.NORMAL || now - nextPresent >= 0) {
-                    screen.present(ppu.getFrameBuffer());
+                    screen.present(ppu.getFrameBuffer(), ppu.getFramePhase());
 
                     nextPresent += frameNanos;
                     if (nextPresent - now < 0) {

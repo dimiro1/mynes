@@ -57,12 +57,7 @@ public final class FrameRenderer {
     }
 
     /**
-     * Draws a frame.
-     * <p>
-     * Scaling is done by repeating pixels rather than by handing the job to
-     * {@link java.awt.Graphics2D}, which would need a rendering hint set correctly to avoid
-     * blurring a picture whose whole character is that it is blocky. There is no hint to get wrong
-     * here.
+     * Draws a frame, colouring it through a palette.
      *
      * @param frame         a frame of colour indices, {@link PPU#getFrameBuffer()}. Read, never
      *                      kept.
@@ -78,10 +73,53 @@ public final class FrameRenderer {
             final boolean cropOverscan,
             final int scale
     ) {
-        if (scale < 1 || scale > MAX_SCALE) {
-            throw new IllegalArgumentException("scale must be 1 to " + MAX_SCALE + ", not " + scale);
+        checkScale(scale);
+
+        var colours = new int[PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT];
+
+        for (var i = 0; i < colours.length; i++) {
+            colours[i] = palette[frame[i]];
         }
 
+        return magnify(colours, cropOverscan, scale);
+    }
+
+    /**
+     * The same, decoded as a composite signal rather than looked up in a palette.
+     * <p>
+     * The palette is not a parameter because it is not consulted: an {@link NTSCFilter} works out
+     * its own colours from the waveform the chip would have drawn, and a measured table is a rival
+     * answer to that question rather than a stage of it.
+     *
+     * @param frame        a frame of colour indices, {@link PPU#getFrameBuffer()}.
+     * @param filter       the decoder. Stateful, so it must not be shared across threads.
+     * @param framePhase   where the frame sits in the subcarrier's cycle,
+     *                     {@link PPU#getFramePhase()}.
+     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
+     * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
+     */
+    public static BufferedImage render(
+            final int[] frame,
+            final NTSCFilter filter,
+            final int framePhase,
+            final boolean cropOverscan,
+            final int scale
+    ) {
+        checkScale(scale);
+
+        return magnify(filter.colourise(frame, framePhase), cropOverscan, scale);
+    }
+
+    /**
+     * Crops and magnifies a frame that is already in colour.
+     * <p>
+     * Scaling repeats pixels rather than handing the job to {@link java.awt.Graphics2D}, which
+     * would need a rendering hint set correctly to avoid blurring a picture whose whole character
+     * is that it is blocky. There is no hint to get wrong here.
+     */
+    private static BufferedImage magnify(
+            final int[] colours, final boolean cropOverscan, final int scale) {
         var top = cropOverscan ? OVERSCAN_TOP : 0;
         var height = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
 
@@ -99,7 +137,7 @@ public final class FrameRenderer {
             var targetRow = y * scale * width;
 
             for (var x = 0; x < PPU.SCREEN_WIDTH; x++) {
-                var colour = palette[frame[sourceRow + x]];
+                var colour = colours[sourceRow + x];
 
                 for (var i = 0; i < scale; i++) {
                     pixels[targetRow + x * scale + i] = colour;
@@ -114,5 +152,11 @@ public final class FrameRenderer {
         }
 
         return image;
+    }
+
+    private static void checkScale(final int scale) {
+        if (scale < 1 || scale > MAX_SCALE) {
+            throw new IllegalArgumentException("scale must be 1 to " + MAX_SCALE + ", not " + scale);
+        }
     }
 }

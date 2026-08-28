@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -42,7 +43,8 @@ class ReplTests {
      */
     private List<JsonNode> session(final String... commands) throws IOException {
         var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
-        var session = new Session(new NES(cart), Palettes.defaultPalette().colours(), null);
+        var session = new Session(
+                new NES(cart), Palettes.defaultPalette().colours(), VideoFilter.NONE, null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
         var captured = new ByteArrayOutputStream();
 
@@ -228,6 +230,34 @@ class ReplTests {
         assertEquals("unlimited-sprites", replies.get(1).get("hack").asText());
         assertTrue(replies.get(1).get("on").asBoolean());
         assertFalse(replies.get(2).get("on").asBoolean());
+    }
+
+    /**
+     * Taking the same frame twice and diffing the two pictures is the whole use for this command,
+     * so what it has to support is switching without the machine moving underneath it.
+     */
+    @Test
+    void theFilterCanBeSwitchedMidSessionAndReportsItself() throws Exception {
+        var replies = session(
+                "run 5",
+                "filter",
+                "filter ntsc",
+                "filter none",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals("none", replies.get(1).get("filter").asText());
+        assertEquals("ntsc", replies.get(2).get("filter").asText());
+        assertEquals("none", replies.get(3).get("filter").asText());
+    }
+
+    @Test
+    void aFilterThatIsMisspeltIsAnError() throws Exception {
+        var replies = session("filter composite", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean());
+        assertTrue(replies.getFirst().get("error").asText().contains("composite"));
     }
 
     @Test
@@ -827,7 +857,8 @@ class ReplTests {
     @Test
     void textModeAnswersInReadableLinesRatherThanJson() throws Exception {
         var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
-        var session = new Session(new NES(cart), Palettes.defaultPalette().colours(), null);
+        var session = new Session(
+                new NES(cart), Palettes.defaultPalette().colours(), VideoFilter.NONE, null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
         var captured = new ByteArrayOutputStream();
 

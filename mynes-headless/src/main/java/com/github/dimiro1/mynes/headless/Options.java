@@ -7,6 +7,7 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 
 import java.io.IOException;
@@ -42,6 +43,9 @@ import java.util.TreeSet;
  * @param scale            how many times to magnify a screenshot.
  * @param fullFrame        whether to keep the scanlines a television hides.
  * @param region           which machine to run the cartridge on, or null to believe its header.
+ * @param filter           how a frame becomes colours: through the palette, or by decoding the
+ *                         composite signal. NTSC only, which {@code Headless} refuses once the
+ *                         cartridge has said which machine it wants.
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
@@ -87,6 +91,7 @@ public record Options(
         boolean fullFrame,
         Region region,
         NESPalette palette,
+        VideoFilter filter,
         boolean audio,
         Set<String> hacks,
         Overclock overclock,
@@ -244,6 +249,13 @@ public record Options(
                                     nesdev, or 2c07 on a PAL machine, whose PPU does not generate
                                     the same colours at all. --list-palettes has the rest.
               --list-palettes       Print the palette ids and names, then stop.
+              --filter NAME         none, or ntsc to decode the composite signal the chip drew
+                                    instead of looking each pixel up in a palette: colour bleed,
+                                    dot crawl and the artefact colours a palette cannot produce.
+                                    Default none. The palette is not consulted while it is on, and
+                                    it is refused on a PAL machine, whose signal is a different
+                                    signal. Nothing measured moves -- the frame hash is over colour
+                                    indices -- so this changes the PNGs and nothing else.
 
             Sound
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
@@ -399,6 +411,7 @@ public record Options(
         var fullFrame = false;
         Region region = null;
         NESPalette palette = null;
+        var filter = VideoFilter.NONE;
         var audio = false;
         var hacks = new LinkedHashSet<String>();
         var overclock = Overclock.NONE;
@@ -449,6 +462,7 @@ public record Options(
                 case "--full-frame" -> fullFrame = true;
                 case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
+                case "--filter" -> filter = parseFilter(value(args, ++i, flag));
                 case "--audio" -> audio = true;
                 case "--hack" -> overclock =
                         parseHacks(value(args, ++i, flag), hacks, overclock);
@@ -529,6 +543,7 @@ public record Options(
                 fullFrame,
                 region,
                 palette,
+                filter,
                 audio,
                 Set.copyOf(hacks),
                 overclock,
@@ -854,6 +869,22 @@ public record Options(
         }
 
         return region;
+    }
+
+    /**
+     * Which filter to colour the picture with.
+     * <p>
+     * Refused rather than defaulted, for the reason a misspelled palette is.
+     */
+    private static VideoFilter parseFilter(final String name) {
+        var filter = VideoFilter.byId(name);
+
+        if (filter == null) {
+            throw new UsageException(
+                    "--filter is " + VideoFilter.ids() + ", not \"" + name + "\".");
+        }
+
+        return filter;
     }
 
     /**

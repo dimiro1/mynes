@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -114,6 +115,7 @@ class InputPathTests {
         return new Session(
                 new NES(Cart.load(image, "input-path.nes")),
                 Palettes.defaultPalette().colours(),
+                VideoFilter.NONE,
                 null);
     }
 

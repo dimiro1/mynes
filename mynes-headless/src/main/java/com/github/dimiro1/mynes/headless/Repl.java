@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Overclock;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
@@ -10,6 +11,7 @@ import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveStateException;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
@@ -55,6 +57,8 @@ public final class Repl {
             read-ppu ADDR [COUNT]      PPU bus: pattern tables and nametables
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
+            filter [NAME]              say how the picture is being coloured, or set it: none, or
+                                       ntsc to decode the composite signal
             hack NAME on|off           unlimited-sprites, which --hack also switches on
             hack overclock LINES [MORE]
                                        extra scanlines a frame before the NMI, and after it; off
@@ -214,6 +218,7 @@ public final class Repl {
             case "read", "read-ppu" -> read(name, words);
             case "oam" -> oam(words);
             case "dump" -> dump(words);
+            case "filter" -> filter(words);
             case "hack" -> hack(words);
             case "genie", "ungenie" -> genie(name, words);
             case "save-state" -> saveState(words);
@@ -535,6 +540,36 @@ public final class Repl {
      * machine's timing, so the frame after it is set is not the frame that would have been drawn --
      * what a session is for is watching a game that lags stop lagging, at whatever setting it takes.
      */
+    /**
+     * Says how screenshots are being coloured, or changes it.
+     * <p>
+     * The shape of {@code hack} rather than of {@code genie}: a filter is switched rather than put
+     * down and picked up. And it is here for the same reason {@code hack unlimited-sprites} is --
+     * nothing about the machine changes, so the way to see what it does is to take one frame twice
+     * and diff the two pictures, which wants one session rather than two runs.
+     */
+    private void filter(final String[] words) {
+        if (words.length >= 2) {
+            var wanted = VideoFilter.byId(words[1]);
+
+            if (wanted == null) {
+                throw new UsageException(
+                        "filter is " + VideoFilter.ids() + ", not \"" + words[1] + "\".");
+            }
+
+            if (wanted == VideoFilter.NTSC && session.nes().getRegion() == Region.PAL) {
+                throw new UsageException(
+                        "the ntsc filter decodes the 2C02's signal, and this is a "
+                                + Region.PAL.label() + " machine. The 2C07 needs a decoder of its"
+                                + " own rather than this one with different numbers in it.");
+            }
+
+            session.setFilter(wanted);
+        }
+
+        reply("filter", node -> node.put("filter", session.filter().id()));
+    }
+
     private void hack(final String[] words) {
         if (words.length < 2) {
             throw new UsageException(

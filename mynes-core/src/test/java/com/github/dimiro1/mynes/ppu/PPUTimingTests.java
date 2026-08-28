@@ -160,6 +160,85 @@ class PPUTimingTests extends PPUFixture {
     }
 
     /**
+     * Where the colour subcarrier has got to, which the chip carries because the chip is what
+     * drifts: a scanline is 227 and a third colour cycles, so the alignment of pixel to cycle
+     * slips a third of a cycle every line and the picture takes three lines to come back to itself.
+     */
+    @Nested
+    @DisplayName("the colour phase")
+    class ColourPhase {
+        @Test
+        void startsAtZero() {
+            assertEquals(0, ppu.getFramePhase());
+        }
+
+        @Test
+        void movesOnByOneEveryScanline() {
+            // 262 lines with nothing rendering, and 262 mod 3 is 1.
+            run(DOTS_PER_FRAME);
+
+            assertEquals(1, ppu.getFramePhase());
+
+            run(DOTS_PER_FRAME);
+
+            assertEquals(2, ppu.getFramePhase());
+
+            run(DOTS_PER_FRAME);
+
+            assertEquals(0, ppu.getFramePhase(), "and three frames bring it back");
+        }
+
+        /**
+         * The skipped dot is eight fewer samples of signal, and eight fewer out of twelve is four
+         * more of them once the cycle wraps -- so the short frame moves the phase on by two where
+         * every other one moves it by one. That is the whole of why the artefacts cycle every two
+         * frames with rendering on and every three with it off.
+         */
+        @Test
+        void movesOnByTwoAcrossTheSkippedDot() {
+            startRenderingOnTheFirstOddFrame();
+
+            var before = ppu.getFramePhase();
+
+            do {
+                ppu.tick();
+            } while (!(ppu.getScanline() == 0 && ppu.getDot() == 0));
+
+            assertEquals((before + 2) % 3, ppu.getFramePhase());
+        }
+
+        /**
+         * A frame the beam runs extra lines of is a frame the subcarrier drifts further through, and
+         * counting per line rather than per frame is what makes that fall out rather than need a
+         * second table.
+         */
+        @Test
+        void countsTheExtraLinesAnOverclockAdds() {
+            ppu.setOverclock(new com.github.dimiro1.mynes.Overclock(3, 0));
+
+            var dots = 0;
+
+            do {
+                ppu.tick();
+                dots++;
+            } while (!(ppu.getScanline() == 0 && ppu.getDot() == 0));
+
+            assertEquals(DOTS_PER_FRAME + 3 * 341, dots, "three lines run twice");
+            assertEquals((262 + 3) % 3, ppu.getFramePhase());
+        }
+
+        /**
+         * Turns rendering on and leaves the beam at the start of frame 1, the first odd one. The
+         * same trick the frame length test above uses, and here for the same reason.
+         */
+        private void startRenderingOnTheFirstOddFrame() {
+            runTo(261, 1);
+            ppu.write(PPUMASK, 0x08);
+            runTo(0, 0);
+        }
+    }
+
+    /**
      * The 2C07, which differs from everything above in three ways: fifty more scanlines, all of
      * them vertical blank, and no odd frame ever losing a dot.
      */
