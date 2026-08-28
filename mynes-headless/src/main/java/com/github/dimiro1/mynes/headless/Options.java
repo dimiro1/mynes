@@ -7,6 +7,7 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 
@@ -46,6 +47,8 @@ import java.util.TreeSet;
  * @param filter           how a frame becomes colours: through the palette, or by decoding the
  *                         composite signal. NTSC only, which {@code Headless} refuses once the
  *                         cartridge has said which machine it wants.
+ * @param strength         how much of the detail the decoder's chroma trap costs it gives back.
+ *                         Always answered, and meaningless unless {@code filter} is the decoder.
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
@@ -92,6 +95,7 @@ public record Options(
         Region region,
         NESPalette palette,
         VideoFilter filter,
+        FilterStrength strength,
         boolean audio,
         Set<String> hacks,
         Overclock overclock,
@@ -256,6 +260,10 @@ public record Options(
                                     it is refused on a PAL machine, whose signal is a different
                                     signal. Nothing measured moves -- the frame hash is over colour
                                     indices -- so this changes the PNGs and nothing else.
+                                    ntsc=low, ntsc=medium or ntsc=strong says how soft: keeping the
+                                    subcarrier out of luma costs the picture its fine detail, and
+                                    this is how much of it to give back. Default medium; strong is
+                                    the plain cycle-wide average and the softest of the three.
 
             Sound
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
@@ -412,6 +420,7 @@ public record Options(
         Region region = null;
         NESPalette palette = null;
         var filter = VideoFilter.NONE;
+        var strength = FilterStrength.defaultStrength();
         var audio = false;
         var hacks = new LinkedHashSet<String>();
         var overclock = Overclock.NONE;
@@ -462,7 +471,15 @@ public record Options(
                 case "--full-frame" -> fullFrame = true;
                 case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
-                case "--filter" -> filter = parseFilter(value(args, ++i, flag));
+                case "--filter" -> {
+                    var spec = value(args, ++i, flag);
+                    var equals = spec.indexOf('=');
+
+                    filter = parseFilter(equals < 0 ? spec : spec.substring(0, equals));
+                    strength = equals < 0
+                            ? FilterStrength.defaultStrength()
+                            : parseFilterStrength(filter, spec.substring(equals + 1));
+                }
                 case "--audio" -> audio = true;
                 case "--hack" -> overclock =
                         parseHacks(value(args, ++i, flag), hacks, overclock);
@@ -544,6 +561,7 @@ public record Options(
                 region,
                 palette,
                 filter,
+                strength,
                 audio,
                 Set.copyOf(hacks),
                 overclock,
@@ -885,6 +903,33 @@ public record Options(
         }
 
         return filter;
+    }
+
+    /**
+     * How soft to draw, out of the half of {@code --filter ntsc=low} after the equals sign.
+     * <p>
+     * Refused on the palette rather than ignored. A strength is a number the decoder uses and the
+     * palette has nothing to do with, so {@code --filter none=low} is not a setting that happens to
+     * do nothing -- it is somebody expecting a softer picture out of a lookup table, and the way to
+     * find that out is to be told.
+     */
+    private static FilterStrength parseFilterStrength(
+            final VideoFilter filter, final String name) {
+        if (filter != VideoFilter.NTSC) {
+            throw new UsageException(
+                    "--filter " + filter.id() + " takes no strength: a strength says how much of"
+                            + " the detail the decoder's chroma trap costs to give back, and "
+                            + filter.id() + " does not decode anything.");
+        }
+
+        var strength = FilterStrength.byId(name);
+
+        if (strength == null) {
+            throw new UsageException(
+                    "--filter ntsc= is " + FilterStrength.ids() + ", not \"" + name + "\".");
+        }
+
+        return strength;
     }
 
     /**

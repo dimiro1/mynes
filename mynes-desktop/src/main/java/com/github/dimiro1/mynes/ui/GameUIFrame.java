@@ -17,6 +17,7 @@ import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 
@@ -159,6 +160,7 @@ public class GameUIFrame extends JFrame {
      */
     private JMenu hacksMenuOverclock;
     private JMenu settingsMenuVideoFilter;
+    private JMenu settingsMenuFilterStrength;
 
     /**
      * Screenshot, kept because it is the one item in an always-enabled menu that needs a machine.
@@ -879,7 +881,8 @@ public class GameUIFrame extends JFrame {
      * console doing something it did not do; this is a television doing what it always did, and the
      * question it answers -- what colour is entry $21 -- is the palette's question asked a second
      * way. Which is also why the two are mutually exclusive and why {@link #applyVideoFilter} greys
-     * one out while the other is on.
+     * one out while the other is on. The strength below the separator belongs to the decoder alone
+     * and is greyed out with it.
      */
     private JMenu videoFilterMenu() {
         var menu = new JMenu("Video Filter");
@@ -892,6 +895,40 @@ public class GameUIFrame extends JFrame {
 
             item.addActionListener(e -> {
                 config.setVideoFilter(filter);
+                saveConfig();
+                applyVideoFilter();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        settingsMenuFilterStrength = filterStrengthMenu();
+
+        menu.addSeparator();
+        menu.add(settingsMenuFilterStrength);
+
+        return menu;
+    }
+
+    /**
+     * Builds the Strength submenu: how much of the detail the decoder's chroma trap costs it gives
+     * back.
+     * <p>
+     * Inside Video Filter rather than beside it, and below a separator, because it is a setting on
+     * one of the items above it rather than a fourth thing to choose between them --
+     * {@link #applyVideoFilter} greys it out whenever that item is not the one in force.
+     */
+    private JMenu filterStrengthMenu() {
+        var menu = new JMenu("Strength");
+        var group = new ButtonGroup();
+
+        for (var strength : FilterStrength.values()) {
+            var item = new JRadioButtonMenuItem(
+                    strength.label(), strength == config.filterStrength());
+
+            item.addActionListener(e -> {
+                config.setFilterStrength(strength);
                 saveConfig();
                 applyVideoFilter();
             });
@@ -919,8 +956,9 @@ public class GameUIFrame extends JFrame {
         var pal = currentRegion() == Region.PAL;
         var filter = pal ? VideoFilter.NONE : config.videoFilter();
 
-        screen.setVideoFilter(filter);
+        screen.setVideoFilter(filter, config.filterStrength());
         settingsMenuVideoFilter.setEnabled(!pal);
+        settingsMenuFilterStrength.setEnabled(filter == VideoFilter.NTSC);
         settingsMenuPalette.setEnabled(filter == VideoFilter.NONE);
     }
 

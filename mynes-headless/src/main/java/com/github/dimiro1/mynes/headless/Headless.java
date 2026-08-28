@@ -175,7 +175,11 @@ public final class Headless {
         // a file if one was asked for.
         try (var wav = options.audio() ? new WavWriter(options.wavPath()) : null) {
             var session = new Session(
-                    new NES(cart, region), palette.colours(), options.filter(), wav);
+                    new NES(cart, region),
+                    palette.colours(),
+                    options.filter(),
+                    options.strength(),
+                    wav);
 
             // Before either of the two below it, because a hack is not machine state: a save state
             // carries none of these, so switching one on afterwards would leave it depending on

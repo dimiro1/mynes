@@ -22,6 +22,9 @@ import com.github.dimiro1.mynes.PPU;
  * a cycle of drift per line, which is exactly the three-line diagonal of dot crawl. {@link PPU}
  * counts that drift and hands the frame's share of it over as {@link PPU#getFramePhase()}.
  * <p>
+ * How soft the result is, on the other hand, is a choice rather than an arithmetic fact -- see
+ * {@link FilterStrength} and {@link #demodulate}.
+ * <p>
  * NTSC only. The 2C07 runs ten samples to a pixel, alternates its burst phase every line, and has
  * an even number of cycles in a frame, so none of the three arithmetic facts above survives the
  * crossing; a PAL machine needs its own decoder rather than this one with different constants.
@@ -127,14 +130,27 @@ public final class NTSCFilter {
     private static final float B_U = 2.032062f;
 
     /**
-     * A pixel of signal either side of the picture, because the twelve sample window of the first
-     * and last pixels reaches six samples outside it.
+     * How wide the second luma window is, and how many colour cycles that is.
+     * <p>
+     * Two rather than three or four because the point of it is to name the band the narrow window
+     * throws away, and a window twice as wide names it tightly: what one average has and the other
+     * does not is the octave between them. Wider than that and the difference reaches down into
+     * detail the narrow window was keeping anyway, so adding it back boosts the picture's contrast
+     * rather than sharpening it -- which measures as a taller impulse with the same skirts on it.
+     */
+    private static final int WIDE_CYCLES = 2;
+    private static final int WIDE_SAMPLES = WIDE_CYCLES * SAMPLES_PER_CYCLE;
+
+    /**
+     * A pixel of signal either side of the picture, because the widest window of the first and last
+     * pixels reaches eight samples outside it -- {@code (WIDE_SAMPLES - SAMPLES_PER_PIXEL) / 2},
+     * which is exactly a pixel and is the reason this is one.
      * <p>
      * A real scanline has fifteen pixels of border out there and the framebuffer does not carry
      * them, so the edge pixel is repeated into the margin -- which keeps the phase and the voltage
-     * agreeing with each other. Clamping the window instead, so that it reads sample zero six times
-     * over, does not: it feeds six samples of one voltage to six different phases of the carrier,
-     * and invents a column of colour down the side of the picture that is in no signal.
+     * agreeing with each other. Clamping the window instead, so that it reads sample zero eight
+     * times over, does not: it feeds eight samples of one voltage to eight different phases of the
+     * carrier, and invents a column of colour down the side of the picture that is in no signal.
      */
     private static final int MARGIN = SAMPLES_PER_PIXEL;
 
@@ -160,6 +176,24 @@ public final class NTSCFilter {
     private final float[] totalV = new float[totalY.length];
 
     private final int[] pixels = new int[WIDTH * HEIGHT];
+
+    /**
+     * How much of the detail the chroma trap costs is put back. Mutable because both front ends
+     * keep one decoder and let somebody change their mind about it mid-picture.
+     */
+    private FilterStrength strength;
+
+    public NTSCFilter() {
+        this(FilterStrength.defaultStrength());
+    }
+
+    public NTSCFilter(final FilterStrength strength) {
+        this.strength = strength;
+    }
+
+    public void setStrength(final FilterStrength strength) {
+        this.strength = strength;
+    }
 
     /**
      * Decodes a whole frame.
@@ -262,23 +296,55 @@ public final class NTSCFilter {
      * same twelve against the two carriers for the colour difference signals.
      * <p>
      * Twelve samples for a pixel that is only eight wide is the whole point rather than a rounding:
-     * it is the four samples of overlap that carry a neighbour's hue into this pixel. The window
-     * never has to be clipped, because {@link #MARGIN} has already put a pixel of signal either
-     * side of the picture for it to reach into.
+     * it is the two samples of overlap at each end that carry a neighbour's hue into this pixel.
+     * The window never has to be clipped, because {@link #MARGIN} has already put a pixel of signal
+     * either side of the picture for it to reach into.
+     * <p>
+     * <strong>Averaging a whole cycle is a chroma trap, and a blunt one.</strong> It nulls the
+     * subcarrier exactly -- which is why a flat field comes out flat -- but it is a low pass as
+     * well as a notch, and it takes every luma detail finer than a colour cycle down with the
+     * chroma. That is the whole of why a decoded picture is softer than the palette's, and a
+     * television with a resonant trap in it did not pay that price. So the difference between this
+     * average and one twice as wide is the band the blunt trap threw away and a better one kept,
+     * and {@link FilterStrength} says how much of it to add back. Both windows null the subcarrier
+     * and both have a gain of one at DC, so no amount of it can put colour into a flat field or
+     * move where black and white are; all it moves is the detail in between.
      */
     private void demodulate(final int row) {
-        var first = MARGIN - SAMPLES_PER_CYCLE / 2;
+        var peaking = strength.peaking();
+        var first = windowStart(SAMPLES_PER_CYCLE);
+        var wideFirst = windowStart(WIDE_SAMPLES);
 
         for (var x = 0; x < WIDTH; x++) {
             var last = first + SAMPLES_PER_CYCLE;
 
+            // Both already divided by SAMPLES_PER_CYCLE, since SCALE did it a sample at a time --
+            // so the wide one is short by however many cycles wide it is and nothing else.
+            var narrow = totalY[last] - totalY[first];
+            var wide = (totalY[wideFirst + WIDE_SAMPLES] - totalY[wideFirst]) / WIDE_CYCLES;
+
             pixels[row + x] = rgb(
-                    totalY[last] - totalY[first],
+                    narrow + peaking * (narrow - wide),
                     totalU[last] - totalU[first],
                     totalV[last] - totalV[first]);
 
             first += SAMPLES_PER_PIXEL;
+            wideFirst += SAMPLES_PER_PIXEL;
         }
+    }
+
+    /**
+     * Where a window of {@code width} samples centred on the first pixel opens. The loop above
+     * walks it on a pixel at a time from there.
+     * <p>
+     * Centred, which is worth saying out loud because every window here is wider than the pixel it
+     * belongs to and there is nothing to stop one sitting off to one side. One that did would smear
+     * the picture toward that side and shift the whole thing by however far it was out, and neither
+     * shows up as anything but a slightly worse picture -- so the arithmetic is here, once, rather
+     * than at each of the two call sites.
+     */
+    private static int windowStart(final int width) {
+        return MARGIN + (SAMPLES_PER_PIXEL - width) / 2;
     }
 
     private static int rgb(final float y, final float u, final float v) {

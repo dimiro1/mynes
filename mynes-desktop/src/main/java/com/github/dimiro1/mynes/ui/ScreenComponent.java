@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.NTSCFilter;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
@@ -79,6 +80,13 @@ public class ScreenComponent extends JComponent {
      * How the frame is coloured: through {@link #palette}, or by decoding the signal.
      */
     private VideoFilter videoFilter = VideoFilter.NONE;
+
+    /**
+     * How much of the detail the decoder's chroma trap costs is given back. Kept beside the filter
+     * rather than only on the decoder, so that a window that has never switched to it still
+     * remembers what it was told.
+     */
+    private FilterStrength filterStrength = FilterStrength.defaultStrength();
 
     /**
      * The composite decoder, built the first time somebody asks for it. A window that is never
@@ -207,10 +215,20 @@ public class ScreenComponent extends JComponent {
      * Called on the event dispatch thread, like {@link #setPalette}, and for the same reason: with
      * the emulator paused the picture behind the menu is the comparison, and there is no next frame
      * coming to apply the change to.
+     * <p>
+     * Both at once rather than a setter each, because the window has one place that decides both
+     * and a picture redrawn twice for one menu click would be the decoder's two milliseconds paid
+     * for nothing.
      */
-    public void setVideoFilter(final VideoFilter filter) {
+    public void setVideoFilter(final VideoFilter filter, final FilterStrength strength) {
         synchronized (frameLock) {
             this.videoFilter = filter;
+            this.filterStrength = strength;
+
+            if (ntsc != null) {
+                ntsc.setStrength(strength);
+            }
+
             colourise();
         }
 
@@ -251,7 +269,7 @@ public class ScreenComponent extends JComponent {
 
     private NTSCFilter ntsc() {
         if (ntsc == null) {
-            ntsc = new NTSCFilter();
+            ntsc = new NTSCFilter(filterStrength);
         }
 
         return ntsc;

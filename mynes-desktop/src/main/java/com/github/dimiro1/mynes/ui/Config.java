@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 
 import java.awt.event.KeyEvent;
@@ -40,6 +41,7 @@ public final class Config {
 
     private static final String PALETTE_KEY = "video.palette";
     private static final String FILTER_KEY = "video.filter";
+    private static final String FILTER_STRENGTH_KEY = "video.filter.strength";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -96,6 +98,11 @@ public final class Config {
             # colour bleed, dot crawl and artefact colours come from. The palette is not consulted
             # while ntsc is set, and it is ignored on a PAL machine, whose signal is a different
             # signal. Settings > Video Filter is the same setting.
+            #
+            # video.filter.strength is how soft it draws: low, medium or strong. Keeping the
+            # subcarrier out of luma is what costs the picture its fine detail, and this is how
+            # much of it to give back -- so strong is the plain cycle-wide average and the softest
+            # of the three, and low is a good television's trap and nearly as sharp as the palette.
             """;
 
     private static final String SCALE_HEADER = """
@@ -158,6 +165,7 @@ public final class Config {
     private NESPalette palette;
     private NESPalette palPalette;
     private VideoFilter videoFilter;
+    private FilterStrength filterStrength;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private RegionSetting region;
@@ -173,6 +181,7 @@ public final class Config {
             final NESPalette palette,
             final NESPalette palPalette,
             final VideoFilter videoFilter,
+            final FilterStrength filterStrength,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final RegionSetting region,
@@ -186,6 +195,7 @@ public final class Config {
         this.palette = palette;
         this.palPalette = palPalette;
         this.videoFilter = videoFilter;
+        this.filterStrength = filterStrength;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.region = region;
@@ -225,6 +235,7 @@ public final class Config {
                 paletteFrom(properties, PALETTE_KEY, Region.NTSC),
                 paletteFrom(properties, PAL_PALETTE_KEY, Region.PAL),
                 videoFilterFrom(properties),
+                filterStrengthFrom(properties),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 regionFrom(properties),
@@ -320,6 +331,30 @@ public final class Config {
         return filter;
     }
 
+    /**
+     * How soft the decoder draws, falling back with a word in the log the way the filter above
+     * does.
+     */
+    private static FilterStrength filterStrengthFrom(final Properties properties) {
+        var id = properties.getProperty(FILTER_STRENGTH_KEY);
+
+        if (id == null) {
+            return FilterStrength.defaultStrength();
+        }
+
+        var strength = FilterStrength.byId(id);
+
+        if (strength == null) {
+            logger.log(Level.WARNING,
+                    id.trim() + " is not a filter strength, falling back to "
+                            + FilterStrength.defaultStrength().id());
+
+            return FilterStrength.defaultStrength();
+        }
+
+        return strength;
+    }
+
     private static RegionSetting regionFrom(final Properties properties) {
         var id = properties.getProperty(REGION_KEY);
 
@@ -381,6 +416,10 @@ public final class Config {
                 .append(FILTER_KEY)
                 .append('=')
                 .append(videoFilter.id())
+                .append('\n')
+                .append(FILTER_STRENGTH_KEY)
+                .append('=')
+                .append(filterStrength.id())
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
@@ -485,6 +524,19 @@ public final class Config {
 
     public void setVideoFilter(final VideoFilter videoFilter) {
         this.videoFilter = videoFilter;
+    }
+
+    /**
+     * How much of the detail the decoder's chroma trap costs it gives back. Remembered even while
+     * the palette is drawing, because it is a preference about the decoder rather than a fact about
+     * the picture -- the same reason the NTSC filter itself keeps its tick on a PAL machine.
+     */
+    public FilterStrength filterStrength() {
+        return filterStrength;
+    }
+
+    public void setFilterStrength(final FilterStrength filterStrength) {
+        this.filterStrength = filterStrength;
     }
 
     /**

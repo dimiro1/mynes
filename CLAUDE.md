@@ -191,13 +191,28 @@ only** -- `--filter ntsc` with a PAL machine is exit 2, and the menu greys itsel
 2C07 runs ten samples to a pixel and alternates its burst phase every line, so it needs its own
 decoder rather than this one with different numbers in it.
 
+**How soft it draws is a setting, and the default is not the sharpest.** Keeping the subcarrier out
+of luma is what costs the picture its detail: the decoder does it by averaging a whole colour cycle,
+which nulls the subcarrier exactly and takes every luma detail finer than that cycle down with it.
+A television with a resonant trap in it did not pay that price, and the difference between that
+average and one twice as wide is the band the blunt one threw away -- so `--filter ntsc=low`,
+`=medium` and `=strong` say how much of it to add back, `strong` being the bare average and the
+softest of the three. A white pixel on black keeps 60% of its light where it was put at `strong`,
+72% at `medium` and 81% at `low`. **Nothing else moves**: both windows are a whole number of colour
+cycles wide, so both null the subcarrier and both have a gain of one at DC, which is why a flat
+field comes out flat and every colour lands where it did at all three. `--filter none=low` is exit 2
+rather than a setting that quietly does nothing.
+
 **It is not on the comparability checklist**, and it is the only thing in this file that is not.
 Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` --
 is taken over the colour *indices* the chip emits, so `video.finalFrame` is identical with the
 filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
-`--hack overclock` cannot: a replay does not depend on it. `video.filter` in the report says which
-was used, and `filter ntsc` / `filter none` / bare `filter` do it inside an interactive session,
-which is how to take the same frame twice and diff the two pictures.
+`--hack overclock` cannot: a replay does not depend on it. `video.filter` and `video.filterStrength`
+in the report say which were used -- the second explicitly null when the palette drew -- and
+`filter ntsc low` / `filter ntsc` / `filter none` / bare `filter` do it inside an interactive
+session, which is how to take the same frame twice and diff the two pictures. A strength said there
+outlasts a switch to the palette and back, since going through the palette is how the two pictures
+get taken.
 
 It costs about 2.2ms a frame against an emulated frame's 3.7ms, so it roughly halves the headroom
 rather than the frame rate. `NTSCFilter` is where all of it lives, and the constant most likely to
@@ -206,7 +221,8 @@ which rotates a colour's hue with its row, and NESdev's figure for a 2C02G is tw
 here. The 2C02E's figure is used because it is measurable which one is right for this emulator --
 at 1.5e-8 the decoded hues land within a degree or two of every palette in `/palettes`, and at 3e-8
 they sit ten to thirteen degrees off all of them. `NTSCFilterTests` holds that against the default
-palette, greys to within 8 of 441 and everything else to within 40.
+palette, greys to within 8 of 441 and everything else to within 40 -- at every strength, since a
+sharpener that had reached into the chroma path is exactly what that would catch.
 
 ### It is deterministic
 

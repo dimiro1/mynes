@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -75,6 +76,15 @@ class NTSCFilterTests {
     }
 
     /**
+     * How bright a packed colour is, weighted the way an eye is.
+     */
+    private static double luma(final int colour) {
+        return 0.299 * ((colour >> 16) & 0xFF)
+                + 0.587 * ((colour >> 8) & 0xFF)
+                + 0.114 * (colour & 0xFF);
+    }
+
+    /**
      * How colourful a packed colour is, as the spread between its channels. Zero is a grey.
      */
     private static int chroma(final int colour) {
@@ -110,15 +120,74 @@ class NTSCFilterTests {
         return worst;
     }
 
+    /**
+     * At every strength, which is the claim that keeps the strength a sharpness control rather than
+     * a second decoder. Both of the windows it mixes are a whole number of colour cycles wide and
+     * so null the subcarrier exactly, and both have a gain of one at DC -- so however they are
+     * mixed, a picture with nothing in it comes out with nothing in it.
+     */
     @Test
-    void aFlatFieldComesOutFlat() {
-        var pixels = filter.colourise(frameOf(0x21), 0);
-        var colour = pixels[MIDDLE];
+    void aFlatFieldComesOutFlatAtEveryStrength() {
+        for (var strength : FilterStrength.values()) {
+            filter.setStrength(strength);
 
-        for (var y = 0; y < HEIGHT; y++) {
-            for (var x = 0; x < WIDTH; x++) {
-                assertEquals(colour, pixels[y * WIDTH + x], "at " + x + "," + y);
+            var pixels = filter.colourise(frameOf(0x21), 0);
+            var colour = pixels[MIDDLE];
+
+            for (var y = 0; y < HEIGHT; y++) {
+                for (var x = 0; x < WIDTH; x++) {
+                    assertEquals(
+                            colour, pixels[y * WIDTH + x], strength.id() + " at " + x + "," + y);
+                }
             }
+        }
+    }
+
+    /**
+     * What the strength is for: how much of one pixel ends up on the two beside it.
+     * <p>
+     * A single white pixel on black, which is the sharpest edge the machine can draw, measured as
+     * the share of the light that stays where it was put. Nothing here says what the three numbers
+     * should be -- only that turning the filtering down leaves more of the pixel in place, which is
+     * the whole of what somebody reaching for the setting is asking for.
+     */
+    @Test
+    void turningTheStrengthDownLeavesMoreOfAPixelWhereItWas() {
+        var previous = 0.0;
+
+        // Strongest first, so each one has to beat the last.
+        for (var strength : List.of(FilterStrength.STRONG, FilterStrength.MEDIUM,
+                FilterStrength.LOW)) {
+            filter.setStrength(strength);
+
+            var frame = frameOf(0x0F);
+            frame[MIDDLE] = 0x30;
+
+            var pixels = filter.colourise(frame, 0);
+            var here = luma(pixels[MIDDLE]);
+            var spread = here + luma(pixels[MIDDLE - 1]) + luma(pixels[MIDDLE + 1]);
+            var kept = (double) here / spread;
+
+            assertTrue(
+                    kept > previous,
+                    () -> strength.id() + " keeps " + Math.round(kept * 100) + "% of the pixel");
+
+            previous = kept;
+        }
+    }
+
+    /**
+     * And that turning it down does not put colour anywhere new, which is the way a sharpener that
+     * reached into the chroma path would show up: the two halves of the decode are separate, and
+     * only one of them has a strength.
+     */
+    @Test
+    void theStrengthDoesNotMoveTheColours() {
+        for (var strength : FilterStrength.values()) {
+            filter.setStrength(strength);
+
+            assertTrue(worstAgainstThePalette(ALL_ENTRIES) < 40, () -> strength.id() + ": "
+                    + furthest);
         }
     }
 
@@ -220,19 +289,26 @@ class NTSCFilterTests {
     }
 
     /**
-     * The margin doing its job. The window of the first and last pixels reaches six samples outside
-     * the picture, and filling that with the edge pixel rather than with a repeated <em>sample</em>
-     * is the difference between a clean edge and a column of invented colour down the side.
+     * The margin doing its job. The widest window of the first and last pixels reaches eight
+     * samples outside the picture, and filling that with the edge pixel rather than with a repeated
+     * <em>sample</em> is the difference between a clean edge and a column of invented colour down
+     * the side. At every strength, since it is the strength that decides how far out the widest
+     * window reaches.
      */
     @Test
     void theEdgesOfAFlatFieldAreNoDifferentFromTheMiddle() {
-        for (var phase = 0; phase < PPU.COLOUR_PHASES; phase++) {
-            var pixels = filter.colourise(frameOf(0x21), phase);
-            var middle = pixels[MIDDLE];
+        for (var strength : FilterStrength.values()) {
+            filter.setStrength(strength);
 
-            assertEquals(middle, pixels[120 * WIDTH], "the leftmost pixel, phase " + phase);
-            assertEquals(
-                    middle, pixels[120 * WIDTH + WIDTH - 1], "the rightmost pixel, phase " + phase);
+            for (var phase = 0; phase < PPU.COLOUR_PHASES; phase++) {
+                var pixels = filter.colourise(frameOf(0x21), phase);
+                var middle = pixels[MIDDLE];
+                var where = strength.id() + ", phase " + phase;
+
+                assertEquals(middle, pixels[120 * WIDTH], "the leftmost pixel, " + where);
+                assertEquals(
+                        middle, pixels[120 * WIDTH + WIDTH - 1], "the rightmost pixel, " + where);
+            }
         }
     }
 

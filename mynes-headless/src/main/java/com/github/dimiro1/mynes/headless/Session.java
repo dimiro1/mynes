@@ -9,6 +9,7 @@ import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.NTSCFilter;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
@@ -88,6 +89,13 @@ public final class Session {
     private VideoFilter filter;
 
     /**
+     * How much of the detail the decoder's chroma trap costs is given back. Kept here rather than
+     * only on the decoder, so that a session that has not built one yet still remembers what it was
+     * told.
+     */
+    private FilterStrength strength;
+
+    /**
      * The composite decoder, built the first time one is asked for and kept after that: it carries
      * a couple of scratch buffers, and a session that never asks should not pay for them.
      */
@@ -154,16 +162,22 @@ public final class Session {
     private int buttons;
 
     /**
-     * @param nes     the machine, already built from a cartridge.
-     * @param palette 512 packed ARGB entries, which is what a screenshot is drawn with.
-     * @param filter  how to colour a screenshot: through the palette, or by decoding the signal.
-     * @param wav     where to write the sound, or null to only count it.
+     * @param nes      the machine, already built from a cartridge.
+     * @param palette  512 packed ARGB entries, which is what a screenshot is drawn with.
+     * @param filter   how to colour a screenshot: through the palette, or by decoding the signal.
+     * @param strength how soft the decoder draws, and nothing at all when the palette is drawing.
+     * @param wav      where to write the sound, or null to only count it.
      */
     public Session(
-            final NES nes, final int[] palette, final VideoFilter filter, final WavWriter wav) {
+            final NES nes,
+            final int[] palette,
+            final VideoFilter filter,
+            final FilterStrength strength,
+            final WavWriter wav) {
         this.nes = nes;
         this.palette = palette;
         this.filter = filter;
+        this.strength = strength;
         this.wav = wav;
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
@@ -186,9 +200,25 @@ public final class Session {
         this.filter = filter;
     }
 
+    /**
+     * How soft the decoder is drawing. Answered even while the palette is doing the drawing, since
+     * it is a preference about the decoder rather than a fact about the picture.
+     */
+    public FilterStrength strength() {
+        return strength;
+    }
+
+    public void setStrength(final FilterStrength strength) {
+        this.strength = strength;
+
+        if (ntsc != null) {
+            ntsc.setStrength(strength);
+        }
+    }
+
     private NTSCFilter ntsc() {
         if (ntsc == null) {
-            ntsc = new NTSCFilter();
+            ntsc = new NTSCFilter(strength);
         }
 
         return ntsc;

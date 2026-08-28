@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 
@@ -149,6 +150,43 @@ class OptionsTests {
      * machine can actually use it is a different question and cannot be asked here: it depends on
      * the cartridge, so {@code Headless} asks it once one has been read.
      */
+    @Test
+    void aStrengthRidesBehindTheFilterName() {
+        assertEquals(FilterStrength.MEDIUM, parse("--rom", "x.nes", "--filter", "ntsc").strength());
+        assertEquals(
+                FilterStrength.LOW, parse("--rom", "x.nes", "--filter", "ntsc=low").strength());
+        assertEquals(
+                FilterStrength.STRONG,
+                parse("--rom", "x.nes", "--filter", "ntsc=strong").strength());
+    }
+
+    /**
+     * The last one wins whole, rather than a strength surviving the filter it was said about.
+     */
+    @Test
+    void aSecondFilterReplacesTheFirstStrengthAndAll() {
+        assertEquals(
+                FilterStrength.MEDIUM,
+                parse("--rom", "x.nes", "--filter", "ntsc=low", "--filter", "ntsc").strength());
+    }
+
+    @Test
+    void anUnknownStrengthIsRefused() {
+        var message = refused("--rom", "x.nes", "--filter", "ntsc=high").getMessage();
+
+        assertTrue(message.contains("high"));
+        assertTrue(message.contains("medium"), "the message should offer the real ids");
+    }
+
+    /**
+     * Rather than ignored. A palette has no chroma trap to lean on, so somebody asking for a softer
+     * one has misunderstood something and is better told than humoured.
+     */
+    @Test
+    void aStrengthOnThePaletteIsRefused() {
+        assertTrue(refused("--rom", "x.nes", "--filter", "none=low").getMessage().contains("none"));
+    }
+
     @Test
     void anUnknownFilterIsRefused() {
         var message = refused("--rom", "x.nes", "--filter", "composite").getMessage();

@@ -11,6 +11,7 @@ import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveStateException;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,8 +58,10 @@ public final class Repl {
             read-ppu ADDR [COUNT]      PPU bus: pattern tables and nametables
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
-            filter [NAME]              say how the picture is being coloured, or set it: none, or
-                                       ntsc to decode the composite signal
+            filter [NAME [STRENGTH]]   say how the picture is being coloured, or set it: none, or
+                                       ntsc to decode the composite signal. The strength is low,
+                                       medium or strong, and says how much of the detail the
+                                       decoder's chroma trap costs to give back
             hack NAME on|off           unlimited-sprites, which --hack also switches on
             hack overclock LINES [MORE]
                                        extra scanlines a frame before the NMI, and after it; off
@@ -564,10 +567,47 @@ public final class Repl {
                                 + " own rather than this one with different numbers in it.");
             }
 
+            // Read before either is applied, so that a strength nobody can spell leaves the
+            // session as it was rather than half changed. And null when it is not said, which
+            // leaves the strength where it was rather than putting it back to the default: this is
+            // the command somebody takes the same frame twice with, and having "filter none" then
+            // "filter ntsc" quietly reset it would lose the setting between the two pictures.
+            var wantedStrength = words.length >= 3 ? strength(wanted, words[2]) : null;
+
             session.setFilter(wanted);
+
+            if (wantedStrength != null) {
+                session.setStrength(wantedStrength);
+            }
         }
 
-        reply("filter", node -> node.put("filter", session.filter().id()));
+        reply("filter", node -> {
+            node.put("filter", session.filter().id());
+            node.put("strength", session.strength().id());
+        });
+    }
+
+    /**
+     * How soft to draw, out of the third word of {@code filter ntsc low}.
+     * <p>
+     * Refused on the palette rather than ignored, for the reason {@code --filter none=low} is.
+     */
+    private static FilterStrength strength(final VideoFilter filter, final String word) {
+        if (filter != VideoFilter.NTSC) {
+            throw new UsageException(
+                    "filter " + filter.id() + " takes no strength: a strength says how much of the"
+                            + " detail the decoder's chroma trap costs to give back, and "
+                            + filter.id() + " does not decode anything.");
+        }
+
+        var wanted = FilterStrength.byId(word);
+
+        if (wanted == null) {
+            throw new UsageException(
+                    "a filter strength is " + FilterStrength.ids() + ", not \"" + word + "\".");
+        }
+
+        return wanted;
     }
 
     private void hack(final String[] words) {

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,7 +45,11 @@ class ReplTests {
     private List<JsonNode> session(final String... commands) throws IOException {
         var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
         var session = new Session(
-                new NES(cart), Palettes.defaultPalette().colours(), VideoFilter.NONE, null);
+                new NES(cart),
+                Palettes.defaultPalette().colours(),
+                VideoFilter.NONE,
+                FilterStrength.defaultStrength(),
+                null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
         var captured = new ByteArrayOutputStream();
 
@@ -250,6 +255,48 @@ class ReplTests {
         assertEquals("none", replies.get(1).get("filter").asText());
         assertEquals("ntsc", replies.get(2).get("filter").asText());
         assertEquals("none", replies.get(3).get("filter").asText());
+    }
+
+    /**
+     * And that the strength survives being switched away from and back, since diffing two pictures
+     * of one frame is done by going through the palette in between.
+     */
+    @Test
+    void theStrengthIsTheThirdWordAndOutlastsTheFilterItWasSaidAbout() throws Exception {
+        var replies = session(
+                "filter",
+                "filter ntsc low",
+                "filter none",
+                "filter ntsc",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertEquals("medium", replies.getFirst().get("strength").asText());
+        assertEquals("low", replies.get(1).get("strength").asText());
+        assertEquals("low", replies.get(2).get("strength").asText());
+        assertEquals("low", replies.get(3).get("strength").asText());
+    }
+
+    /**
+     * And a strength nobody can spell leaves the filter alone rather than half applying the line.
+     */
+    @Test
+    void aStrengthThatIsMisspeltOrSaidOfThePaletteIsAnError() throws Exception {
+        var replies = session(
+                "filter ntsc",
+                "filter none high",
+                "filter ntsc high",
+                "filter",
+                "quit");
+
+        assertTrue(replies.getFirst().get("ok").asBoolean());
+        assertFalse(replies.get(1).get("ok").asBoolean());
+        assertFalse(replies.get(2).get("ok").asBoolean());
+        assertTrue(replies.get(2).get("error").asText().contains("high"));
+
+        assertEquals("ntsc", replies.get(3).get("filter").asText(), "the refused line changed"
+                + " nothing");
     }
 
     @Test
@@ -858,7 +905,11 @@ class ReplTests {
     void textModeAnswersInReadableLinesRatherThanJson() throws Exception {
         var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
         var session = new Session(
-                new NES(cart), Palettes.defaultPalette().colours(), VideoFilter.NONE, null);
+                new NES(cart),
+                Palettes.defaultPalette().colours(),
+                VideoFilter.NONE,
+                FilterStrength.defaultStrength(),
+                null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
         var captured = new ByteArrayOutputStream();
 

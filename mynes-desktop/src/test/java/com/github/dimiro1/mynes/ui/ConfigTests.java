@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.input.KeyBindings.Button;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -165,6 +166,37 @@ class ConfigTests {
         void anUnknownIdFallsBackToThePalette() throws IOException {
             assertSame(VideoFilter.NONE,
                     Config.load(write("video.filter=composite\n")).videoFilter());
+        }
+
+        @Test
+        void aMissingStrengthIsTheDefaultOne() throws IOException {
+            assertSame(FilterStrength.defaultStrength(),
+                    Config.load(write("video.filter=ntsc\n")).filterStrength());
+        }
+
+        @Test
+        void anIdNamesItsStrength() throws IOException {
+            assertSame(FilterStrength.LOW,
+                    Config.load(write("video.filter.strength=low\n")).filterStrength());
+        }
+
+        /**
+         * Remembered rather than dropped, the way the filter itself is on a PAL machine: it is a
+         * preference about the decoder, and the palette drawing today does not unsay it.
+         */
+        @Test
+        void aStrengthIsKeptEvenWhileThePaletteIsDrawing() throws IOException {
+            var config = Config.load(
+                    write("video.filter=none\nvideo.filter.strength=strong\n"));
+
+            assertSame(VideoFilter.NONE, config.videoFilter());
+            assertSame(FilterStrength.STRONG, config.filterStrength());
+        }
+
+        @Test
+        void anUnknownStrengthFallsBackToTheDefault() throws IOException {
+            assertSame(FilterStrength.defaultStrength(),
+                    Config.load(write("video.filter.strength=sharpest\n")).filterStrength());
         }
     }
 
@@ -465,9 +497,13 @@ class ConfigTests {
         void theVideoFilterSurvivesTheRoundTrip() throws IOException {
             var config = Config.load(config());
             config.setVideoFilter(VideoFilter.NTSC);
+            config.setFilterStrength(FilterStrength.LOW);
             config.save(config());
 
-            assertSame(VideoFilter.NTSC, Config.load(config()).videoFilter());
+            var reloaded = Config.load(config());
+
+            assertSame(VideoFilter.NTSC, reloaded.videoFilter());
+            assertSame(FilterStrength.LOW, reloaded.filterStrength());
         }
 
         @Test
