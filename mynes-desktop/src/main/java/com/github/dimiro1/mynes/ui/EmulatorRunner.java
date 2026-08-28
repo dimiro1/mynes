@@ -147,6 +147,24 @@ public class EmulatorRunner {
     private volatile boolean running;
 
     /**
+     * How many frames of the game have gone past since this machine was switched on.
+     * <p>
+     * Written only by this thread and read only by the event dispatch thread, which is the whole of
+     * why a plain {@code volatile} is enough: one writer, and a reader that wants the newest value
+     * rather than a consistent pair of them. It is what the window's frame rate is measured from --
+     * two readings and the time between them -- so it must never go backwards while a machine
+     * lives, which is why nothing resets it.
+     * <p>
+     * <strong>Rewound frames count too</strong>, and that is the decision here worth writing down.
+     * Nothing is re-emulated going backwards -- the picture travels inside the state -- so a count
+     * of frames <em>emulated</em> would read zero for as long as the key is held, which is a status
+     * bar saying the machine has stopped while the game is visibly moving. What this counts is
+     * frames of the game that went past, in whichever direction they went, which is the question
+     * "is it keeping up" is really asking.
+     */
+    private volatile long framesRun;
+
+    /**
      * Whether the rewind key is being held. Written by the event dispatch thread and read here, so
      * the loop picks it up at the next frame boundary rather than mid-frame -- the same handoff as
      * {@link #paused} and for the same reason.
@@ -323,6 +341,15 @@ public class EmulatorRunner {
 
     public boolean isPaused() {
         return paused;
+    }
+
+    /**
+     * How many frames of the game have gone past since this machine was switched on. Safe to read
+     * from any thread, and the only thing a frame rate needs: two readings and the time between
+     * them.
+     */
+    public long getFramesRun() {
+        return framesRun;
     }
 
     /**
@@ -626,6 +653,8 @@ public class EmulatorRunner {
                         // has just gone back over.
                         var given = (int) (wasOn - ppu.getFrame());
 
+                        framesRun += given;
+
                         // Frames rather than the states the call above answered in: this ring keeps
                         // one every other frame, so the two numbers are different here in a way they
                         // are not in a headless session.
@@ -728,6 +757,14 @@ public class EmulatorRunner {
                 var completed = ppu.getFrame() != lastFrame;
 
                 atFrameBoundary = completed;
+
+                // Every frame that finished, however it finished -- stepped, halted, fast
+                // forwarded -- for the reason the two rings below are fed on exactly those: a frame
+                // is a frame whatever ran it, and a rate that skipped the stepped ones would say a
+                // machine somebody is stepping through is not running at all.
+                if (completed) {
+                    framesRun++;
+                }
 
                 // Drained up here rather than at the two places below that used to do it, because
                 // the rewind ring has to be given the sound of a frame before anything decides

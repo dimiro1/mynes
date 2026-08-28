@@ -156,6 +156,21 @@ on the way out; 1x is the 256x224 the machine drew. It is the picture rather tha
 overscan is cropped the way the window crops it, the magnification is a whole number whatever size
 the window has been dragged to, and it works on a machine that is paused or stopped at a breakpoint.
 
+**A status bar** along the bottom, from **Settings > Status Bar**, which carries the things a window
+cannot show you by being looked at: how many frames a second the machine is really getting through,
+which console it is, and every setting that is not the ordinary one — the overclock as the
+percentage the menu offered, how many Game Genie codes are in the slot, whether the sound is muted,
+unlimited sprites, the NTSC filter, a screenshot size that is not 1x. It fits as many of those as
+the window is wide enough for, in that order, and says how many it could not: `NTSC · Overclock
++50% · 3 Genie codes · +3 ⓘ`. Hovering gives the rest, and gives it in full — every setting,
+including the ones nobody has touched, down to the palette in use and how many seconds of rewind are
+being kept, which is the only place in the window that last one appears at all. Whatever the machine
+is doing other than simply running — paused, recording, playing a movie back, fast forwarding — sits
+at the right hand end. The rate is measured over a second and held where it is when a reading lands
+within one frame of the last, because a frame counter is a whole number and a bar flickering between
+60 and 61 would be reporting its own arithmetic rather than anything about the game. Ticking it off
+takes the row off the window rather than out of the picture.
+
 **Fast forward** at 2x, 4x, 8x or unlimited, from the Machine menu. The console is clocked exactly
 as it always is. What shrinks is the wait between frames, and the display still shows sixty a
 second, so you see the ones that fall due. Asking for more than the computer manages is not an

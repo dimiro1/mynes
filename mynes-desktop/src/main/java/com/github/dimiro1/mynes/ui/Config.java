@@ -43,6 +43,7 @@ public final class Config {
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
+    private static final String STATUS_BAR_KEY = "ui.status-bar";
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
@@ -111,6 +112,13 @@ public final class Config {
             # land beside the ROM, named after it and stamped with the time.
             """;
 
+    private static final String STATUS_BAR_HEADER = """
+            # Whether the row along the bottom of the window is shown: the frame rate the machine
+            # is really running at, which console it is, whatever hacks are on it, and what it is
+            # doing. Settings > Status Bar is the same setting. Unlike every other yes-or-no entry
+            # here a missing one means true, since the bar is on until somebody turns it off.
+            """;
+
     private static final String REGION_HEADER = """
             # Which machine to run cartridges on: auto, ntsc or pal. Auto believes the header,
             # which nearly every dump leaves blank -- so a European game that comes out 17% fast
@@ -160,6 +168,7 @@ public final class Config {
     private VideoFilter videoFilter;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
+    private boolean statusBar;
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
@@ -175,6 +184,7 @@ public final class Config {
             final VideoFilter videoFilter,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
+            final boolean statusBar,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted,
@@ -188,6 +198,7 @@ public final class Config {
         this.videoFilter = videoFilter;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
+        this.statusBar = statusBar;
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
@@ -227,6 +238,7 @@ public final class Config {
                 videoFilterFrom(properties),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
+                statusBarFrom(properties),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, MUTED_KEY),
@@ -284,6 +296,18 @@ public final class Config {
      */
     private static boolean flagFrom(final Properties properties, final String key) {
         return Boolean.parseBoolean(properties.getProperty(key, "").trim());
+    }
+
+    /**
+     * The one yes-or-no entry whose default is yes, which is why it cannot go through
+     * {@link #flagFrom}: everything else here is a thing the emulator does only when asked, and the
+     * status bar is a thing it does until told not to. A value that is not {@code true} still means
+     * no, the same as everywhere else -- it is only a missing entry the two disagree about.
+     */
+    private static boolean statusBarFrom(final Properties properties) {
+        var value = properties.getProperty(STATUS_BAR_KEY);
+
+        return value == null || Boolean.parseBoolean(value.trim());
     }
 
     private static NESPalette paletteFrom(
@@ -393,6 +417,12 @@ public final class Config {
                 .append(SCREENSHOT_SCALE_KEY)
                 .append('=')
                 .append(screenshotScale.id())
+                .append("\n\n");
+
+        text.append(STATUS_BAR_HEADER)
+                .append(STATUS_BAR_KEY)
+                .append('=')
+                .append(statusBar)
                 .append("\n\n");
 
         text.append(REGION_HEADER)
@@ -510,6 +540,17 @@ public final class Config {
 
     public void setScreenshotScale(final ScreenScale screenshotScale) {
         this.screenshotScale = screenshotScale;
+    }
+
+    /**
+     * Whether the window shows the row along its bottom.
+     */
+    public boolean statusBar() {
+        return statusBar;
+    }
+
+    public void setStatusBar(final boolean statusBar) {
+        this.statusBar = statusBar;
     }
 
     /**
