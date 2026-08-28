@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Dimension;
@@ -10,6 +11,7 @@ import java.awt.image.BufferedImage;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -88,7 +90,7 @@ class ScreenComponentTests {
     void aFrameIsColouredThroughTheChosenPalette() {
         var screen = new ScreenComponent();
 
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
 
         assertEquals(
                 Palettes.defaultPalette().colour(0x21) & 0xFFFFFF,
@@ -100,7 +102,7 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
 
         // What the PPU writes with all three emphasis bits set: entry 0x21, emphasis 7.
-        screen.present(frameOf((7 << 6) | 0x21));
+        screen.present(frameOf((7 << 6) | 0x21), 0);
 
         assertEquals(
                 Palettes.defaultPalette().colours()[(7 << 6) | 0x21] & 0xFFFFFF,
@@ -112,12 +114,53 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
         var classic = Palettes.byId("nes-classic");
 
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
         screen.setPalette(classic);
 
         // No new frame arrives, which is the case that matters: with the emulator paused there is
         // not going to be one, and the preview has to work anyway.
         assertEquals(classic.colour(0x21) & 0xFFFFFF, painted(screen, 0, OVERSCAN_TOP));
+    }
+
+    /**
+     * The same property the palette relies on, for the same reason: with the emulator paused there
+     * is no next frame to apply the change to, and switching the filter has to work anyway.
+     */
+    @Test
+    void switchingTheFilterRecoloursTheFrameAlreadyHere() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x21), 0);
+
+        var throughThePalette = painted(screen, 0, OVERSCAN_TOP);
+
+        screen.setVideoFilter(VideoFilter.NTSC);
+
+        var decoded = painted(screen, 0, OVERSCAN_TOP);
+
+        assertNotEquals(throughThePalette, decoded, "the decoder is not the palette");
+
+        screen.setVideoFilter(VideoFilter.NONE);
+
+        assertEquals(throughThePalette, painted(screen, 0, OVERSCAN_TOP), "and back again");
+    }
+
+    /**
+     * A screenshot is the picture, so it is whatever is on screen rather than whatever the palette
+     * would have made of it.
+     */
+    @Test
+    void aSnapshotIsTakenThroughTheFilterToo() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x21), 0);
+
+        var throughThePalette = screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0);
+
+        screen.setVideoFilter(VideoFilter.NTSC);
+
+        assertNotEquals(
+                throughThePalette, screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0));
     }
 
     @Test
@@ -141,7 +184,7 @@ class ScreenComponentTests {
     void aWholeMultipleLeavesNoLetterbox() {
         var screen = new ScreenComponent();
         screen.setScale(ScreenScale.THREE_TIMES);
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
 
         var size = screen.getPreferredSize();
         var target = new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_RGB);
@@ -177,7 +220,7 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
         var colour = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
 
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
 
         assertEquals(
                 0,
@@ -215,7 +258,7 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
         var colour = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
 
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
         screen.setRewinding(true);
 
         var snapshot = screen.snapshot(ScreenScale.ONE_TIMES);
@@ -229,7 +272,7 @@ class ScreenComponentTests {
     @Test
     void aSnapshotIsTheVisiblePictureAtTheSizeAskedFor() {
         var screen = new ScreenComponent();
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
 
         var image = screen.snapshot(ScreenScale.TWO_TIMES);
 
@@ -247,7 +290,7 @@ class ScreenComponentTests {
 
         // The eight scanlines the crop hides, in a colour nothing else in the frame is.
         Arrays.fill(frame, 0, OVERSCAN_TOP * PPU.SCREEN_WIDTH, 0x11);
-        screen.present(frame);
+        screen.present(frame, 0);
 
         var image = screen.snapshot(ScreenScale.ONE_TIMES);
 
@@ -259,7 +302,7 @@ class ScreenComponentTests {
     @Test
     void aSnapshotIgnoresWhatSizeTheWindowHasBeenDraggedTo() {
         var screen = new ScreenComponent();
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
 
         // A corner dragged by hand, which is what the picture on screen is fitted to: a fractional
         // magnification, letterboxed. A screenshot is of the machine rather than of the window, so
@@ -277,7 +320,7 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
         var classic = Palettes.byId("nes-classic");
 
-        screen.present(frameOf(0x21));
+        screen.present(frameOf(0x21), 0);
         screen.setPalette(classic);
 
         assertEquals(

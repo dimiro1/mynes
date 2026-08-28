@@ -9,6 +9,8 @@ import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import com.github.dimiro1.mynes.video.NTSCFilter;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
 import javax.imageio.ImageIO;
@@ -80,6 +82,18 @@ public final class Session {
     private final WavWriter wav;
 
     /**
+     * How a screenshot is coloured. Mutable, because the whole use for it here is taking the same
+     * frame twice and diffing the two pictures, which wants one machine rather than two runs.
+     */
+    private VideoFilter filter;
+
+    /**
+     * The composite decoder, built the first time one is asked for and kept after that: it carries
+     * a couple of scratch buffers, and a session that never asks should not pay for them.
+     */
+    private NTSCFilter ntsc;
+
+    /**
      * Where breakpoints and watchpoints live. Constructed here rather than passed in because a
      * session is the only thing that can drive one: it owns the loop that has to run an instruction
      * at a time for a breakpoint to mean anything.
@@ -142,11 +156,14 @@ public final class Session {
     /**
      * @param nes     the machine, already built from a cartridge.
      * @param palette 512 packed ARGB entries, which is what a screenshot is drawn with.
+     * @param filter  how to colour a screenshot: through the palette, or by decoding the signal.
      * @param wav     where to write the sound, or null to only count it.
      */
-    public Session(final NES nes, final int[] palette, final WavWriter wav) {
+    public Session(
+            final NES nes, final int[] palette, final VideoFilter filter, final WavWriter wav) {
         this.nes = nes;
         this.palette = palette;
+        this.filter = filter;
         this.wav = wav;
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
@@ -156,6 +173,25 @@ public final class Session {
 
     public NES nes() {
         return nes;
+    }
+
+    /**
+     * How screenshots are being coloured.
+     */
+    public VideoFilter filter() {
+        return filter;
+    }
+
+    public void setFilter(final VideoFilter filter) {
+        this.filter = filter;
+    }
+
+    private NTSCFilter ntsc() {
+        if (ntsc == null) {
+            ntsc = new NTSCFilter();
+        }
+
+        return ntsc;
     }
 
     public Debugger debugger() {
@@ -375,8 +411,11 @@ public final class Session {
      */
     public void screenshot(final Path path, final boolean cropOverscan, final int scale)
             throws IOException {
-        var image = FrameRenderer.render(
-                nes.getPPU().getFrameBuffer(), palette, cropOverscan, scale);
+        var ppu = nes.getPPU();
+        var image = filter == VideoFilter.NTSC
+                ? FrameRenderer.render(
+                        ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), cropOverscan, scale)
+                : FrameRenderer.render(ppu.getFrameBuffer(), palette, cropOverscan, scale);
 
         var parent = path.getParent();
         if (parent != null) {

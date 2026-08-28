@@ -49,6 +49,16 @@ public class PPU {
     private static final int LAST_DOT = 340;
 
     /**
+     * How many alignments of pixel to colour subcarrier the chip cycles through, one per scanline.
+     * <p>
+     * A scanline is 341 pixels of eight signal samples each and a colour cycle is twelve samples,
+     * so a line is 227 and a third cycles and the alignment repeats every third one. Public because
+     * a decoder of the signal has to agree with the chip about it; see
+     * {@link com.github.dimiro1.mynes.video.NTSCFilter}.
+     */
+    public static final int COLOUR_PHASES = 3;
+
+    /**
      * The first scanline that is not drawn.
      */
     private static final int POST_RENDER_LINE = 240;
@@ -206,6 +216,33 @@ public class PPU {
      * pre-render line is skipped.
      */
     private boolean oddFrame = false;
+
+    /**
+     * Where the colour subcarrier has got to, counted in the thirds of a cycle a scanline drifts
+     * by rather than in samples.
+     * <p>
+     * The chip does not encode colour, it draws a composite waveform out of twelve square waves,
+     * and a 341 dot scanline is 227 and a third cycles of them -- so the alignment of pixel to
+     * cycle slips a third of a cycle every line and comes back every third one. That slip is what
+     * a television turns into dot crawl, and it belongs to the chip rather than to the set, which
+     * is why it is counted here and why it is in the save state.
+     * <p>
+     * Counted per line rather than per frame on purpose. A frame is 262 lines on this machine, 312
+     * on the other one and more than either under {@link Overclock}, and a line is a line in all
+     * three cases -- so nothing here has to know how long a frame is.
+     * <p>
+     * A reset leaves it alone, like {@link #frame} and {@link #clock}: on a real console the
+     * alignment is settled by where the chip happens to be when the picture starts, which is
+     * nothing a program can read and nothing a button can put back.
+     */
+    private int colourPhase = 0;
+
+    /**
+     * {@link #colourPhase} as it stood at the top left of the frame in {@link #frameBuffer}, which
+     * is the one a front end needs: the buffer is a whole frame and the counter has moved on 262
+     * lines by the time anybody looks at it.
+     */
+    private int framePhase = 0;
 
     /**
      * How many extra idle scanlines to give the program per frame, which is a hack and not a
@@ -629,6 +666,11 @@ public class PPU {
         if (region.skipsDotOnOddFrames()
                 && scanline == preRenderLine && dot == LAST_DOT - 1
                 && oddFrame && isRenderingEnabled()) {
+            // A line one dot short is eight samples short, and eight fewer samples out of twelve
+            // is four more of them modulo the cycle -- so the short line drifts by two thirds
+            // where every other line drifts by one. That is the whole of why the artefact pattern
+            // repeats every two frames with rendering on and every three with it off.
+            endLine(2);
             startFrame();
             return;
         }
@@ -637,6 +679,7 @@ public class PPU {
 
         if (dot > LAST_DOT) {
             dot = 0;
+            endLine(1);
 
             if ((scanline == POST_RENDER_LINE && extraLine < overclock.beforeNmi())
                     || (scanline == preRenderLine - 1 && extraLine < overclock.afterNmi())) {
@@ -659,6 +702,17 @@ public class PPU {
         dot = 0;
         frame++;
         oddFrame = !oddFrame;
+        framePhase = colourPhase;
+    }
+
+    /**
+     * Moves the colour subcarrier on by a finished scanline's worth of drift.
+     *
+     * @param thirds how many thirds of a cycle this line was worth: one for a whole line, two for
+     *               the short one an odd frame ends on.
+     */
+    private void endLine(final int thirds) {
+        colourPhase = (colourPhase + thirds) % COLOUR_PHASES;
     }
 
     // ================================================================ background pipeline
@@ -2351,6 +2405,8 @@ public class PPU {
         clock = io.u64(clock);
         oddFrame = io.bool(oddFrame);
         warmingUp = io.bool(warmingUp);
+        colourPhase = io.u8(colourPhase);
+        framePhase = io.u8(framePhase);
 
         ctrl = io.u8(ctrl);
         mask = io.u8(mask);
@@ -2475,6 +2531,17 @@ public class PPU {
      */
     public long getFrame() {
         return frame;
+    }
+
+    /**
+     * Where {@link #getFrameBuffer()}'s frame sits in the three step cycle the colour subcarrier
+     * drifts through, which is what a composite decoder needs and a palette does not.
+     *
+     * @return 0, 1 or 2.
+     * @see com.github.dimiro1.mynes.video.NTSCFilter
+     */
+    public int getFramePhase() {
+        return framePhase;
     }
 
     /**

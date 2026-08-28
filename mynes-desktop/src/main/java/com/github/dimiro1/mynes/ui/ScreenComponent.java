@@ -4,6 +4,8 @@ import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FrameRenderer;
+import com.github.dimiro1.mynes.video.NTSCFilter;
+import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -74,6 +76,24 @@ public class ScreenComponent extends JComponent {
     private int[] palette = Palettes.defaultPalette().colours();
 
     /**
+     * How the frame is coloured: through {@link #palette}, or by decoding the signal.
+     */
+    private VideoFilter videoFilter = VideoFilter.NONE;
+
+    /**
+     * The composite decoder, built the first time somebody asks for it. A window that is never
+     * switched to it should not carry its tables.
+     */
+    private @Nullable NTSCFilter ntsc;
+
+    /**
+     * Which of the three subcarrier alignments {@link #frame} was drawn at. Kept beside the frame
+     * for the same reason the frame is kept: switching the filter has to be able to redraw the
+     * picture that is already on screen, and with the emulator paused there is no other one coming.
+     */
+    private int framePhase;
+
+    /**
      * Whether to draw the rewind marker over the picture. Written by the emulation thread and read
      * by the event dispatch thread when it paints, which is what {@code volatile} is here for; it is
      * outside {@link #frameLock} on purpose, since a marker that appeared a frame late would be
@@ -109,10 +129,15 @@ public class ScreenComponent extends JComponent {
      * safe to call from anywhere: it only posts a request to the event queue.
      *
      * @param frameBuffer the PPU's live framebuffer, {@link PPU#getFrameBuffer()}.
+     * @param framePhase  where that frame sits in the subcarrier's cycle,
+     *                    {@link PPU#getFramePhase()}. Ignored unless the NTSC filter is on, and
+     *                    taken here rather than read back later because it belongs to this frame
+     *                    and the beam has already moved on.
      */
-    public void present(final int[] frameBuffer) {
+    public void present(final int[] frameBuffer, final int framePhase) {
         synchronized (frameLock) {
             System.arraycopy(frameBuffer, 0, frame, 0, frame.length);
+            this.framePhase = framePhase;
             hasFrame = true;
             colourise();
         }
@@ -162,7 +187,9 @@ public class ScreenComponent extends JComponent {
                 return null;
             }
 
-            return FrameRenderer.render(frame, palette, true, scale.factor());
+            return videoFilter == VideoFilter.NTSC
+                    ? FrameRenderer.render(frame, ntsc(), framePhase, true, scale.factor())
+                    : FrameRenderer.render(frame, palette, true, scale.factor());
         }
     }
 
@@ -174,6 +201,22 @@ public class ScreenComponent extends JComponent {
      * even with the emulator paused, because the recolouring works from the frame that is already
      * here rather than from the next one.
      */
+    /**
+     * Colours everything from now on with {@code filter}, including the frame already on screen.
+     * <p>
+     * Called on the event dispatch thread, like {@link #setPalette}, and for the same reason: with
+     * the emulator paused the picture behind the menu is the comparison, and there is no next frame
+     * coming to apply the change to.
+     */
+    public void setVideoFilter(final VideoFilter filter) {
+        synchronized (frameLock) {
+            this.videoFilter = filter;
+            colourise();
+        }
+
+        repaint();
+    }
+
     public void setPalette(final NESPalette palette) {
         synchronized (frameLock) {
             this.palette = palette.colours();
@@ -184,17 +227,34 @@ public class ScreenComponent extends JComponent {
     }
 
     /**
-     * Maps the frame's colour indices through the palette into the image. The caller holds
-     * {@link #frameLock}.
+     * Turns the frame's colour indices into the image. The caller holds {@link #frameLock}.
+     * <p>
+     * The composite decoder costs a couple of milliseconds a frame where the palette costs tens of
+     * microseconds, and it is done here rather than on the event dispatch thread for the same
+     * reason the palette is: this is the one place both a new frame and a changed setting can reach,
+     * so a picture that is already on screen is redrawn by the same code that drew it.
      */
     private void colourise() {
         if (!hasFrame) {
             return;
         }
 
+        if (videoFilter == VideoFilter.NTSC) {
+            System.arraycopy(ntsc().colourise(frame, framePhase), 0, pixels, 0, pixels.length);
+            return;
+        }
+
         for (var i = 0; i < pixels.length; i++) {
             pixels[i] = palette[frame[i]];
         }
+    }
+
+    private NTSCFilter ntsc() {
+        if (ntsc == null) {
+            ntsc = new NTSCFilter();
+        }
+
+        return ntsc;
     }
 
     @Override

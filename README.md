@@ -77,6 +77,7 @@ the palette, screen size, fast forward speed and how much rewind keeps:
 ```properties
 video.palette=nesdev
 video.palette.pal=2c07
+video.filter=none
 video.scale=2
 video.screenshot.scale=1
 emulation.region=auto
@@ -128,6 +129,20 @@ fifteen degrees away from the NTSC one and which therefore needs a table of its 
 get that one by default. **Settings > Palette...** lists them next to a swatch grid and applies each
 one as the selection moves, so you can compare them against the running game, or against a paused
 frame; the choice is remembered separately for each kind of machine.
+
+**An NTSC filter**, from **Settings > Video Filter**. A palette answers "what colour is entry $21"
+one pixel at a time, which is the wrong shape of answer for the three things that depend on the
+pixel next door: colour bleed, dot crawl, and the artefact colours a game gets by alternating narrow
+columns of grey. This answers it the other way round. The chip does not encode RGB into composite --
+it draws the waveform directly, out of twelve square waves at the colourburst rate -- so the filter
+rebuilds that waveform and decodes it the way a receiver did, slew and all: the 2C02's output
+impedance depends on the level it is driving, which rotates the hue of a colour with its row, and
+leaving that out puts every colour about seven degrees away from every palette here. The palette is
+not consulted while it is on, so **Settings > Palette...** is greyed out; and the filter is greyed
+out itself on a PAL machine, whose 2C07 draws a different signal that would need a decoder of its
+own. Nothing measured moves -- the frame hash and the colour counts are taken over the colour
+indices the chip emits -- so it changes the picture and nothing else. `--filter ntsc` does the same
+from the command line.
 
 **Screen size** at 1x, 2x, 3x or 4x of the 256x224 picture, from **Settings > Screen Size**, which
 packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
@@ -330,6 +345,12 @@ seconds to start up, the jar about a third of one.
   ROM, input and frame count produce identical bytes on every run and every computer. Anything that
   legitimately varies lives under `host` in the report, so
   `diff <(jq 'del(.host)' a.json) <(jq 'del(.host)' b.json)` compares two runs.
+- **`--filter ntsc`** colours the picture by decoding the composite signal the chip drew instead of
+  looking each pixel up in a palette, which is where colour bleed, dot crawl and artefact colours
+  come from. It bypasses `--palette`, and it is refused on a PAL machine. Unlike everything else in
+  this list it does **not** join the things to check before diffing two runs: everything the report
+  measures is taken over colour indices, so `video.finalFrame` is identical with it on and off and
+  only the PNGs differ. `filter` is a command in the interactive session too.
 - **`--region ntsc|pal`** overrides what the cartridge's header asks for. Two runs in different
   regions are not two measurements of the same thing — a frame is 106392 dots on one machine and
   89342 on the other — so `run.region` in the report is part of what to check before diffing them.

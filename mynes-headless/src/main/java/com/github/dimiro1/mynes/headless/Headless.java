@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.patch.InvalidPatchException;
 import com.github.dimiro1.mynes.state.BatteryRAM;
@@ -9,6 +10,7 @@ import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.VideoFilter;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -130,6 +132,18 @@ public final class Headless {
         var region = options.regionFor(cart);
         var palette = options.paletteFor(region);
 
+        // Here rather than while the command line is being read, because until the cartridge has
+        // been looked at nobody knows which machine this is. Refused rather than quietly dropped
+        // back to the palette, for the reason a misspelled --palette is: the picture would not be
+        // the one that was asked for.
+        if (options.filter() == VideoFilter.NTSC && region == Region.PAL) {
+            System.err.println("--filter ntsc decodes the 2C02's signal, and this is a "
+                    + region.label() + " machine. The 2C07 draws ten samples to a pixel against"
+                    + " eight and alternates its burst phase every line, so it needs a decoder of"
+                    + " its own rather than this one. Leave --filter off, or --region ntsc.");
+            return EXIT_USAGE;
+        }
+
         // Before the machine exists, because a movie is checked from top to bottom without one --
         // so a file that is not a movie, or is damaged, or is from a later build, stops the run
         // rather than half-playing it. Which cartridge it belongs to is Session.beginReplay's
@@ -161,7 +175,7 @@ public final class Headless {
         // a file if one was asked for.
         try (var wav = options.audio() ? new WavWriter(options.wavPath()) : null) {
             var session = new Session(
-                    new NES(cart, region), palette.colours(), wav);
+                    new NES(cart, region), palette.colours(), options.filter(), wav);
 
             // Before either of the two below it, because a hack is not machine state: a save state
             // carries none of these, so switching one on afterwards would leave it depending on

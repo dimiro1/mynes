@@ -173,6 +173,41 @@ the machine's own blanking interval or every sprite in the game vanishes once a 
 are `static` on purpose: `SaveStateCompletenessTests` vandalises every primitive array it can reach
 through the console, and an `int[]` field on `Region` would be one of them.
 
+### Drawing it the way a television did
+
+`--filter ntsc` colours the picture by rebuilding the composite waveform the chip drew and decoding
+it, rather than by looking each colour index up in a palette. That is the only way to get the three
+things a table cannot produce, because all three depend on the pixel next door: colour bleed, dot
+crawl, and the artefact colours a game gets out of alternating narrow columns of grey. A pixel is
+eight samples of signal, a colour cycle is twelve, and a 341 pixel scanline is 227 and a third
+cycles -- those three numbers are the whole of it, and the last is why the picture drifts a third of
+a cycle a line and repeats every third one. `PPU.getFramePhase()` is where the chip's share of that
+drift is counted.
+
+**The palette is not consulted while it is on**, and that is not an oversight: a decoder works its
+colours out of the signal, and a measured table is a rival answer to the same question rather than a
+stage of this one. The window greys **Settings > Palette...** out to say so. It is also **NTSC
+only** -- `--filter ntsc` with a PAL machine is exit 2, and the menu greys itself out -- because the
+2C07 runs ten samples to a pixel and alternates its burst phase every line, so it needs its own
+decoder rather than this one with different numbers in it.
+
+**It is not on the comparability checklist**, and it is the only thing in this file that is not.
+Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` --
+is taken over the colour *indices* the chip emits, so `video.finalFrame` is identical with the
+filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
+`--hack overclock` cannot: a replay does not depend on it. `video.filter` in the report says which
+was used, and `filter ntsc` / `filter none` / bare `filter` do it inside an interactive session,
+which is how to take the same frame twice and diff the two pictures.
+
+It costs about 2.2ms a frame against an emulated frame's 3.7ms, so it roughly halves the headroom
+rather than the frame rate. `NTSCFilter` is where all of it lives, and the constant most likely to
+be argued with is `DISTORTION`: the 2C02's output impedance depends on the level it is driving,
+which rotates a colour's hue with its row, and NESdev's figure for a 2C02G is twice the one used
+here. The 2C02E's figure is used because it is measurable which one is right for this emulator --
+at 1.5e-8 the decoded hues land within a degree or two of every palette in `/palettes`, and at 3e-8
+they sit ten to thirteen degrees off all of them. `NTSCFilterTests` holds that against the default
+palette, greys to within 8 of 441 and everything else to within 40.
+
 ### It is deterministic
 
 Nothing in the machine reads a clock or a random number, so the same ROM, input and frame count give
@@ -395,7 +430,8 @@ mynes-core/           depends on nothing
   mynes/state/        save states, battery .sav files, and .mnm session recordings
   mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
-  mynes/video/        colour indices to pixels: the overscan crop and the frame renderer
+  mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, and the
+                      NTSC filter that decodes the signal instead of reading a palette
   mynes/palette/      the measured RGB tables, and the loader that reads them out of /palettes
 
 mynes-patch/          depends on nothing either, core included
