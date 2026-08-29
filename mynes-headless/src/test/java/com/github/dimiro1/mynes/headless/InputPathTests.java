@@ -118,6 +118,7 @@ class InputPathTests {
                 Palettes.defaultPalette().colours(),
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
+                false,
                 null);
     }
 

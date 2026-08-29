@@ -42,7 +42,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.Locale;
+import java.util.Map;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
 import java.util.function.IntConsumer;
@@ -145,7 +147,16 @@ public class GameUIFrame extends JFrame {
      */
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
+    private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
+
+    /**
+     * The Video Filter items, kept one at a time rather than as the submenu they are in, because
+     * only one of them is ever greyed out: the decoder is the 2C02's and a PAL machine has to do
+     * without it, while the palette and the tube are both every machine's.
+     */
+    private final Map<VideoFilter, JRadioButtonMenuItem> settingsMenuVideoFilters =
+            new EnumMap<>(VideoFilter.class);
 
     /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
@@ -183,7 +194,6 @@ public class GameUIFrame extends JFrame {
      * through in a frame.
      */
     private JMenu hacksMenuOverclock;
-    private JMenu settingsMenuVideoFilter;
     private JMenu settingsMenuFilterStrength;
 
     /**
@@ -478,8 +488,7 @@ public class GameUIFrame extends JFrame {
 
         settingsMenu.add(settingsMenuPalette);
 
-        settingsMenuVideoFilter = videoFilterMenu();
-        settingsMenu.add(settingsMenuVideoFilter);
+        settingsMenu.add(videoFilterMenu());
 
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
@@ -963,14 +972,16 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * Builds the Video Filter submenu: how a frame of colour indices becomes colours.
+     * Builds the Video Filter submenu: how a frame of colour indices becomes a picture.
      * <p>
      * Beside the palette rather than in the Hacks menu, because it is not one. A hack is the
      * console doing something it did not do; this is a television doing what it always did, and the
-     * question it answers -- what colour is entry $21 -- is the palette's question asked a second
-     * way. Which is also why the two are mutually exclusive and why {@link #applyVideoFilter} greys
-     * one out while the other is on. The strength below the separator belongs to the decoder alone
-     * and is greyed out with it.
+     * question the decoder answers -- what colour is entry $21 -- is the palette's question asked a
+     * second way. Which is why those two are mutually exclusive and why {@link #applyVideoFilter}
+     * greys the palette out while the decoder is on. The tube is not a rival answer to that
+     * question, so it leaves the palette alone. Below the separator are the two settings on the
+     * items above rather than rivals to them: the strength, which both filters read, and the curve
+     * of the glass, which only the tube has.
      */
     private JMenu videoFilterMenu() {
         var menu = new JMenu("Video Filter");
@@ -989,23 +1000,32 @@ public class GameUIFrame extends JFrame {
 
             group.add(item);
             menu.add(item);
+            settingsMenuVideoFilters.put(filter, item);
         }
 
         settingsMenuFilterStrength = filterStrengthMenu();
 
+        settingsMenuWarp.setSelected(config.warp());
+        settingsMenuWarp.addActionListener(e -> {
+            config.setWarp(settingsMenuWarp.isSelected());
+            saveConfig();
+            applyVideoFilter();
+        });
+
         menu.addSeparator();
         menu.add(settingsMenuFilterStrength);
+        menu.add(settingsMenuWarp);
 
         return menu;
     }
 
     /**
-     * Builds the Strength submenu: how much of the detail the decoder's chroma trap costs it gives
-     * back.
+     * Builds the Strength submenu: how hard the filter above is applied -- how much of the detail
+     * the decoder's chroma trap costs it gives back, or how dark the tube's gaps go.
      * <p>
      * Inside Video Filter rather than beside it, and below a separator, because it is a setting on
-     * one of the items above it rather than a fourth thing to choose between them --
-     * {@link #applyVideoFilter} greys it out whenever that item is not the one in force.
+     * the items above it rather than another thing to choose between them --
+     * {@link #applyVideoFilter} greys it out whenever the item in force has no use for it.
      */
     private JMenu filterStrengthMenu() {
         var menu = new JMenu("Strength");
@@ -1033,32 +1053,38 @@ public class GameUIFrame extends JFrame {
      * meaningless.
      * <p>
      * Two things can make the choice meaningless. A PAL machine is one: the 2C07 draws a different
-     * signal and the decoder here is not it, so the whole submenu goes grey and the picture falls
+     * signal and the decoder here is not it, so that item alone goes grey and the picture falls
      * back to the palette -- while the tick stays where it was, because the setting is somebody's
-     * preference about NTSC games and a European cartridge should not take it away. The palette
-     * dialog is the other: a decoder works its colours out from the signal and never opens the
-     * table, so offering a choice of table while it is running would be offering a setting that
-     * does nothing.
+     * preference about NTSC games and a European cartridge should not take it away. The tube keeps
+     * its item, since every one of these machines was plugged into one. The palette dialog is the
+     * other: a decoder works its colours out from the signal and never opens the table, so offering
+     * a choice of table while it is running would be offering a setting that does nothing.
      */
     private void applyVideoFilter() {
         var filter = currentVideoFilter();
 
-        screen.setVideoFilter(filter, config.filterStrength());
-        settingsMenuVideoFilter.setEnabled(currentRegion() != Region.PAL);
-        settingsMenuFilterStrength.setEnabled(filter == VideoFilter.NTSC);
-        settingsMenuPalette.setEnabled(filter == VideoFilter.NONE);
+        screen.setVideoFilter(filter, config.filterStrength(), config.warp());
+        settingsMenuVideoFilters.get(VideoFilter.NTSC).setEnabled(currentRegion() != Region.PAL);
+        settingsMenuFilterStrength.setEnabled(filter != VideoFilter.NONE);
+        settingsMenuWarp.setEnabled(filter == VideoFilter.CRT);
+        settingsMenuPalette.setEnabled(filter != VideoFilter.NTSC);
 
         updateStatusBar();
     }
 
     /**
-     * Which filter the picture is actually being coloured through, which is not always the one the
-     * menu has ticked: a PAL machine draws a signal this decoder is not for, so it falls back to
-     * the palette while the tick stays where it was. Both the screen and the status bar ask this
-     * rather than the config, so that neither can describe a picture nobody is looking at.
+     * Which filter the picture is actually being drawn with, which is not always the one the menu
+     * has ticked: a PAL machine draws a signal this decoder is not for, so <em>that</em> choice
+     * falls back to the palette while the tick stays where it was. Nothing else falls back, the
+     * tube included. Both the screen and the status bar ask this rather than the config, so that
+     * neither can describe a picture nobody is looking at.
      */
     private VideoFilter currentVideoFilter() {
-        return currentRegion() == Region.PAL ? VideoFilter.NONE : config.videoFilter();
+        var filter = config.videoFilter();
+
+        return filter == VideoFilter.NTSC && currentRegion() == Region.PAL
+                ? VideoFilter.NONE
+                : filter;
     }
 
     /**
@@ -1141,6 +1167,7 @@ public class GameUIFrame extends JFrame {
                 config.unlimitedSprites(),
                 currentVideoFilter(),
                 config.filterStrength(),
+                config.warp(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),

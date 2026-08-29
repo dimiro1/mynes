@@ -11,6 +11,7 @@ import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveStateException;
+import com.github.dimiro1.mynes.video.CRTScreen;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
@@ -58,10 +59,13 @@ public final class Repl {
             read-ppu ADDR [COUNT]      PPU bus: pattern tables and nametables
             oam [START] [COUNT]        object attribute memory
             dump WHAT PATH             ram, oam, palette, nametables, prgram or chr
-            filter [NAME [STRENGTH]]   say how the picture is being coloured, or set it: none, or
-                                       ntsc to decode the composite signal. The strength is low,
-                                       medium or strong, and says how much of the detail the
-                                       decoder's chroma trap costs to give back
+            filter [NAME [STRENGTH]]   say how the picture is being drawn, or set it: none, ntsc to
+                                       decode the composite signal, or crt to lay the palette down
+                                       the way a tube did. The strength is low, medium or strong --
+                                       how much of the detail the decoder gives back, or how dark
+                                       the mask's gaps go
+            warp [on|off]              bend the picture the way a tube's glass did, which needs the
+                                       crt filter to be the one drawing
             hack NAME on|off           unlimited-sprites, which --hack also switches on
             hack overclock LINES [MORE]
                                        extra scanlines a frame before the NMI, and after it; off
@@ -222,6 +226,7 @@ public final class Repl {
             case "oam" -> oam(words);
             case "dump" -> dump(words);
             case "filter" -> filter(words);
+            case "warp" -> warp(words);
             case "hack" -> hack(words);
             case "genie", "ungenie" -> genie(name, words);
             case "save-state" -> saveState(words);
@@ -544,7 +549,7 @@ public final class Repl {
      * what a session is for is watching a game that lags stop lagging, at whatever setting it takes.
      */
     /**
-     * Says how screenshots are being coloured, or changes it.
+     * Says how screenshots are being drawn, or changes it.
      * <p>
      * The shape of {@code hack} rather than of {@code genie}: a filter is switched rather than put
      * down and picked up. And it is here for the same reason {@code hack unlimited-sprites} is --
@@ -567,6 +572,17 @@ public final class Repl {
                                 + " own rather than this one with different numbers in it.");
             }
 
+            // The session's magnification is fixed at --scale for the run, so this can only be
+            // answered here and not by waiting to see how the screenshot comes out. Refused for
+            // the reason --filter crt is refused there: a mask with nowhere to put a gap is a
+            // filter that would be switched on and invisible.
+            if (wanted == VideoFilter.CRT && options.scale() < CRTScreen.MINIMUM_ROWS_PER_LINE) {
+                throw new UsageException("the crt filter needs --scale "
+                        + CRTScreen.MINIMUM_ROWS_PER_LINE + " or more, and this session was started"
+                        + " at " + options.scale() + ": a scanline is the row a line was not drawn"
+                        + " on, and one row per line leaves nowhere to put it.");
+            }
+
             // Read before either is applied, so that a strength nobody can spell leaves the
             // session as it was rather than half changed. And null when it is not said, which
             // leaves the strength where it was rather than putting it back to the default: this is
@@ -584,20 +600,51 @@ public final class Repl {
         reply("filter", node -> {
             node.put("filter", session.filter().id());
             node.put("strength", session.strength().id());
+            node.put("warp", session.warp());
         });
     }
 
     /**
-     * How soft to draw, out of the third word of {@code filter ntsc low}.
+     * Says whether the tube's glass is curved, or bends it.
+     * <p>
+     * A command of its own rather than a fourth word of {@code filter}, because it is switched on
+     * and off rather than chosen between -- the shape of {@code hack NAME on|off} with the name
+     * left out, since there is only one of it.
+     * <p>
+     * Refused unless the tube is drawing, for the reason {@code --warp} is refused beside another
+     * filter: there is no glass in front of a lookup table, and a setting that was quietly
+     * remembered until it mattered would be a picture nobody could account for.
+     */
+    private void warp(final String[] words) {
+        if (words.length >= 2) {
+            if (session.filter() != VideoFilter.CRT) {
+                throw new UsageException("warp is the curve of a picture tube's glass, and the "
+                        + session.filter().id() + " filter does not draw on one. \"filter crt\""
+                        + " first.");
+            }
+
+            session.setWarp(switch (words[1]) {
+                case "on" -> true;
+                case "off" -> false;
+                default -> throw new UsageException(
+                        "warp is on or off, not \"" + words[1] + "\".");
+            });
+        }
+
+        reply("warp", node -> node.put("warp", session.warp()));
+    }
+
+    /**
+     * How hard to apply it, out of the third word of {@code filter ntsc low}.
      * <p>
      * Refused on the palette rather than ignored, for the reason {@code --filter none=low} is.
      */
     private static FilterStrength strength(final VideoFilter filter, final String word) {
-        if (filter != VideoFilter.NTSC) {
+        if (filter == VideoFilter.NONE) {
             throw new UsageException(
-                    "filter " + filter.id() + " takes no strength: a strength says how much of the"
-                            + " detail the decoder's chroma trap costs to give back, and "
-                            + filter.id() + " does not decode anything.");
+                    "filter " + filter.id() + " takes no strength: a strength says how much of what"
+                            + " a filter does to do, and " + filter.id() + " is the palette"
+                            + " straight through.");
         }
 
         var wanted = FilterStrength.byId(word);

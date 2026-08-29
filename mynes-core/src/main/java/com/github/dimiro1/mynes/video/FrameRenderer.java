@@ -75,13 +75,64 @@ public final class FrameRenderer {
     ) {
         checkScale(scale);
 
+        return magnify(through(frame, palette), cropOverscan, scale);
+    }
+
+    /**
+     * The same again, put on the screen a picture tube put it on.
+     * <p>
+     * The palette <em>is</em> a parameter this time, unlike the decoder below, and that is the
+     * difference between the two filters in one line: a tube is not a rival answer to what colour
+     * entry $21 is, it is what happened to the answer afterwards. So this colours the frame exactly
+     * as the call above does and then hands it to {@link CRTScreen}, which magnifies it itself --
+     * the crop, the mask and the bend are one pass there, for reasons written down beside them.
+     * <p>
+     * <strong>At {@code scale} 1 the mask draws nothing.</strong> A scanline is the row a line was
+     * not drawn on and one row per line leaves nowhere to put it, so {@link CRTScreen} fades it to
+     * nothing rather than dimming the whole picture by way of an answer. The front ends refuse the
+     * combination before it gets here; this does the harmless thing so that a caller which does not
+     * is wrong about the picture rather than about the arithmetic.
+     *
+     * @param frame        a frame of colour indices, {@link PPU#getFrameBuffer()}.
+     * @param palette      512 packed ARGB entries, as above.
+     * @param strength     how dark the gaps between the lines go.
+     * @param warp         whether the glass is curved.
+     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
+     * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
+     */
+    public static BufferedImage render(
+            final int[] frame,
+            final int[] palette,
+            final FilterStrength strength,
+            final boolean warp,
+            final boolean cropOverscan,
+            final int scale
+    ) {
+        checkScale(scale);
+
+        var top = cropOverscan ? OVERSCAN_TOP : 0;
+        var lines = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
+        var width = PPU.SCREEN_WIDTH * scale;
+        var height = lines * scale;
+
+        var image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+
+        CRTScreen.draw(
+                through(frame, palette), top, lines, pixels, width, height, strength, warp);
+
+        return image;
+    }
+
+    private static int[] through(final int[] frame, final int[] palette) {
         var colours = new int[PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT];
 
         for (var i = 0; i < colours.length; i++) {
             colours[i] = palette[frame[i]];
         }
 
-        return magnify(colours, cropOverscan, scale);
+        return colours;
     }
 
     /**

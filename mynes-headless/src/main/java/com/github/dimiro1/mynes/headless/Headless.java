@@ -179,6 +179,7 @@ public final class Headless {
                     palette.colours(),
                     options.filter(),
                     options.strength(),
+                    options.warp(),
                     wav);
 
             // Before either of the two below it, because a hack is not machine state: a save state

@@ -8,6 +8,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Turning colour indices into a picture, which is the half of the job the chip does not do.
@@ -77,6 +78,56 @@ class FrameRendererTests {
         var filtered = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, true, 1).getRGB(0, 0);
 
         org.junit.jupiter.api.Assertions.assertNotEquals(palette, filtered);
+    }
+
+    /**
+     * The third overload, which is the palette again with a tube in front of it. The colours are
+     * the palette's, unlike the decoder's, and what the tube changes is where the light goes.
+     */
+    @Test
+    void aTubeColoursThroughThePaletteAndThenTakesTheLightOffTheGaps() {
+        var image = FrameRenderer.render(
+                frameOf(0x20), PALETTE, FilterStrength.MEDIUM, false, true, 2);
+
+        assertEquals(PPU.SCREEN_WIDTH * 2, image.getWidth());
+        assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, image.getHeight());
+
+        var lit = image.getRGB(0, 0) & 0xFF;
+        var dark = image.getRGB(0, 1) & 0xFF;
+        var plain = FrameRenderer.render(frameOf(0x20), PALETTE, true, 2).getRGB(0, 0) & 0xFF;
+
+        assertTrue(lit < plain, "even a lit row loses a little: " + lit + " of " + plain);
+        assertTrue(dark * 3 < lit * 2, "and the gap loses far more: " + dark + " against " + lit);
+    }
+
+    /**
+     * At one row per line there is nowhere to put a gap, so the tube draws exactly what the palette
+     * draws. The front ends refuse the combination; this says what happens to anything that does
+     * not, which is nothing.
+     */
+    @Test
+    void aTubeAtOneTimesIsThePaletteStraightThrough() {
+        var plain = FrameRenderer.render(rowNumberedFrame(), PALETTE, true, 1);
+        var tube = FrameRenderer.render(
+                rowNumberedFrame(), PALETTE, FilterStrength.STRONG, false, true, 1);
+
+        for (var y = 0; y < plain.getHeight(); y++) {
+            assertEquals(plain.getRGB(0, y), tube.getRGB(0, y), "row " + y);
+        }
+    }
+
+    /**
+     * And the crop is the crop whatever is drawing it.
+     */
+    @Test
+    void aTubeCropsAndMagnifiesTheSameWay() {
+        var cropped = FrameRenderer.render(
+                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, true, 2);
+        var full = FrameRenderer.render(
+                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, false, 2);
+
+        assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, cropped.getHeight());
+        assertEquals(PPU.SCREEN_HEIGHT * 2, full.getHeight());
     }
 
     @Test

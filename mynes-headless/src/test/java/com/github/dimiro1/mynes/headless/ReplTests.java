@@ -43,14 +43,25 @@ class ReplTests {
      * Runs a session and hands back one parsed document per reply.
      */
     private List<JsonNode> session(final String... commands) throws IOException {
+        return magnified(1, commands);
+    }
+
+    /**
+     * The same, for a session started at a magnification -- which the tube filter has an opinion
+     * about, since there is nowhere to put a scanline at 1x.
+     */
+    private List<JsonNode> magnified(final int scale, final String... commands)
+            throws IOException {
         var cart = Cart.load(Files.readAllBytes(Path.of(ROM)), ROM);
         var session = new Session(
                 new NES(cart),
                 Palettes.defaultPalette().colours(),
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
+                false,
                 null);
-        var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
+        var options = Options.parse(new String[]{
+                "--rom", ROM, "--interactive", "--scale", Integer.toString(scale)});
         var captured = new ByteArrayOutputStream();
 
         try (var out = new PrintStream(captured, true, StandardCharsets.UTF_8);
@@ -276,6 +287,63 @@ class ReplTests {
         assertEquals("low", replies.get(1).get("strength").asText());
         assertEquals("low", replies.get(2).get("strength").asText());
         assertEquals("low", replies.get(3).get("strength").asText());
+    }
+
+    /**
+     * The tube needs somewhere to put a scanline, and a session's magnification was fixed at
+     * {@code --scale} before it started -- so this is the one place the answer can be given, and
+     * giving it is better than a filter switched on and invisible.
+     */
+    @Test
+    void theTubeIsRefusedInASessionWithNoRoomForAScanline() throws Exception {
+        var refused = magnified(1, "filter crt", "filter", "quit");
+
+        assertFalse(refused.getFirst().get("ok").asBoolean());
+        assertTrue(refused.getFirst().get("error").asText().contains("--scale"),
+                refused.getFirst().toString());
+        assertEquals("none", refused.get(1).get("filter").asText(), "and nothing changed");
+
+        var allowed = magnified(2, "filter crt", "quit");
+
+        assertEquals("crt", allowed.getFirst().get("filter").asText());
+    }
+
+    /**
+     * The glass is switched rather than chosen between, so it is a command of its own -- and it is
+     * refused while something other than the tube is drawing, since there is no glass in front of a
+     * lookup table.
+     */
+    @Test
+    void theGlassIsBentByItsOwnCommandAndOnlyOverATube() throws Exception {
+        var replies = magnified(2,
+                "warp",
+                "warp on",
+                "filter crt",
+                "warp on",
+                "warp",
+                "warp off",
+                "quit");
+
+        assertFalse(replies.getFirst().get("warp").asBoolean(), "off unless asked for");
+
+        assertFalse(replies.get(1).get("ok").asBoolean(), "no tube, no glass");
+        assertTrue(replies.get(1).get("error").asText().contains("crt"));
+
+        assertTrue(replies.get(3).get("ok").asBoolean());
+        assertTrue(replies.get(4).get("warp").asBoolean());
+        assertFalse(replies.get(5).get("warp").asBoolean());
+
+        // And the filter command reports it too, since that is the one line that says how the
+        // picture is being drawn.
+        assertFalse(magnified(2, "filter", "quit").getFirst().get("warp").asBoolean());
+    }
+
+    @Test
+    void warpTakesOnOrOffAndNothingElse() throws Exception {
+        var replies = magnified(2, "filter crt", "warp sideways", "quit");
+
+        assertFalse(replies.get(1).get("ok").asBoolean());
+        assertTrue(replies.get(1).get("error").asText().contains("sideways"));
     }
 
     /**
@@ -909,6 +977,7 @@ class ReplTests {
                 Palettes.defaultPalette().colours(),
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
+                false,
                 null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});
         var captured = new ByteArrayOutputStream();
