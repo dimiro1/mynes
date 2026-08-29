@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.debugger;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
@@ -49,7 +50,9 @@ class DebuggerFrameTests {
             var frame = new DebuggerFrame(null, nes, runner, debugger);
 
             try {
-                frame.stopped(new Debugger.Stop(Debugger.Reason.BREAKPOINT, 0x8000, -1, -1, -1));
+                frame.stopped(
+                        new Debugger.Stop(
+                                Debugger.Reason.BREAKPOINT, 0x8000, null, -1, -1, -1));
                 frame.running();
             } finally {
                 frame.dispose();
@@ -63,10 +66,46 @@ class DebuggerFrameTests {
             var frame = new DebuggerFrame(null, nes, runner, debugger);
 
             try {
-                frame.stopped(
-                        new Debugger.Stop(Debugger.Reason.WATCHPOINT, 0x8003, 0x0300, 0x42, 0x8000));
+                frame.stopped(new Debugger.Stop(
+                        Debugger.Reason.WATCHPOINT,
+                        0x8003,
+                        Debugger.Access.WRITE,
+                        0x0300,
+                        0x42,
+                        0x8000));
+                frame.stopped(new Debugger.Stop(
+                        Debugger.Reason.WATCHPOINT,
+                        0x8003,
+                        Debugger.Access.READ,
+                        0x0300,
+                        0x42,
+                        0x8000));
             } finally {
                 frame.dispose();
+            }
+        });
+    }
+
+    /**
+     * The points panel has to render both kinds of point, and a conditional breakpoint's extra
+     * column is exactly the sort of thing that compiles and then throws on the first row.
+     */
+    @Test
+    void bothKindsOfPointAreListedRatherThanCrashingOnTheirExtraColumns() throws Exception {
+        onSwingThread(() -> {
+            var frame = new DebuggerFrame(null, nes, runner, debugger);
+
+            debugger.addBreakpoint(0x8000, Condition.parse("a == $10"));
+            debugger.addBreakpoint(0x8003);
+            debugger.addWatchpoint(0x0300, Debugger.Access.READ);
+            debugger.addWatchpoint(0x0301, Debugger.Access.BOTH);
+
+            try {
+                frame.stopped(new Debugger.Stop(
+                        Debugger.Reason.BREAKPOINT, 0x8000, null, -1, -1, -1));
+            } finally {
+                frame.dispose();
+                debugger.clear();
             }
         });
     }
@@ -78,7 +117,9 @@ class DebuggerFrameTests {
 
             try {
                 frame.setMachine(nes, runner);
-                frame.stopped(new Debugger.Stop(Debugger.Reason.STEP, 0x8000, -1, -1, 0x8000));
+                frame.stopped(
+                        new Debugger.Stop(
+                                Debugger.Reason.STEP, 0x8000, null, -1, -1, 0x8000));
             } finally {
                 frame.dispose();
             }

@@ -830,10 +830,99 @@ class ReplTests {
         var reply = session("watch $2000", "run 5", "quit").get(1);
 
         assertEquals("watchpoint", reply.get("stopped").asText());
+        assertEquals("write", reply.get("access").asText());
         assertEquals(0x2000, reply.get("address").asInt());
         assertEquals(0x00, reply.get("value").asInt());
         assertEquals(STA_PPUCTRL, reply.get("writtenBy").asInt(), "the STA, not where it stopped");
         assertNotEquals(STA_PPUCTRL, reply.get("stoppedAt").asInt());
+    }
+
+    /**
+     * The other direction, and it is named differently on purpose: {@code writtenBy} on a stop where
+     * nothing was written would be a lie with a helpful shape.
+     */
+    @Test
+    void aReadWatchpointSaysWhatRead() throws Exception {
+        var reply = session("watch $C004 read", "run 5", "quit").get(1);
+
+        assertEquals("watchpoint", reply.get("stopped").asText());
+        assertEquals("read", reply.get("access").asText());
+        assertEquals(0xC004, reply.get("address").asInt());
+        assertEquals(0x78, reply.get("value").asInt(), "the SEI's opcode, fetched off the bus");
+        assertEquals(SEI, reply.get("readBy").asInt());
+        assertFalse(reply.has("writtenBy"));
+    }
+
+    @Test
+    void aWatchpointSaysWhichWayItIsFacing() throws Exception {
+        var reply = session("watch $2000", "watch $0300 read", "watch $0301 both", "points", "quit")
+                .get(3);
+        var watchpoints = reply.get("watchpoints");
+
+        // Listed in address order rather than the order they were typed in, which puts the two
+        // page-three watches first.
+        assertEquals(List.of(0x0300, 0x0301, 0x2000), addresses(reply, "watchpoints"));
+        assertEquals("read", watchpoints.get(0).get("on").asText());
+        assertEquals("both", watchpoints.get(1).get("on").asText());
+        assertEquals("write", watchpoints.get(2).get("on").asText());
+    }
+
+    @Test
+    void aWatchpointFacingNowhereIsAnsweredRatherThanFatal() throws Exception {
+        var replies = session("watch $2000 sideways", "run 5", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean());
+        assertTrue(replies.getFirst().get("error").asText().contains("sideways"));
+        assertFalse(replies.get(1).has("stopped"), "and no watchpoint was left behind");
+    }
+
+    // ============================================================================== conditions
+
+    @Test
+    void aConditionalBreakpointStopsOnlyWhereItHolds() throws Exception {
+        var stops = session("break " + TXS + " if x == $FF", "run 5", "quit").get(1);
+        var doesNot = session("break " + TXS + " if x == $00", "run 5", "quit").get(1);
+
+        assertEquals(TXS, stops.get("stoppedAt").asInt(), "LDX #$FF ran just before it");
+        assertFalse(doesNot.has("stopped"));
+    }
+
+    @Test
+    void aConditionIsListedTheOneWayRound() throws Exception {
+        var reply = session("break $C008 if A==16", "quit").getFirst();
+
+        assertEquals("a == $10", reply.get("condition").asText());
+        assertEquals("a == $10", reply.at("/breakpoints/0/condition").asText());
+    }
+
+    @Test
+    void aBreakpointWithoutAConditionSaysSoExplicitly() throws Exception {
+        var reply = session("break $C008", "quit").getFirst();
+
+        assertTrue(reply.get("condition").isNull());
+        assertTrue(reply.at("/breakpoints/0/condition").isNull());
+    }
+
+    @Test
+    void settingTheSameBreakpointAgainReplacesItsCondition() throws Exception {
+        var replies = session(
+                "break " + TXS + " if x == $00", "break " + TXS, "run 5", "quit");
+
+        assertTrue(replies.get(1).at("/breakpoints/0/condition").isNull());
+        assertEquals(TXS, replies.get(2).get("stoppedAt").asInt());
+    }
+
+    @Test
+    void nonsenseAfterAnAddressIsAnsweredRatherThanFatal() throws Exception {
+        var replies = session(
+                "break $C008 unless x == 0", "break $C008 if wibble == 0", "break $C008 if",
+                "run 5", "quit");
+
+        for (var i = 0; i < 3; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean(), "reply " + i);
+        }
+
+        assertTrue(replies.get(3).get("ok").asBoolean(), "the session carries on");
     }
 
     @Test
@@ -879,6 +968,92 @@ class ReplTests {
 
         assertTrue(replies.get(3).get("ok").asBoolean(), "the session carries on");
     }
+
+    // ================================================================================== tracing
+
+    /**
+     * Every session below spends a {@code step 1} before it starts, because the first step is the
+     * reset sequence and runs no instruction at all -- so a trace opened before it would come back
+     * one line short of what was asked for and look like an off-by-one in the tracer.
+     */
+    @Test
+    void aTraceWritesOneLinePerInstruction() throws Exception {
+        var path = directory.resolve("trace.log");
+        var replies = session("step 1", "trace " + path, "step 20", "trace off", "quit");
+
+        assertEquals(20, Files.readAllLines(path).size());
+        assertTrue(replies.get(1).get("on").asBoolean());
+        assertEquals(20, replies.get(3).get("lines").asLong());
+        assertFalse(replies.get(3).get("on").asBoolean(), "and stopping means stopped");
+    }
+
+    @Test
+    void aTraceIsNestestsFormat() throws Exception {
+        var path = directory.resolve("trace.log");
+
+        session("step 1", "trace " + path, "step 1", "trace off", "quit");
+
+        var first = Files.readAllLines(path).getFirst();
+
+        assertTrue(
+                first.matches("^[0-9A-F]{4}  .{8}  .{32}"
+                        + "A:[0-9A-F]{2} X:[0-9A-F]{2} Y:[0-9A-F]{2} P:[0-9A-F]{2}"
+                        + " SP:[0-9A-F]{2} PPU:.{3},.{3} CYC:\\d+$"),
+                first);
+    }
+
+    @Test
+    void aTraceStopsAtTheLineCountItWasGiven() throws Exception {
+        var path = directory.resolve("trace.log");
+        var replies = session("trace " + path + " 5", "step 200", "trace", "quit");
+
+        assertEquals(5, Files.readAllLines(path).size());
+        assertEquals(5, replies.get(2).get("lines").asLong());
+        assertTrue(replies.get(2).get("full").asBoolean());
+        assertFalse(replies.get(2).get("on").asBoolean(), "picked up as soon as it filled");
+    }
+
+    @Test
+    void aTraceStopsWhenTheSessionDoes() throws Exception {
+        var path = directory.resolve("trace.log");
+
+        // No "trace off": the buffered lines would be lost if the session did not close it.
+        session("step 1", "trace " + path, "step 20", "quit");
+
+        assertEquals(20, Files.readAllLines(path).size());
+    }
+
+    @Test
+    void aBareTraceSaysWhereTheFileWentAfterwards() throws Exception {
+        var path = directory.resolve("trace.log");
+        var replies = session("step 1", "trace " + path, "step 3", "trace off", "trace", "quit");
+
+        assertEquals(path.toString(), replies.get(4).get("path").asText());
+        assertEquals(3, replies.get(4).get("lines").asLong());
+        assertFalse(replies.get(4).get("on").asBoolean());
+    }
+
+    @Test
+    void nothingIsBeingTracedUntilSomethingIs() throws Exception {
+        var replies = session("trace", "trace off", "quit");
+
+        assertFalse(replies.getFirst().get("on").asBoolean());
+        assertFalse(replies.getFirst().has("path"));
+        assertFalse(replies.get(1).get("ok").asBoolean(), "and there is nothing to stop");
+    }
+
+    @Test
+    void aSecondTraceIsRefusedRatherThanQuietlyReplacingTheFirst() throws Exception {
+        var first = directory.resolve("first.log");
+        var second = directory.resolve("second.log");
+        var replies = session("step 1", "trace " + first, "trace " + second, "step 3", "quit");
+
+        assertFalse(replies.get(2).get("ok").asBoolean());
+        assertEquals(3, Files.readAllLines(first).size());
+        assertFalse(Files.exists(second));
+    }
+
+    // ================================================================================== presses
 
     /**
      * A breakpoint that stops a run part way through a frame must not cost the press a frame of its
@@ -928,9 +1103,13 @@ class ReplTests {
         assertFalse(text.contains("\\n"), "nor an escaped newline");
     }
 
+    /**
+     * The addresses out of a list of points, which are objects rather than bare numbers: a point
+     * carries a condition or a direction now, and a list of numbers could not say either.
+     */
     private static List<Integer> addresses(final JsonNode reply, final String field) {
         var out = new ArrayList<Integer>();
-        reply.get(field).forEach(address -> out.add(address.asInt()));
+        reply.get(field).forEach(point -> out.add(point.get("address").asInt()));
 
         return out;
     }

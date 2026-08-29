@@ -308,6 +308,17 @@ public class EmulatorRunner {
     }
 
     /**
+     * Whether the emulation thread is going.
+     * <p>
+     * Which is the question "is the machine mine to touch, or do I have to post?". A caller holding
+     * a stopped runner owns the machine outright -- {@link #stop()} joins the thread before it
+     * returns -- and posting to one would queue work that never runs.
+     */
+    public boolean isRunning() {
+        return thread != null;
+    }
+
+    /**
      * Hands an action to the emulation thread, which runs it between frames -- so within about
      * 17ms, paused or not. This is how the UI touches the machine: nothing here blocks, and
      * nothing on the EDT ever handles the NES itself.

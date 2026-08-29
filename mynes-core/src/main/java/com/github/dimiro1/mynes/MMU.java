@@ -169,6 +169,19 @@ public class MMU {
     private MemoryWriteListener writeListener;
 
     /**
+     * Whoever is watching the bus the other way round, or null when nobody is -- which is nearly
+     * always, and is why this is a reference to check rather than a do-nothing listener always
+     * installed. The same trade as {@link #writeListener} against a much hotter line: every
+     * instruction the CPU fetches comes past here, so a call through an interface would be made
+     * around one and a half million times a second where a null check on a field that has been null
+     * since power on costs nothing a branch predictor cannot see coming.
+     * <p>
+     * Not in {@link #serialize}, and named in {@code NOT_IN_THE_STATE}, for the reason the write
+     * listener is not.
+     */
+    private MemoryReadListener readListener;
+
+    /**
      * The Game Genie plugged in between the cartridge and the console, or null when there is none --
      * which, as with {@link #writeListener}, is nearly always, and is why this is a reference to check
      * rather than a do-nothing device always installed. Every instruction the CPU fetches comes
@@ -209,7 +222,16 @@ public class MMU {
      */
     public int read(final int address) {
         cpuAddress = address & 0xFFFF;
-        return internalDataBus = busRead(cpuAddress);
+        internalDataBus = busRead(cpuAddress);
+
+        // Afterwards rather than before, unlike the write hook: there is nothing to report until
+        // the read has happened. See MemoryReadListener, which is where the consequences of that
+        // are written down.
+        if (readListener != null) {
+            readListener.onRead(cpuAddress, internalDataBus);
+        }
+
+        return internalDataBus;
     }
 
     /**
@@ -762,6 +784,18 @@ public class MMU {
      */
     public void setWriteListener(final MemoryWriteListener listener) {
         this.writeListener = listener;
+    }
+
+    /**
+     * Watches every byte the CPU reads, or stops watching when given null.
+     * <p>
+     * One listener rather than a list, for the reason the write side keeps one -- and here the hot
+     * path is hotter still.
+     *
+     * @see MemoryReadListener
+     */
+    public void setReadListener(final MemoryReadListener listener) {
+        this.readListener = listener;
     }
 
     /**

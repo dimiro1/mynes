@@ -2894,6 +2894,35 @@ public class PPU {
     }
 
     /**
+     * Where the background is taking its tiles from, $0000 or $1000, out of $2000 bit 4.
+     * <p>
+     * Spelled as the address rather than as the bit because that is what anybody asking wants: a
+     * viewer drawing a nametable has a tile number and needs somewhere to add it to. Three of these
+     * rather than one {@code getCtrl}, for the same reason -- a caller that had to remember which
+     * bit meant what would be a second place for the layout of that register to be written down.
+     */
+    public int getBackgroundPatternTable() {
+        return (ctrl & CTRL_BACKGROUND_TABLE) != 0 ? 0x1000 : 0x0000;
+    }
+
+    /**
+     * Where 8x8 sprites are taking their tiles from, $0000 or $1000, out of $2000 bit 3.
+     * <p>
+     * Meaningless while {@link #getSpriteHeight()} is 16: a tall sprite picks its table with the low
+     * bit of the tile number instead, and ignores this entirely.
+     */
+    public int getSpritePatternTable() {
+        return (ctrl & CTRL_SPRITE_TABLE) != 0 ? 0x1000 : 0x0000;
+    }
+
+    /**
+     * @return how tall a sprite is this frame, 8 or 16.
+     */
+    public int getSpriteHeight() {
+        return spriteHeight();
+    }
+
+    /**
      * Shows or hides the background layer in the picture. A debug switch for a front end; the
      * game cannot tell it has been thrown, because it changes nothing but the pixels drawn.
      */

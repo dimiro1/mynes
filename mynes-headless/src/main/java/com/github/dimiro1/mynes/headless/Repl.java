@@ -5,8 +5,10 @@ import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
+import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Disassembler;
+import com.github.dimiro1.mynes.debug.Tracer;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
@@ -20,6 +22,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.TreeSet;
 
@@ -43,11 +46,21 @@ public final class Repl {
             run-until-still [N] [MAX]  advance until the picture has held for N frames
             step [N]                   advance N instructions, default 1
             disasm [ADDR] [COUNT]      disassemble, from the PC by default
-            break ADDR                 stop before the instruction at ADDR
+            break ADDR [if COND]       stop before the instruction at ADDR, on the passes where
+                                       COND holds. A condition compares two of a register (a, x, y,
+                                       sp, p, pc), a byte of memory ([$0300]) and a number, with
+                                       ==, !=, <, <=, > or >=
             unbreak ADDR               forget that one
-            watch ADDR                 stop after an instruction writes to ADDR
+            watch ADDR [read|write|both]
+                                       stop after an instruction touches ADDR that way, writes by
+                                       default. Every instruction fetch is a read, so a read watch
+                                       inside a routine reports the fetch -- break is the command
+                                       for "when the machine reaches here"
             unwatch ADDR               forget that one
             points [clear]             list every breakpoint and watchpoint, or drop them all
+            trace [PATH [LINES]]       write every instruction to PATH in nestest's format, at most
+                                       LINES of them; "trace off" stops, and bare "trace" says how
+                                       far it has got. A frame is about two megabytes of it
             press BUTTONS [N]          hold BUTTONS for the next N frames
             hold BUTTONS               hold BUTTONS until released
             release                    let go of everything
@@ -137,6 +150,20 @@ public final class Repl {
 
     private @Nullable Path recordedPath;
 
+    /**
+     * The trace this session last opened, live or finished, and null until one has been. Kept after
+     * it is stopped so that {@code trace} can still say where the file went and how long it is --
+     * the question somebody asks straight after stopping one.
+     */
+    private @Nullable Tracer tracer;
+
+    private @Nullable Path tracePath;
+
+    /**
+     * Whether {@link #tracer} is still attached to the CPU and still writing.
+     */
+    private boolean tracing;
+
     public Repl(
             final Session session,
             final Options options,
@@ -171,6 +198,25 @@ public final class Repl {
      * @return how many frames the session got through.
      */
     public long run() throws IOException {
+        try {
+            take();
+        } finally {
+            // The end of the input is as good as a "trace off", and so is a failure reading it: the
+            // file is buffered, and a session that walked away from one would leave the last few
+            // thousand lines unwritten.
+            if (tracing) {
+                detachTracer();
+                tracer.close();
+            }
+        }
+
+        return session.frame();
+    }
+
+    /**
+     * The loop itself, so that the tracer above is closed however this ends.
+     */
+    private void take() throws IOException {
         String line;
 
         while ((line = in.readLine()) != null) {
@@ -194,12 +240,18 @@ public final class Repl {
                 error(words[0], e.getMessage());
             }
         }
-
-        return session.frame();
     }
 
     private void dispatch(final String[] words) throws IOException {
         var name = words[0];
+
+        // A tracer that has written all it was asked for goes quiet but stays on the CPU, because
+        // it cannot take itself off from inside the walk that is calling it. This is the first
+        // moment it can be picked up, and until it is the machine pays for a listener that is
+        // doing nothing.
+        if (tracing && tracer.isFull()) {
+            detachTracer();
+        }
 
         switch (name) {
             case "run" -> run(words.length > 1 ? number(words[1], name) : 1);
@@ -210,8 +262,11 @@ public final class Repl {
                     words.length > 2 ? number(words[2], name) : DEFAULT_MAX_FRAMES);
             case "step" -> stepInstructions(words.length > 1 ? number(words[1], name) : 1);
             case "disasm" -> disasm(words);
-            case "break", "unbreak", "watch", "unwatch" -> point(name, words);
+            case "break" -> breakpoint(words);
+            case "watch" -> watchpoint(words);
+            case "unbreak", "unwatch" -> unpoint(name, words);
             case "points" -> points(words);
+            case "trace" -> trace(words);
             case "press" -> press(words);
             case "hold" -> hold(words);
             case "release" -> release();
@@ -344,10 +399,87 @@ public final class Repl {
     }
 
     /**
-     * The four commands that put a point down or pick one up, which differ only in which set they
-     * touch and are not worth four methods.
+     * Puts a breakpoint down, with or without something that has to be true first.
+     * <p>
+     * One address holds one breakpoint, so setting the same one again is how a condition is changed
+     * -- and how the bare form takes one off. Deliberately unlike {@code genie}, where the replaced
+     * code is worth reporting: there is only ever one thing here to replace and the reply lists it.
      */
-    private void point(final String name, final String[] words) {
+    private void breakpoint(final String[] words) {
+        if (words.length < 2) {
+            throw new UsageException("break wants an address, as in \"break $C000\".");
+        }
+
+        var address = (int) number(words[1], "break") & 0xFFFF;
+        var condition = conditionIn(words);
+
+        session.debugger().addBreakpoint(address, condition);
+
+        reply("break", node -> {
+            node.put("address", address);
+
+            if (condition == null) {
+                node.putNull("condition");
+            } else {
+                node.put("condition", condition.text());
+            }
+
+            putPoints(node);
+        });
+    }
+
+    /**
+     * The {@code if} tail of a {@code break}, or null when there is not one.
+     */
+    private static Condition conditionIn(final String[] words) {
+        if (words.length < 3) {
+            return null;
+        }
+
+        if (!words[2].equalsIgnoreCase("if")) {
+            throw new UsageException(
+                    "break takes an address and, after \"if\", a condition -- as in \"break $C000"
+                            + " if a == $10\". \"" + words[2] + "\" is neither.");
+        }
+
+        // Rejoined rather than read word by word, because a condition is written with spaces in it
+        // and where they fall is the writer's business rather than the parser's.
+        try {
+            return Condition.parse(String.join(" ", Arrays.copyOfRange(words, 3, words.length)));
+        } catch (IllegalArgumentException e) {
+            throw new UsageException("break: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Puts a watchpoint down, facing whichever way was asked for.
+     */
+    private void watchpoint(final String[] words) {
+        if (words.length < 2) {
+            throw new UsageException("watch wants an address, as in \"watch $0300\".");
+        }
+
+        var address = (int) number(words[1], "watch") & 0xFFFF;
+        var on = words.length > 2 ? Debugger.Access.byId(words[2]) : Debugger.Access.WRITE;
+
+        if (on == null) {
+            throw new UsageException(
+                    "watch watches a read, a write or both, not \"" + words[2] + "\".");
+        }
+
+        session.debugger().addWatchpoint(address, on);
+
+        reply("watch", node -> {
+            node.put("address", address);
+            node.put("on", on.id());
+            putPoints(node);
+        });
+    }
+
+    /**
+     * The two commands that pick a point up, which differ only in which collection they touch.
+     */
+    private void unpoint(final String name, final String[] words) {
         if (words.length < 2) {
             throw new UsageException(name + " wants an address, as in \"" + name + " $C000\".");
         }
@@ -355,11 +487,10 @@ public final class Repl {
         var address = (int) number(words[1], name) & 0xFFFF;
         var debugger = session.debugger();
 
-        switch (name) {
-            case "break" -> debugger.addBreakpoint(address);
-            case "unbreak" -> debugger.removeBreakpoint(address);
-            case "watch" -> debugger.addWatchpoint(address);
-            default -> debugger.removeWatchpoint(address);
+        if (name.equals("unbreak")) {
+            debugger.removeBreakpoint(address);
+        } else {
+            debugger.removeWatchpoint(address);
         }
 
         reply(name, node -> {
@@ -379,6 +510,91 @@ public final class Repl {
         }
 
         reply("points", this::putPoints);
+    }
+
+    /**
+     * Starts writing down every instruction, stops, or says how far it has got.
+     * <p>
+     * The shape of {@code rewind} and {@code record} rather than of {@code hack}, and for the same
+     * reason: the interesting form is the one that takes a file, and the three forms are one idea.
+     * <p>
+     * <b>The limit is not decoration.</b> A frame is around thirty thousand instructions at about
+     * ninety bytes each, so {@code trace out.log} followed by {@code run 900} is a gigabyte and a
+     * half. The way this is meant to be used is to stop somewhere first -- a breakpoint, a
+     * watchpoint -- and then trace a few thousand instructions from there.
+     */
+    private void trace(final String[] words) throws IOException {
+        if (words.length < 2) {
+            reply("trace", this::putTrace);
+            return;
+        }
+
+        if (words[1].equalsIgnoreCase("off")) {
+            if (!tracing) {
+                throw new UsageException("nothing is being traced.");
+            }
+
+            detachTracer();
+            tracer.close();
+
+            // Reported in the reply rather than thrown, unlike every other failure here: a trace
+            // that stopped early still wrote everything up to the point it stopped, and one command
+            // answers with one line.
+            reply("trace", this::putTrace);
+
+            return;
+        }
+
+        if (tracing) {
+            throw new UsageException(
+                    "a trace is already being written to " + tracePath + ". \"trace off\" stops"
+                            + " it.");
+        }
+
+        var path = Path.of(words[1]);
+        var limit = words.length > 2 ? number(words[2], "trace") : 0;
+
+        // A file that cannot be opened is a bad command rather than the end of the session, the
+        // same as a misspelled address.
+        try {
+            tracer = Tracer.to(path, session.nes().getPPU(), limit);
+        } catch (IOException e) {
+            throw new UsageException("could not write " + path + ": " + e.getMessage());
+        }
+
+        tracePath = path;
+        tracing = true;
+        session.nes().getCPU().addEventListener(tracer);
+
+        reply("trace", node -> {
+            node.put("limit", limit);
+            putTrace(node);
+        });
+    }
+
+    private void detachTracer() {
+        session.nes().getCPU().removeEventListener(tracer);
+        tracing = false;
+    }
+
+    private void putTrace(final Json.Object node) {
+        node.put("on", tracing);
+
+        if (tracer == null) {
+            return;
+        }
+
+        node.put("path", tracePath.toString());
+        node.put("lines", tracer.lines());
+        node.put("full", tracer.isFull());
+
+        // Only when there was one, so that a caller can ask "did this go wrong?" without having to
+        // compare against null on every reply. A trace that stopped early is still a trace of
+        // everything up to where it stopped, which is why this is a field rather than an error.
+        if (tracer.failure() != null) {
+            node.put("failed", true);
+            node.put("failure", String.valueOf(tracer.failure().getMessage()));
+        }
     }
 
     private void press(final String[] words) {
@@ -1070,14 +1286,17 @@ public final class Repl {
         node.put("stopped", stop.reason().name().toLowerCase(Locale.ROOT));
         node.put("stoppedAt", stop.pc());
 
-        if (stop.address() >= 0) {
-            node.put("address", stop.address());
-            node.put("value", stop.value());
+        // Only a watchpoint has these, and only a watchpoint names the instruction: for every other
+        // reason the machine is standing where the reply already said it is, and a field called
+        // writtenBy on a stop where nothing was written would be a lie with a helpful shape.
+        if (stop.reason() != Debugger.Reason.WATCHPOINT) {
+            return;
         }
 
-        if (stop.writtenBy() >= 0) {
-            node.put("writtenBy", stop.writtenBy());
-        }
+        node.put("access", stop.access().id());
+        node.put("address", stop.address());
+        node.put("value", stop.value());
+        node.put(stop.access() == Debugger.Access.READ ? "readBy" : "writtenBy", stop.by());
     }
 
     /**
@@ -1091,13 +1310,38 @@ public final class Repl {
         node.put("text", disassembled.text());
     }
 
+    /**
+     * Every point, as objects rather than as bare addresses.
+     * <p>
+     * An address on its own stopped being the whole of a point when a breakpoint gained a condition
+     * and a watchpoint gained a direction: a list of numbers in which half are read watches and half
+     * are write watches says something that is not true.
+     */
     private void putPoints(final Json.Object node) {
         var debugger = session.debugger();
+        var conditions = debugger.conditions();
         var breakpoints = node.putArray("breakpoints");
         var watchpoints = node.putArray("watchpoints");
 
-        debugger.breakpoints().forEach(address -> breakpoints.add(address));
-        debugger.watchpoints().forEach(address -> watchpoints.add(address));
+        debugger.breakpoints().forEach(address -> {
+            var point = breakpoints.addObject();
+            var condition = conditions.get(address);
+
+            point.put("address", address);
+
+            if (condition == null) {
+                point.putNull("condition");
+            } else {
+                point.put("condition", condition.text());
+            }
+        });
+
+        debugger.watchpoints().forEach((address, on) -> {
+            var point = watchpoints.addObject();
+
+            point.put("address", address);
+            point.put("on", on.id());
+        });
     }
 
     private void buttons(final Json.Object node, final int mask) {

@@ -8,6 +8,7 @@ import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.Tracer;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.Movie;
@@ -18,6 +19,8 @@ import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
+import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
+import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
@@ -109,6 +112,12 @@ public class GameUIFrame extends JFrame {
      */
     private final SystemFileChooser movieChooser;
 
+    /**
+     * Where a trace goes. Its own chooser, like the two above, so that it remembers the directory
+     * traces are being kept in rather than wherever a ROM was last opened from.
+     */
+    private final SystemFileChooser traceChooser;
+
     private final ScreenComponent screen = new ScreenComponent();
     private final StatusBar statusBar = new StatusBar();
     private final KeyboardInput keyboardInput;
@@ -143,6 +152,8 @@ public class GameUIFrame extends JFrame {
      * a ROM is open -- and a code is written for one particular game, so there is nothing to type
      * until there is a game to type it for.
      */
+    private final JMenuItem debugMenuTrace = new JMenuItem("Start Trace...");
+    private final JMenuItem debugMenuStopTrace = new JMenuItem("Stop Trace");
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
@@ -224,7 +235,17 @@ public class GameUIFrame extends JFrame {
     private List<GameGenieCode> genieCodes = List.of();
 
     private CHRViewerFrame chrViewerFrame;
+    private NametableViewerFrame nametableViewerFrame;
+    private OAMViewerFrame oamViewerFrame;
     private DebuggerFrame debuggerFrame;
+
+    /**
+     * The trace being written, or null when none is. Not kept across cartridges: a file of one
+     * game's instructions with another game's appended is a file nobody can read.
+     */
+    private Tracer tracer;
+
+    private Path tracePath;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -301,6 +322,11 @@ public class GameUIFrame extends JFrame {
         movieChooser = new SystemFileChooser();
         movieChooser.addChoosableFileFilter(movieFilter);
         movieChooser.setFileFilter(movieFilter);
+
+        var traceFilter = new SystemFileChooser.FileNameExtensionFilter("Trace log", "log");
+        traceChooser = new SystemFileChooser();
+        traceChooser.addChoosableFileFilter(traceFilter);
+        traceChooser.setFileFilter(traceFilter);
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
@@ -444,6 +470,22 @@ public class GameUIFrame extends JFrame {
         JMenuItem debugMenuCHRViewer = new JMenuItem("CHR Viewer", KeyEvent.VK_C);
         debugMenu.add(debugMenuCHRViewer);
 
+        JMenuItem debugMenuNametableViewer = new JMenuItem("Nametable Viewer", KeyEvent.VK_N);
+        debugMenu.add(debugMenuNametableViewer);
+
+        JMenuItem debugMenuOAMViewer = new JMenuItem("OAM Viewer", KeyEvent.VK_O);
+        debugMenu.add(debugMenuOAMViewer);
+
+        debugMenu.addSeparator();
+
+        // Its own item rather than a tick, because starting one asks where it should go and stopping
+        // one does not -- the shape of Record Movie... in the Machine menu, and for the same reason.
+        debugMenuTrace.setMnemonic(KeyEvent.VK_T);
+        debugMenu.add(debugMenuTrace);
+
+        debugMenuStopTrace.setEnabled(false);
+        debugMenu.add(debugMenuStopTrace);
+
         debugMenu.addSeparator();
 
         debugMenuBackground.setMnemonic(KeyEvent.VK_B);
@@ -535,6 +577,14 @@ public class GameUIFrame extends JFrame {
 
                     if (chrViewerFrame != null) {
                         chrViewerFrame.setPalette(chosen);
+                    }
+
+                    if (nametableViewerFrame != null) {
+                        nametableViewerFrame.setPalette(chosen);
+                    }
+
+                    if (oamViewerFrame != null) {
+                        oamViewerFrame.setPalette(chosen);
                     }
 
                     saveConfig();
@@ -735,6 +785,35 @@ public class GameUIFrame extends JFrame {
                 }
         );
 
+        debugMenuNametableViewer.addActionListener(e -> {
+            if (noCartridge()) {
+                return;
+            }
+
+            if (nametableViewerFrame == null) {
+                nametableViewerFrame = new NametableViewerFrame(
+                        this, nes, config.palette(currentRegion()));
+            }
+
+            nametableViewerFrame.setVisible(true);
+        });
+
+        debugMenuOAMViewer.addActionListener(e -> {
+            if (noCartridge()) {
+                return;
+            }
+
+            if (oamViewerFrame == null) {
+                oamViewerFrame = new OAMViewerFrame(
+                        this, nes.getPPU(), config.palette(currentRegion()));
+            }
+
+            oamViewerFrame.setVisible(true);
+        });
+
+        debugMenuTrace.addActionListener(e -> startTrace());
+        debugMenuStopTrace.addActionListener(e -> stopTrace());
+
         debugMenuDebugger.addActionListener(e -> {
             if (cart == null) {
                 logger.log(Level.ERROR, "cartridge is not loaded");
@@ -779,6 +858,10 @@ public class GameUIFrame extends JFrame {
                 // the process is about to go, and a battery game that was not written here is an hour
                 // of somebody's evening.
                 saveBattery();
+
+                // And a trace holds up to sixty-four kilobytes of instructions that have not reached
+                // the disk yet, which is the end of whatever the file was opened to look at.
+                stopTrace();
             }
 
             // Cmd-tabbing away in the middle of a jump would otherwise leave the button held down
@@ -1887,9 +1970,16 @@ public class GameUIFrame extends JFrame {
             runner.stop();
         }
 
-        // The old viewer is watching the old machine's mapper and palettes; it would keep showing
-        // them forever. Closed rather than repointed, since it is a debug window.
+        // The old viewers are watching the old machine's memory and palettes; they would keep
+        // showing them forever. Closed rather than repointed, since they are debug windows whose
+        // contents are entirely derived from the machine.
         destroyCHRViewerFrame();
+        destroyPPUViewerFrames();
+
+        // And a trace of one machine with another machine's instructions appended is a file nobody
+        // can read. Stopped here rather than at the new machine, so the last few thousand buffered
+        // lines are on disk before anything else happens.
+        stopTrace();
 
         // A new cartridge deserves a clean slate, but a power cycle does not: the breakpoints are
         // the reason somebody cycles the power. Asked before the field is reassigned, since that is
@@ -2125,6 +2215,13 @@ public class GameUIFrame extends JFrame {
             return "Recording";
         }
 
+        // Below the movie and above the speed, for the reason the movie is above the speed: a file
+        // growing at a couple of megabytes a second is a bigger surprise than how fast the game is
+        // going, and a trace somebody started an hour ago is the state most worth being reminded of.
+        if (tracer != null) {
+            return "Tracing";
+        }
+
         if (runner.getSpeed() != EmulationSpeed.NORMAL) {
             return "Fast forward";
         }
@@ -2132,11 +2229,158 @@ public class GameUIFrame extends JFrame {
         return "";
     }
 
+    /**
+     * Whether there is no machine to look at, having said so.
+     * <p>
+     * The Debug menu is greyed out until a cartridge is loaded, so this only fires if something has
+     * gone wrong -- which is exactly when a dialog is worth more than a silent no.
+     */
+    private boolean noCartridge() {
+        if (cart != null) {
+            return false;
+        }
+
+        logger.log(Level.ERROR, "cartridge is not loaded");
+        JOptionPane.showMessageDialog(
+                this,
+                "Cartridge is not loaded",
+                "Error",
+                JOptionPane.ERROR_MESSAGE);
+
+        return true;
+    }
+
+    /**
+     * Starts writing down every instruction the CPU runs.
+     * <p>
+     * <b>It is expensive in disk rather than in time.</b> A frame is around thirty thousand
+     * instructions at about ninety bytes a line, so this writes a couple of megabytes a second of
+     * play and a minute of it is well over a gigabyte. There is no limit from the window, unlike the
+     * interactive session's {@code trace PATH LINES}: somebody here is watching the file grow and
+     * can stop it, where a script is not.
+     * <p>
+     * The listener goes on from the emulation thread, which is the thread that walks the list.
+     */
+    private void startTrace() {
+        if (runner == null || tracer != null) {
+            return;
+        }
+
+        traceChooser.setSelectedFile(defaultTracePath().toFile());
+
+        if (traceChooser.showSaveDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        var path = traceChooser.getSelectedFile().toPath();
+
+        try {
+            tracer = Tracer.to(path, nes.getPPU(), 0);
+        } catch (IOException ex) {
+            logger.log(Level.ERROR, "failed to open the trace", ex);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not write " + path.getFileName() + ": " + ex.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+
+            return;
+        }
+
+        tracePath = path;
+
+        var writing = tracer;
+        runner.post(() -> nes.getCPU().addEventListener(writing));
+
+        logger.log(Level.INFO, "tracing to " + path.getFileName());
+
+        debugMenuTrace.setEnabled(false);
+        debugMenuStopTrace.setEnabled(true);
+        describeMachine();
+    }
+
+    /**
+     * Stops it and closes the file, from whichever thread owns the machine.
+     * <p>
+     * Two paths because there are two callers and they are in different worlds. The menu item stops
+     * a running machine, so the listener has to come off on the emulation thread and the file has to
+     * be closed after it does -- closing from here could land in the middle of a line. A new
+     * cartridge stops one with the runner already halted, and then the machine is this thread's, the
+     * same way saving the battery on the way out is.
+     */
+    private void stopTrace() {
+        if (tracer == null) {
+            return;
+        }
+
+        var stopping = tracer;
+        var path = tracePath;
+
+        tracer = null;
+        tracePath = null;
+
+        if (runner != null && runner.isRunning()) {
+            runner.post(() -> finishTrace(stopping, path));
+        } else {
+            finishTrace(stopping, path);
+        }
+
+        debugMenuTrace.setEnabled(true);
+        debugMenuStopTrace.setEnabled(false);
+        describeMachine();
+    }
+
+    /**
+     * Takes the tracer off the CPU and closes its file. Runs on whichever thread owns the machine.
+     */
+    private void finishTrace(final Tracer stopping, final Path path) {
+        nes.getCPU().removeEventListener(stopping);
+
+        try {
+            stopping.close();
+        } catch (IOException ex) {
+            logger.log(Level.ERROR, "failed to close the trace", ex);
+        }
+
+        var failure = stopping.failure();
+
+        logger.log(Level.INFO, "traced " + stopping.lines() + " instructions to " + path);
+
+        if (failure != null) {
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                    this,
+                    "The trace stopped early: " + failure.getMessage(),
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE));
+        }
+    }
+
+    private Path defaultTracePath() {
+        var name = gamePath().getFileName().toString();
+        var dot = name.lastIndexOf('.');
+
+        return gamePath().resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".log");
+    }
+
     private void destroyCHRViewerFrame() {
         if (chrViewerFrame != null) {
             logger.log(Level.DEBUG, "closing chrViewerFrame");
             chrViewerFrame.dispose();
             chrViewerFrame = null;
+        }
+    }
+
+    private void destroyPPUViewerFrames() {
+        if (nametableViewerFrame != null) {
+            logger.log(Level.DEBUG, "closing nametableViewerFrame");
+            nametableViewerFrame.dispose();
+            nametableViewerFrame = null;
+        }
+
+        if (oamViewerFrame != null) {
+            logger.log(Level.DEBUG, "closing oamViewerFrame");
+            oamViewerFrame.dispose();
+            oamViewerFrame = null;
         }
     }
 

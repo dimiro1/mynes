@@ -118,9 +118,10 @@ class EmulatorRunnerTests {
         var stop = waitForStop();
 
         assertEquals(Debugger.Reason.WATCHPOINT, stop.reason());
+        assertEquals(Debugger.Access.WRITE, stop.access());
         assertEquals(0x0300, stop.address());
         assertEquals(0x42, stop.value());
-        assertEquals(STA, stop.writtenBy());
+        assertEquals(STA, stop.by());
     }
 
     /**
