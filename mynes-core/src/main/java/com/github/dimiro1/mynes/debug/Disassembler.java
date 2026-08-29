@@ -234,6 +234,24 @@ public final class Disassembler {
     }
 
     /**
+     * The instruction somebody already has the bytes of.
+     * <p>
+     * For a tracer, which is handed the opcode and its operands by {@link
+     * com.github.dimiro1.mynes.CPUEventListener} before the instruction runs and has no reason to
+     * go back to memory for them -- and a positive reason not to, since the bytes it was given are
+     * the ones the CPU is about to execute and a second look could be a look at a different bank.
+     *
+     * @param address where it starts.
+     * @param bytes   the whole instruction, opcode first. Not checked against the length the opcode
+     *                implies: what the caller saw is what ran.
+     */
+    public static Line of(final int address, final int[] bytes) {
+        var start = address & 0xFFFF;
+
+        return new Line(start, bytes, text(start, bytes, bytes[0] & 0xFF));
+    }
+
+    /**
      * A run of instructions, each starting where the last one ended.
      */
     public static List<Line> from(final Memory memory, final int address, final int count) {

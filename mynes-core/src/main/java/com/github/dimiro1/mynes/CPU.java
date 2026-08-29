@@ -431,6 +431,20 @@ public class CPU {
     }
 
     /**
+     * Stop notifying one.
+     * <p>
+     * Not called from inside {@link CPUEventListener#onStep}: the list is walked while it notifies,
+     * so a listener that took itself off from in there would be removing an element from underneath
+     * the walk. A tracer that has written all it was asked for goes quiet and waits to be taken off
+     * between instructions.
+     *
+     * @param listener the one to forget. Anything not on the list is ignored.
+     */
+    public void removeEventListener(final CPUEventListener listener) {
+        listeners.remove(listener);
+    }
+
+    /**
      * Step one instruction per call.
      * <p>
      * An OAM DMA transfer holds the CPU off the bus for over five hundred cycles without any

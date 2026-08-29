@@ -85,28 +85,79 @@ frame boundary is too coarse for:
 ```
 step [N]                   advance N instructions rather than N frames
 disasm [ADDR] [COUNT]      disassemble, from the PC by default
-break ADDR / unbreak ADDR  stop before the instruction at ADDR
-watch ADDR / unwatch ADDR  stop after an instruction writes to ADDR
+break ADDR [if COND]       stop before the instruction at ADDR, where COND holds
+unbreak ADDR               forget that one
+watch ADDR [read|write|both]
+                           stop after an instruction touches ADDR that way, writes by default
+unwatch ADDR               forget that one
 points [clear]             list them, or drop them all
 ```
 
 `run` and both `run-until` commands then come back with `stopped` and `stoppedAt` when one of these
-ended them early, and a watchpoint also reports `address`, `value` and **`writtenBy`** -- the
-instruction that did the store, which is the whole point of setting one. `stopped` is absent rather
-than null when nothing stopped the run, so `jq 'select(.stopped)'` is the whole of the filter.
+ended them early, and a watchpoint also reports `address`, `value`, `access` and the instruction that
+did it -- **`writtenBy`** for a write and **`readBy`** for a read, which is the whole point of setting
+one. Named differently rather than sharing one field, because a `writtenBy` on a stop where nothing
+was written would be a lie with a helpful shape. `stopped` is absent rather than null when nothing
+stopped the run, so `jq 'select(.stopped)'` is the whole of the filter.
 
 ```sh
 printf 'watch $0300\nrun 600\nquit\n' | java -jar $JAR --headless --rom ROM.nes --interactive
 ```
 
-Two things to know. **The first `step` is the reset sequence** and runs no instruction: it leaves the
-CPU standing on the first one rather than past it. And **a watchpoint sees CPU writes only** -- a
-sprite DMA copies into OAM by calling the PPU directly, so a watch on $2004 sleeps through all 256 of
-the writes one makes.
+**A read watchpoint is a different question from a breakpoint, and it is worth knowing which one is
+being asked.** Every instruction the CPU runs is fetched off the same bus as everything else, so a
+read watch on an address inside a routine fires on the fetch, every pass, and reports the opcode
+byte. That is what the hardware does rather than an artefact -- but "stop when the machine reaches
+here" is `break`, and reaching for `watch ... read` to ask it will bury the answer.
+
+**A condition is a comparison and nothing else.** Either side may be a register (`a`, `x`, `y`, `sp`,
+`p`, `pc`), a byte of memory (`[$0300]`) or a number, and the comparisons are `==`, `!=`, `<`, `<=`,
+`>` and `>=`. Numbers are decimal unless they say otherwise, the way the rest of the command line has
+it, so `break $C000 if a == 16` and `break $C000 if a == $10` are the same point. Memory is read
+through `peek`, so a condition on `[$2002]` reads zero rather than clearing the VBlank flag of a game
+that was never stopped. One address holds one breakpoint: setting it again is how a condition is
+changed, and a bare `break` is how one comes off.
+
+`points` lists both as objects rather than as bare addresses -- `{"address":..., "condition":...}` and
+`{"address":..., "on":"read"}` -- because an address on its own stopped being the whole of a point.
 
 None of this costs anything when it is not used. `Debugger.isArmed()` is asked once a frame, and a
 session with nothing set runs the same loop it always did; only an armed one drops to clocking the
-machine an instruction at a time.
+machine an instruction at a time. The read hook goes on the bus only when a read watchpoint asks for
+it, which matters more than the write hook does: everything the CPU fetches goes past it.
+
+**Two things a watchpoint does not see.** A sprite DMA copies into OAM by calling the PPU directly, so
+a watch on $2004 sleeps through all 256 of the writes one makes -- and neither a DMA's reads nor the
+DMC's sample fetches are the processor reading, so they are invisible to a read watch too. And **the
+first `step` is the reset sequence**, which runs no instruction: it leaves the CPU standing on the
+first one rather than past it.
+
+### Writing down every instruction
+
+`trace PATH [LINES]` logs one line per instruction in nestest's format, `trace off` stops, and a bare
+`trace` says how far it has got. The format is nestest's down to the column because that log is
+already this emulator's answer key -- `NesTestTests` walks 8990 of its lines against a running
+machine -- so a trace taken here and a log taken from another emulator diff against each other:
+
+```
+C000  4C F5 C5  JMP $C5F5                       A:00 X:00 Y:00 P:24 SP:FD PPU:  0, 27 CYC:8
+```
+
+**Say how many lines to keep.** A frame is around thirty thousand instructions at about ninety bytes
+a line, so `trace out.log` followed by `run 900` is a gigabyte and a half. The shape this is meant to
+be used in is to stop somewhere first and then trace from there:
+
+```sh
+printf 'break $C5F5\nrun 600\ntrace /tmp/t.log 5000\nstep 5000\ntrace off\nquit\n' \
+  | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+Two columns are not nestest's. It appends `= 00` to an operand to say what the address held, which is
+a read, and a tracer that performed one would be changing the machine it is describing. And the
+`PPU:` column is where the beam is *as the opcode is fetched*, one CPU cycle later than a log printing
+three times its cycle count -- so a cross-emulator diff belongs on the CPU columns, which line up
+exactly. `Tracer` is where all of it lives, and the window has the same thing under **Debug > Start
+Trace...**
 
 ### Failing on purpose
 
@@ -444,7 +495,8 @@ mynes-core/           depends on nothing
                       controllers
   mynes/mappers/      mappers 0 to 4
   mynes/state/        save states, battery .sav files, and .mnm session recordings
-  mynes/debug/        the disassembler and the breakpoints, shared by the window and the REPL
+  mynes/debug/        the disassembler, the breakpoints and their conditions, and the tracer,
+                      all shared by the window and the REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
   mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, and the
                       NTSC filter that decodes the signal instead of reading a palette
@@ -458,6 +510,8 @@ mynes-headless/       depends on core and patch
 
 mynes-desktop/        depends on core, patch and headless; FlatLaf and MigLayout live here
   mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger
+  mynes/ui/ppuviewer/ the two windows over what the PPU is drawing from: the four nametables with
+                      the scroll window over them, and the sixty four sprites with their attributes
 ```
 
 `mynes-patch` is beside the console rather than inside it because IPS says nothing about what it
@@ -493,6 +547,11 @@ mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
 The palettes are in the core rather than beside the window because both front ends draw with them
 and neither owns them. `NESPalette` is 512 packed integers and `Palettes` reads files; the one piece
 of Swing in that story, `PaletteDialog`, stayed behind in `mynes/ui/`.
+
+The two PPU viewers are their own package rather than beside the CHR viewer because that one is
+about the tiles a game *has* and these are about where it has *put* them -- and they share a tile
+decoder with each other rather than with it, since that one reads the mapper directly and these read
+the PPU's own bus so that a bank switch moves them.
 
 `peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
 address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that

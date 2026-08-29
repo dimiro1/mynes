@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import net.miginfocom.swing.MigLayout;
@@ -16,6 +17,7 @@ import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -70,7 +72,7 @@ public final class DebuggerFrame extends JFrame {
         this.nes = nes;
         this.runner = runner;
         this.debugger = debugger;
-        this.points = new PointsPanel(this::toggleBreakpoint, this::toggleWatchpoint, this::clear);
+        this.points = new PointsPanel(new Editing());
 
         init(parent);
     }
@@ -167,7 +169,8 @@ public final class DebuggerFrame extends JFrame {
         disassembly.show(snapshot, breaks);
         registers.show(snapshot);
         memory.show(snapshot);
-        points.show(breaks, Set.copyOf(debugger.watchpoints()));
+        points.show(
+                breaks, Map.copyOf(debugger.conditions()), Map.copyOf(debugger.watchpoints()));
 
         status.setText(describe(stop));
 
@@ -239,30 +242,53 @@ public final class DebuggerFrame extends JFrame {
         edit(() -> debugger.toggleBreakpoint(address));
     }
 
-    private void toggleWatchpoint(final int address) {
-        edit(() -> debugger.toggleWatchpoint(address));
-    }
+    /**
+     * What the points panel asks for, all of it posted onto the emulation thread.
+     */
+    private final class Editing implements PointsPanel.Points {
+        @Override
+        public void breakAt(final int address, final Condition condition) {
+            edit(() -> debugger.addBreakpoint(address, condition));
+        }
 
-    private void clear() {
-        edit(debugger::clear);
+        @Override
+        public void watchAt(final int address, final Debugger.Access on) {
+            edit(() -> debugger.addWatchpoint(address, on));
+        }
+
+        @Override
+        public void removeBreakpoint(final int address) {
+            edit(() -> debugger.removeBreakpoint(address));
+        }
+
+        @Override
+        public void removeWatchpoint(final int address) {
+            edit(() -> debugger.removeWatchpoint(address));
+        }
+
+        @Override
+        public void clear() {
+            edit(debugger::clear);
+        }
     }
 
     /**
      * Changes the points on the emulation thread and brings the answer back.
      * <p>
      * The lists are copied on the thread that owns them and handed over, rather than read from here
-     * afterwards: the copy is what carries the change across, and reading the live sets from this
-     * thread would be reading something the other one is entitled to be writing.
+     * afterwards: the copy is what carries the change across, and reading the live collections from
+     * this thread would be reading something the other one is entitled to be writing.
      */
     private void edit(final Runnable change) {
         runner.post(() -> {
             change.run();
 
             var breaks = Set.copyOf(debugger.breakpoints());
-            var watches = Set.copyOf(debugger.watchpoints());
+            var conditions = Map.copyOf(debugger.conditions());
+            var watches = Map.copyOf(debugger.watchpoints());
 
             SwingUtilities.invokeLater(() -> {
-                points.show(breaks, watches);
+                points.show(breaks, conditions, watches);
                 disassembly.setBreakpoints(breaks);
             });
         });
@@ -273,8 +299,8 @@ public final class DebuggerFrame extends JFrame {
 
         if (stop.reason() == Debugger.Reason.WATCHPOINT) {
             return String.format(
-                    "%s: $%04X = $%02X, written by $%04X",
-                    reason, stop.address(), stop.value(), stop.writtenBy());
+                    "%s: $%04X %s $%02X, by $%04X",
+                    reason, stop.address(), stop.access().id(), stop.value(), stop.by());
         }
 
         return String.format("%s at $%04X", reason, stop.pc());

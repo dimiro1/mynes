@@ -197,15 +197,35 @@ anything, so a silenced APU still runs and still raises its interrupts, and a ga
 either way.
 
 **Debug tools.** A debugger stops the machine where you tell it to: breakpoints on an address,
-watchpoints on a write, single stepping by instruction or by frame, a live disassembly with the
-history of what actually ran above it, the registers and where the beam is, and a hex view of the
-whole address space. A watchpoint says which instruction did the writing, which is the question
-worth asking. It reads the machine only while it is stopped, so what it shows is one moment rather
-than a blur of several.
+watchpoints on a read or a write, single stepping by instruction or by frame, a live disassembly with
+the history of what actually ran above it, the registers and where the beam is, and a hex view of the
+whole address space. A watchpoint says which instruction did the reading or the writing, which is the
+question worth asking. A breakpoint can carry a condition — `$C000 if a == $10`, or `if [$0300] > 5`
+— so an address a game reaches a thousand times a second can still be stopped at on the pass that
+matters. It reads the machine only while it is stopped, so what it shows is one moment rather than a
+blur of several.
+
+**Debug > Start Trace...** writes down every instruction the CPU runs, in the format nestest's log
+uses, so a trace from here and a log from another emulator can be put side by side and diffed. It is
+a couple of megabytes a second of play, which is worth knowing before leaving it on.
 
 A CHR viewer shows every tile of a bank with a zoomed preview, coloured with any of the eight
-palettes the game is using, and it updates live as CHR RAM is rewritten and palettes change. There
-are also toggles to hide the background or the sprite layer without the game noticing.
+palettes the game is using, and it updates live as CHR RAM is rewritten and palettes change.
+
+A **nametable viewer** shows all four nametables at once with the scroll window drawn over them,
+which is where a scrolling game's bugs actually live: the column about to come into view is written
+into the nametable that is off screen, and a column written one tile late or an attribute byte
+written to the wrong quadrant is invisible in the picture until it arrives. It says which pairs of
+nametables the cartridge has wired together, since a game that appears to have drawn the same screen
+twice has usually done nothing of the kind, and it names the byte under the pointer so there is
+somewhere to put a watchpoint.
+
+An **OAM viewer** shows all sixty four sprites: the four bytes each one is made of, what they mean —
+palette, priority, flip, which tile and which pattern table — and a field showing where every sprite
+is, including the ones parked off screen that the picture cannot show you. "Why has that enemy not
+appeared" is a question about exactly those.
+
+There are also toggles to hide the background or the sprite layer without the game noticing.
 
 A **Hacks** menu, for the things the console does not do. **Unlimited Sprites** draws the sprites the
 chip would have dropped, so a scanline holding more than eight of them stops flickering; the game
@@ -229,8 +249,8 @@ the same with codes in as without. They take effect as they are typed, they surv
 and they are forgotten when another cartridge goes in, since a code written for one game is an
 arbitrary byte written over the next. `--genie` does the same thing from the command line.
 
-All of it is in headless mode too — `break`, `watch`, `step` and `disasm` are commands in the
-interactive session, so the same questions can be asked from a script.
+All of it is in headless mode too — `break`, `watch`, `step`, `disasm` and `trace` are commands in
+the interactive session, so the same questions can be asked from a script.
 
 **IPS patches**, from **File > Open with Patch...**, which is how a romhack is handed out. The patch
 is applied to the bytes on their way into the emulator, so the ROM on disk is left exactly as it was
@@ -414,7 +434,7 @@ seconds to start up, the jar about a third of one.
   are commands in the interactive session as well.
 - **`--interactive`** reads commands on standard input and answers each with a line of JSON, for
   when you do not yet know the question well enough to write it down. It is also where the debugger
-  lives without a window: `break`, `watch`, `step` and `disasm`, with `run` reporting back what
+  lives without a window: `break`, `watch`, `step`, `disasm` and `trace`, with `run` reporting back what
   stopped it.
 
 [CLAUDE.md](CLAUDE.md) covers all of this in more detail. It is written for coding agents, but it is

@@ -86,6 +86,11 @@ class SaveStateCompletenessTests {
                     "where a debugger's watchpoints wire in -- whoever is watching the machine"
                             + " rather than the machine, and a state that put one back would be"
                             + " restoring the debugger"),
+            Map.entry("MMU.readListener",
+                    "the other half of the same seam, where a read watchpoint wires in. Separate"
+                            + " from the write listener because the two are put down separately:"
+                            + " watching every read means being told about every instruction fetch,"
+                            + " which is a price only somebody who asked for it should pay"),
             Map.entry("MMU.genie",
                     "the Game Genie plugged in between the cartridge and the console, which belongs"
                             + " to whoever is playing rather than to the machine -- and a state that"

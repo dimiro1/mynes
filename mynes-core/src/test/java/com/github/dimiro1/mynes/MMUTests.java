@@ -193,6 +193,100 @@ public class MMUTests {
     }
 
     /**
+     * The seam a read watchpoint hangs off. The same shape as the write side, and the same reason
+     * for pinning exactly what it does not see -- plus one thing that is only true here: it is told
+     * after the read, so what it is handed is what the CPU got rather than what a later look would
+     * find.
+     */
+    @Nested
+    class ReadListener {
+        private final List<String> seen = new ArrayList<>();
+
+        private void record() {
+            mmu.setReadListener((address, value) ->
+                    seen.add(String.format("%04X=%02X", address, value)));
+        }
+
+        @Test
+        void seesEveryByteTheCpuReads() {
+            mmu.write(0x0123, 0x5A);
+            record();
+
+            mmu.read(0x0123);
+            mmu.read(0x8000);
+
+            assertEquals(2, seen.size());
+            assertEquals("0123=5A", seen.getFirst());
+        }
+
+        @Test
+        void seesTheMirrorItWasReadThroughRatherThanTheRamBehindIt() {
+            mmu.write(0x07FF, 0x42);
+            record();
+
+            mmu.read(0x1FFF);
+
+            assertEquals(List.of("1FFF=42"), seen, "where the CPU looked is what a watch is set on");
+        }
+
+        /**
+         * The one thing the write side cannot do. Reading $2002 clears the flag it just reported, so
+         * a listener that went back for the value afterwards would report the wrong one -- and would
+         * have been the thing that cleared it.
+         */
+        @Test
+        void isToldTheValueTheCpuGot() {
+            record();
+
+            var first = mmu.read(0x2002);
+
+            assertEquals(1, seen.size());
+            assertEquals(String.format("2002=%02X", first), seen.getFirst());
+        }
+
+        @Test
+        void writingDoesNotFireIt() {
+            record();
+
+            mmu.write(0x0100, 0x99);
+            mmu.peek(0x0100);
+
+            assertEquals(List.of(), seen, "a peek is not a bus cycle either");
+        }
+
+        /**
+         * The documented hole, and the same one the write side has: a transfer is not the processor
+         * reading, so its reads go around this.
+         */
+        @Test
+        void aSpriteDmaIsNotSeen() {
+            for (var i = 0; i < 0x100; i++) {
+                mmu.write(0x0200 + i, i);
+            }
+
+            record();
+            mmu.write(OAM_DMA, 0x02);
+
+            for (var cycle = 0; cycle < 600 && stallCycle(mmu, cycle); cycle++) {
+                // Every one of the 256 copies, so that a listener that saw any of them would have.
+            }
+
+            assertEquals(List.of(), seen, "none of the transfer's 256 reads");
+        }
+
+        @Test
+        void clearingItStopsTheTelling() {
+            record();
+            mmu.read(0x0100);
+
+            mmu.setReadListener(null);
+            mmu.read(0x0100);
+
+            assertEquals(1, seen.size());
+        }
+    }
+
+    /**
      * The seam a Game Genie hangs off, which is the read side of the same idea.
      * <p>
      * The codes below are real published ones rather than records built by hand, so that the scramble
