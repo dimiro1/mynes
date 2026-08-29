@@ -143,6 +143,43 @@ class OptionsTests {
     void theFilterIsNoneUnlessOneIsNamed() {
         assertEquals(VideoFilter.NONE, parse("--rom", "x.nes").filter());
         assertEquals(VideoFilter.NTSC, parse("--rom", "x.nes", "--filter", "ntsc").filter());
+        assertEquals(
+                VideoFilter.CRT,
+                parse("--rom", "x.nes", "--filter", "crt", "--scale", "2").filter());
+    }
+
+    /**
+     * The tube is the one filter whose picture depends on how big the picture is: a scanline is the
+     * row a line was not drawn on, and at 1x there is one row per line. Refused rather than drawn
+     * without one, for the reason {@code --filter none=low} is.
+     */
+    @Test
+    void theTubeIsRefusedWhereThereIsNoRoomForAScanline() {
+        var message = refused("--rom", "x.nes", "--filter", "crt").getMessage();
+
+        assertTrue(message.contains("--scale"), message);
+
+        // Either way round, since the flags can be typed in either order.
+        assertTrue(refused("--rom", "x.nes", "--scale", "1", "--filter", "crt")
+                .getMessage().contains("--scale"));
+
+        assertEquals(
+                VideoFilter.CRT,
+                parse("--rom", "x.nes", "--scale", "2", "--filter", "crt").filter());
+    }
+
+    /**
+     * The glass belongs to the tube, so asking for it beside anything else is refused rather than
+     * remembered against a filter that would never look at it.
+     */
+    @Test
+    void theWarpIsRefusedWithoutTheTube() {
+        assertFalse(parse("--rom", "x.nes").warp());
+        assertTrue(parse("--rom", "x.nes", "--filter", "crt", "--scale", "3", "--warp").warp());
+
+        assertTrue(refused("--rom", "x.nes", "--warp").getMessage().contains("crt"));
+        assertTrue(refused("--rom", "x.nes", "--filter", "ntsc", "--warp")
+                .getMessage().contains("crt"));
     }
 
     /**
@@ -158,6 +195,11 @@ class OptionsTests {
         assertEquals(
                 FilterStrength.STRONG,
                 parse("--rom", "x.nes", "--filter", "ntsc=strong").strength());
+
+        // Both filters read it, and neither reading is the other's.
+        assertEquals(
+                FilterStrength.STRONG,
+                parse("--rom", "x.nes", "--scale", "2", "--filter", "crt=strong").strength());
     }
 
     /**
@@ -179,8 +221,9 @@ class OptionsTests {
     }
 
     /**
-     * Rather than ignored. A palette has no chroma trap to lean on, so somebody asking for a softer
-     * one has misunderstood something and is better told than humoured.
+     * Rather than ignored. A bare palette does nothing for a strength to be a fraction of, so
+     * somebody asking for a softer one has misunderstood something and is better told than
+     * humoured.
      */
     @Test
     void aStrengthOnThePaletteIsRefused() {

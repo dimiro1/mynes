@@ -89,11 +89,15 @@ public final class Session {
     private VideoFilter filter;
 
     /**
-     * How much of the detail the decoder's chroma trap costs is given back. Kept here rather than
-     * only on the decoder, so that a session that has not built one yet still remembers what it was
-     * told.
+     * How hard whichever filter is on is applied. Kept here rather than only on the decoder, so
+     * that a session that has not built one yet still remembers what it was told.
      */
     private FilterStrength strength;
+
+    /**
+     * Whether the tube's glass is curved. Mutable for the reason the filter is.
+     */
+    private boolean warp;
 
     /**
      * The composite decoder, built the first time one is asked for and kept after that: it carries
@@ -164,8 +168,10 @@ public final class Session {
     /**
      * @param nes      the machine, already built from a cartridge.
      * @param palette  512 packed ARGB entries, which is what a screenshot is drawn with.
-     * @param filter   how to colour a screenshot: through the palette, or by decoding the signal.
-     * @param strength how soft the decoder draws, and nothing at all when the palette is drawing.
+     * @param filter   how to draw a screenshot: through the palette, by decoding the signal, or
+     *                 through the palette and onto a tube.
+     * @param strength how hard that filter is applied, and nothing at all when neither is.
+     * @param warp     whether the tube's glass is curved, and nothing at all unless it is drawing.
      * @param wav      where to write the sound, or null to only count it.
      */
     public Session(
@@ -173,11 +179,13 @@ public final class Session {
             final int[] palette,
             final VideoFilter filter,
             final FilterStrength strength,
+            final boolean warp,
             final WavWriter wav) {
         this.nes = nes;
         this.palette = palette;
         this.filter = filter;
         this.strength = strength;
+        this.warp = warp;
         this.wav = wav;
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
@@ -201,8 +209,8 @@ public final class Session {
     }
 
     /**
-     * How soft the decoder is drawing. Answered even while the palette is doing the drawing, since
-     * it is a preference about the decoder rather than a fact about the picture.
+     * How hard the filter is being applied. Answered even while the bare palette is drawing, since
+     * it is a preference about the filters rather than a fact about the picture.
      */
     public FilterStrength strength() {
         return strength;
@@ -214,6 +222,18 @@ public final class Session {
         if (ntsc != null) {
             ntsc.setStrength(strength);
         }
+    }
+
+    /**
+     * Whether the tube's glass is curved. Answered whatever is drawing, for the reason the strength
+     * is.
+     */
+    public boolean warp() {
+        return warp;
+    }
+
+    public void setWarp(final boolean warp) {
+        this.warp = warp;
     }
 
     private NTSCFilter ntsc() {
@@ -442,10 +462,13 @@ public final class Session {
     public void screenshot(final Path path, final boolean cropOverscan, final int scale)
             throws IOException {
         var ppu = nes.getPPU();
-        var image = filter == VideoFilter.NTSC
-                ? FrameRenderer.render(
-                        ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), cropOverscan, scale)
-                : FrameRenderer.render(ppu.getFrameBuffer(), palette, cropOverscan, scale);
+        var image = switch (filter) {
+            case NTSC -> FrameRenderer.render(
+                    ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), cropOverscan, scale);
+            case CRT -> FrameRenderer.render(
+                    ppu.getFrameBuffer(), palette, strength, warp, cropOverscan, scale);
+            case NONE -> FrameRenderer.render(ppu.getFrameBuffer(), palette, cropOverscan, scale);
+        };
 
         var parent = path.getParent();
         if (parent != null) {

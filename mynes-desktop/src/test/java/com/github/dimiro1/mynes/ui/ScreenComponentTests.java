@@ -37,10 +37,18 @@ class ScreenComponentTests {
      * reaching inside it.
      */
     private static BufferedImage paint(final ScreenComponent screen) {
-        var target = new BufferedImage(
-                PPU.SCREEN_WIDTH, VISIBLE_HEIGHT, BufferedImage.TYPE_INT_RGB);
+        return paint(screen, 1);
+    }
 
-        screen.setSize(PPU.SCREEN_WIDTH, VISIBLE_HEIGHT);
+    /**
+     * The same, magnified -- which the tube has an opinion about and the other two filters do not,
+     * since a scanline lives between two rows of the picture on screen.
+     */
+    private static BufferedImage paint(final ScreenComponent screen, final int scale) {
+        var target = new BufferedImage(
+                PPU.SCREEN_WIDTH * scale, VISIBLE_HEIGHT * scale, BufferedImage.TYPE_INT_RGB);
+
+        screen.setSize(PPU.SCREEN_WIDTH * scale, VISIBLE_HEIGHT * scale);
 
         var g = target.createGraphics();
         try {
@@ -135,13 +143,13 @@ class ScreenComponentTests {
 
         var throughThePalette = painted(screen, 0, OVERSCAN_TOP);
 
-        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength());
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength(), false);
 
         var decoded = painted(screen, 0, OVERSCAN_TOP);
 
         assertNotEquals(throughThePalette, decoded, "the decoder is not the palette");
 
-        screen.setVideoFilter(VideoFilter.NONE, FilterStrength.defaultStrength());
+        screen.setVideoFilter(VideoFilter.NONE, FilterStrength.defaultStrength(), false);
 
         assertEquals(throughThePalette, painted(screen, 0, OVERSCAN_TOP), "and back again");
     }
@@ -162,11 +170,11 @@ class ScreenComponentTests {
         }
 
         screen.present(frame, 0);
-        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.STRONG);
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.STRONG, false);
 
         var soft = painted(screen, 2, OVERSCAN_TOP);
 
-        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.LOW);
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.LOW, false);
 
         assertNotEquals(soft, painted(screen, 2, OVERSCAN_TOP),
                 "less of the pixel next door should reach this one");
@@ -184,10 +192,92 @@ class ScreenComponentTests {
 
         var throughThePalette = screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0);
 
-        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength());
+        screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength(), false);
 
         assertNotEquals(
                 throughThePalette, screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0));
+    }
+
+    /**
+     * The window's picture goes on the tube too, and not only its screenshots -- which is the one
+     * thing about this filter that a screenshot cannot tell you, since the window is where the
+     * magnification is whatever a corner was dragged to rather than a whole number.
+     */
+    @Test
+    void thePaintedPictureGoesOnTheTubeAsWellAsTheSnapshot() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x20), 0);
+        screen.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, false);
+
+        var painted = paint(screen, 2);
+
+        assertTrue((painted.getRGB(0, 1) & 0xFF) < (painted.getRGB(0, 0) & 0xFF),
+                "the row the beam missed is the darker of the two");
+
+        var bent = new ScreenComponent();
+
+        bent.present(frameOf(0x20), 0);
+        bent.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, true);
+
+        assertEquals(0xFF000000, paint(bent, 3).getRGB(0, 0), "and the corners come off");
+    }
+
+    /**
+     * And at 1x it is the picture, because a gap needs a row to be in and there is not one. The
+     * command line refuses that combination; a window cannot, since it is a size somebody drags
+     * through on the way to another one.
+     */
+    @Test
+    void aWindowTooSmallForAScanlineDrawsThePictureRatherThanDimmingIt() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x20), 0);
+
+        var plain = painted(screen, 0, OVERSCAN_TOP);
+
+        screen.setVideoFilter(VideoFilter.CRT, FilterStrength.STRONG, false);
+
+        assertEquals(plain, painted(screen, 0, OVERSCAN_TOP));
+    }
+
+    /**
+     * The tube is the third answer, and unlike the decoder it is the palette's colours -- what it
+     * changes is where the light goes. So a lit row is very nearly the palette's pixel and the row
+     * under it is not.
+     */
+    @Test
+    void aSnapshotOnATubeKeepsThePalettesColoursAndTakesTheGapsOut() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x20), 0);
+
+        var plain = screen.snapshot(ScreenScale.TWO_TIMES);
+
+        screen.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, false);
+
+        var tube = screen.snapshot(ScreenScale.TWO_TIMES);
+
+        assertTrue((tube.getRGB(0, 0) & 0xFF) < (plain.getRGB(0, 0) & 0xFF));
+        assertTrue((tube.getRGB(0, 1) & 0xFF) < (tube.getRGB(0, 0) & 0xFF),
+                "the row the beam missed is the darker of the two");
+    }
+
+    /**
+     * And bending the glass cuts the corners off, which is the one thing about it that can be
+     * checked without looking at it.
+     */
+    @Test
+    void aWarpedSnapshotHasNoCorners() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x20), 0);
+        screen.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, true);
+
+        var tube = screen.snapshot(ScreenScale.FOUR_TIMES);
+
+        assertEquals(0xFF000000, tube.getRGB(0, 0));
+        assertNotEquals(0xFF000000, tube.getRGB(tube.getWidth() / 2, tube.getHeight() / 2));
     }
 
     @Test

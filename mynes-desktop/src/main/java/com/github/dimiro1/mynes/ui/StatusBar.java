@@ -86,13 +86,14 @@ final class StatusBar extends JPanel {
      *                         machine running the hardware's own timing.
      * @param genieCodes       how many codes are in the cartridge slot.
      * @param unlimitedSprites whether the chip is drawing the sprites it would have dropped.
-     * @param filter           how the picture is being coloured. What is actually in force rather
+     * @param filter           how the picture is being drawn. What is actually in force rather
      *                         than what the menu has ticked, which are two different things on a
      *                         PAL machine.
-     * @param strength         how much of the detail the decoder's chroma trap costs it gives
-     *                         back, which the filter can make irrelevant the other way round.
-     * @param palette          the name of the table the picture is drawn through, which the filter
-     *                         can make irrelevant.
+     * @param strength         how hard that filter is applied, which the filter can make
+     *                         irrelevant by being none at all.
+     * @param warp             whether the tube's glass is curved, which only the tube has.
+     * @param palette          the name of the table the picture is drawn through, which the
+     *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
      * @param screenshotScale  how big the next screenshot will be, which is the setting with the
      *                         least to show for itself: it changes nothing on screen and nothing at
@@ -112,6 +113,7 @@ final class StatusBar extends JPanel {
             boolean unlimitedSprites,
             VideoFilter filter,
             FilterStrength strength,
+            boolean warp,
             String palette,
             ScreenScale screenScale,
             ScreenScale screenshotScale,
@@ -361,10 +363,21 @@ final class StatusBar extends JPanel {
         if (machine.filter() != VideoFilter.NONE) {
             // The strength rides on the filter's own part rather than taking one of its own. It is
             // a setting on something already named, and an item of its own would push the console
-            // off the end of a narrow window to say how soft a picture is.
-            parts.add(machine.strength() == FilterStrength.defaultStrength()
+            // off the end of a narrow window to say how hard a filter is applied.
+            var qualifiers = new ArrayList<String>();
+
+            if (machine.strength() != FilterStrength.defaultStrength()) {
+                qualifiers.add(machine.strength().label());
+            }
+
+            if (machine.filter() == VideoFilter.CRT && machine.warp()) {
+                qualifiers.add("Curved");
+            }
+
+            parts.add(qualifiers.isEmpty()
                     ? machine.filter().label() + " filter"
-                    : machine.filter().label() + " filter (" + machine.strength().label() + ")");
+                    : machine.filter().label() + " filter ("
+                            + String.join(", ", qualifiers) + ")");
         }
 
         // Last, because it changes nothing until a file is written -- which also makes it the one
@@ -396,17 +409,24 @@ final class StatusBar extends JPanel {
         row(rows, "Unlimited sprites", machine.unlimitedSprites() ? "On" : "Off");
         row(rows, "Video filter", machine.filter().label());
 
-        // The other way round from the palette below, and the same news the greyed-out Strength
-        // submenu carries: a lookup table has no chroma trap for a strength to be the strength of.
+        // The same news the greyed-out Strength submenu carries: a strength is how much of what a
+        // filter does to do, and a bare lookup table does nothing for it to be a fraction of.
         row(rows, "Filter strength", machine.filter() == VideoFilter.NONE
-                ? "Not decoding"
+                ? "No filter"
                 : machine.strength().label());
 
         // Said rather than left blank, and it is the same news the greyed-out Palette item carries:
-        // a decoder works its colours out of the signal and never opens the table at all.
-        row(rows, "Palette", machine.filter() == VideoFilter.NONE
-                ? machine.palette()
-                : "Not consulted");
+        // a decoder works its colours out of the signal and never opens the table at all. Only the
+        // decoder -- the tube is drawn through the table like everything else.
+        row(rows, "Palette", machine.filter() == VideoFilter.NTSC
+                ? "Not consulted"
+                : machine.palette());
+
+        // The same news the greyed-out item carries: there is no glass in front of a lookup table
+        // or a decoder, so this is not a setting either of them is at.
+        row(rows, "Curved glass", machine.filter() != VideoFilter.CRT
+                ? "No tube"
+                : machine.warp() ? "On" : "Off");
 
         row(rows, "Screen size", machine.screenScale().label());
         row(rows, "Screenshot size", machine.screenshotScale().label());

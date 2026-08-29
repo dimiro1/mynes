@@ -7,6 +7,7 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.CRTScreen;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -44,11 +45,14 @@ import java.util.TreeSet;
  * @param scale            how many times to magnify a screenshot.
  * @param fullFrame        whether to keep the scanlines a television hides.
  * @param region           which machine to run the cartridge on, or null to believe its header.
- * @param filter           how a frame becomes colours: through the palette, or by decoding the
- *                         composite signal. NTSC only, which {@code Headless} refuses once the
- *                         cartridge has said which machine it wants.
- * @param strength         how much of the detail the decoder's chroma trap costs it gives back.
- *                         Always answered, and meaningless unless {@code filter} is the decoder.
+ * @param filter           how a frame becomes a picture: through the palette, by decoding the
+ *                         composite signal, or through the palette and onto a tube. The decoder is
+ *                         NTSC only, which {@code Headless} refuses once the cartridge has said
+ *                         which machine it wants; the tube is neither console's.
+ * @param strength         how hard that filter is applied. Always answered, and meaningless when
+ *                         {@code filter} is the bare palette.
+ * @param warp             whether the tube's glass is curved. Always answered, and meaningless
+ *                         unless {@code filter} is the tube.
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
@@ -96,6 +100,7 @@ public record Options(
         NESPalette palette,
         VideoFilter filter,
         FilterStrength strength,
+        boolean warp,
         boolean audio,
         Set<String> hacks,
         Overclock overclock,
@@ -253,17 +258,32 @@ public record Options(
                                     nesdev, or 2c07 on a PAL machine, whose PPU does not generate
                                     the same colours at all. --list-palettes has the rest.
               --list-palettes       Print the palette ids and names, then stop.
-              --filter NAME         none, or ntsc to decode the composite signal the chip drew
-                                    instead of looking each pixel up in a palette: colour bleed,
-                                    dot crawl and the artefact colours a palette cannot produce.
-                                    Default none. The palette is not consulted while it is on, and
-                                    it is refused on a PAL machine, whose signal is a different
-                                    signal. Nothing measured moves -- the frame hash is over colour
-                                    indices -- so this changes the PNGs and nothing else.
-                                    ntsc=low, ntsc=medium or ntsc=strong says how soft: keeping the
-                                    subcarrier out of luma costs the picture its fine detail, and
-                                    this is how much of it to give back. Default medium; strong is
-                                    the plain cycle-wide average and the softest of the three.
+              --filter NAME         How the picture is drawn. Default none, the palette straight
+                                    through. Nothing measured moves whichever is chosen -- the frame
+                                    hash and the colour counts are over colour indices -- so this
+                                    changes the PNGs and nothing else.
+                                      ntsc   Decode the composite signal the chip drew instead of
+                                             looking each pixel up in a palette: colour bleed, dot
+                                             crawl and the artefact colours a palette cannot
+                                             produce. The palette is not consulted while it is on,
+                                             and it is refused on a PAL machine, whose signal is a
+                                             different signal.
+                                      crt    Look the pixel up in the palette as usual and then lay
+                                             it down the way a picture tube did, with the unlit half
+                                             of the raster between the lines, and --warp for the
+                                             curve of the glass. Either console. Needs --scale 2 or
+                                             more, since at 1x there is one row per line and nowhere
+                                             to put a scanline.
+                                    =low, =medium or =strong says how hard, and neither reading is
+                                    the other's: for ntsc it is how much of the fine detail the
+                                    chroma trap costs to give back, so strong is the plain
+                                    cycle-wide average and the softest of the three; for crt it is
+                                    how dark the gaps go, so strong is the most visible mask.
+                                    Default medium. --filter none=low is an error rather than a
+                                    setting that does nothing.
+              --warp                Bend the picture the way the curve of a tube's glass bent it,
+                                    which cuts the corners off. Needs --filter crt, since it is
+                                    part of that filter rather than a fourth thing to choose.
 
             Sound
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
@@ -421,6 +441,7 @@ public record Options(
         NESPalette palette = null;
         var filter = VideoFilter.NONE;
         var strength = FilterStrength.defaultStrength();
+        var warp = false;
         var audio = false;
         var hacks = new LinkedHashSet<String>();
         var overclock = Overclock.NONE;
@@ -480,6 +501,7 @@ public record Options(
                             ? FilterStrength.defaultStrength()
                             : parseFilterStrength(filter, spec.substring(equals + 1));
                 }
+                case "--warp" -> warp = true;
                 case "--audio" -> audio = true;
                 case "--hack" -> overclock =
                         parseHacks(value(args, ++i, flag), hacks, overclock);
@@ -510,6 +532,25 @@ public record Options(
             rom = null;
         } else if (rom == null) {
             throw new UsageException("--rom is required. --help says what else there is.");
+        }
+
+        // The one filter whose picture depends on how big the picture is. A screenshot magnified
+        // once has one row per scanline and so nowhere to put the row a scanline is, and a run that
+        // asked for a tube and got the plain palette back is a run nobody asked for -- the same
+        // reason --filter none=low is refused rather than ignored. The window fades the mask out
+        // instead, because there the magnification is a corner somebody dragged rather than a
+        // number somebody typed.
+        if (filter == VideoFilter.CRT && scale < CRTScreen.MINIMUM_ROWS_PER_LINE) {
+            throw new UsageException("--filter crt needs --scale "
+                    + CRTScreen.MINIMUM_ROWS_PER_LINE + " or more: a scanline is the row a line was"
+                    + " not drawn on, and --scale " + scale + " draws one row per line.");
+        }
+
+        // Refused rather than remembered, for the reason --filter none=low is: there is no glass in
+        // front of a lookup table, so this is somebody expecting a bent picture and not getting one.
+        if (warp && filter != VideoFilter.CRT) {
+            throw new UsageException("--warp is the curve of a picture tube's glass, and --filter "
+                    + filter.id() + " does not draw on one. --filter crt does.");
         }
 
         if (play != null) {
@@ -562,6 +603,7 @@ public record Options(
                 palette,
                 filter,
                 strength,
+                warp,
                 audio,
                 Set.copyOf(hacks),
                 overclock,
@@ -906,27 +948,27 @@ public record Options(
     }
 
     /**
-     * How soft to draw, out of the half of {@code --filter ntsc=low} after the equals sign.
+     * How hard to apply it, out of the half of {@code --filter ntsc=low} after the equals sign.
      * <p>
-     * Refused on the palette rather than ignored. A strength is a number the decoder uses and the
-     * palette has nothing to do with, so {@code --filter none=low} is not a setting that happens to
-     * do nothing -- it is somebody expecting a softer picture out of a lookup table, and the way to
-     * find that out is to be told.
+     * Refused on the palette rather than ignored. A strength is how much of what a filter does to
+     * do, and the bare palette does nothing, so {@code --filter none=low} is not a setting that
+     * happens to have no effect -- it is somebody expecting a softer picture out of a lookup table,
+     * and the way to find that out is to be told.
      */
     private static FilterStrength parseFilterStrength(
             final VideoFilter filter, final String name) {
-        if (filter != VideoFilter.NTSC) {
+        if (filter == VideoFilter.NONE) {
             throw new UsageException(
                     "--filter " + filter.id() + " takes no strength: a strength says how much of"
-                            + " the detail the decoder's chroma trap costs to give back, and "
-                            + filter.id() + " does not decode anything.");
+                            + " what a filter does to do, and " + filter.id() + " is the palette"
+                            + " straight through.");
         }
 
         var strength = FilterStrength.byId(name);
 
         if (strength == null) {
-            throw new UsageException(
-                    "--filter ntsc= is " + FilterStrength.ids() + ", not \"" + name + "\".");
+            throw new UsageException("--filter " + filter.id() + "= is " + FilterStrength.ids()
+                    + ", not \"" + name + "\".");
         }
 
         return strength;

@@ -4,16 +4,24 @@ import java.util.Arrays;
 import java.util.Locale;
 
 /**
- * How a frame of colour indices becomes colours.
+ * How a frame of colour indices becomes a picture.
  * <p>
- * Two rival answers rather than a setting on one: {@link #NONE} looks each index up in a measured
- * palette, and {@link #NTSC} rebuilds the composite waveform the chip drew and decodes it. The
- * second does not consult a palette at all, which is the one thing worth knowing before switching
- * between them -- see {@link NTSCFilter}.
+ * Three rival answers rather than settings on one, and each is a whole answer: {@link #NONE} looks
+ * each index up in a measured palette, {@link #NTSC} rebuilds the composite waveform the chip drew
+ * and decodes it, and {@link #CRT} looks the index up the way {@link #NONE} does and then lays it
+ * down the way a tube laid it down. Only the middle one declines to consult a palette, which is
+ * the one thing worth knowing before switching between them -- see {@link NTSCFilter}.
+ * <p>
+ * <strong>One at a time, which is the shape of the question rather than a shortage of room.</strong>
+ * {@link #NTSC} and {@link #CRT} model different halves of the same television and would compose
+ * perfectly well; what stops them is that a fourth constant is a worse name for "both" than a pair
+ * of settings would be, and that the pair is the design this enum exists to refuse. If a decoded
+ * picture behind scanlines is ever wanted, it arrives by splitting this in two -- not by growing a
+ * {@code NTSC_CRT}.
  * <p>
  * An enum rather than a boolean because both front ends, the config file and the report all have to
- * spell this the same way, and because a second filter would arrive as a third constant rather than
- * as a second boolean.
+ * spell this the same way, and because a second filter arrives as a third constant rather than as a
+ * second boolean. It has now done so.
  */
 public enum VideoFilter {
     /**
@@ -24,7 +32,14 @@ public enum VideoFilter {
     /**
      * The 2C02's composite signal, decoded. NTSC only.
      */
-    NTSC("ntsc", "NTSC");
+    NTSC("ntsc", "NTSC"),
+
+    /**
+     * The palette, put on screen the way a picture tube put it there: 240 lines of beam with the
+     * unlit half of the raster between them, and the curve of the glass if it is asked for. Either
+     * console -- see {@link CRTScreen}.
+     */
+    CRT("crt", "CRT");
 
     private final String id;
     private final String label;

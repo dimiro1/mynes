@@ -254,10 +254,10 @@ cycles wide, so both null the subcarrier and both have a gain of one at DC, whic
 field comes out flat and every colour lands where it did at all three. `--filter none=low` is exit 2
 rather than a setting that quietly does nothing.
 
-**It is not on the comparability checklist**, and it is the only thing in this file that is not.
-Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` --
-is taken over the colour *indices* the chip emits, so `video.finalFrame` is identical with the
-filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
+**It is not on the comparability checklist**, and the video filters are the only things in this file
+that are not. Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`,
+`frameChanges` -- is taken over the colour *indices* the chip emits, so `video.finalFrame` is
+identical with the filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
 `--hack overclock` cannot: a replay does not depend on it. `video.filter` and `video.filterStrength`
 in the report say which were used -- the second explicitly null when the palette drew -- and
 `filter ntsc low` / `filter ntsc` / `filter none` / bare `filter` do it inside an interactive
@@ -274,6 +274,56 @@ at 1.5e-8 the decoded hues land within a degree or two of every palette in `/pal
 they sit ten to thirteen degrees off all of them. `NTSCFilterTests` holds that against the default
 palette, greys to within 8 of 441 and everything else to within 40 -- at every strength, since a
 sharpener that had reached into the chroma path is exactly what that would catch.
+
+### Putting it on the screen a television had
+
+`--filter crt` is the other half of the same television and the other kind of answer: the palette is
+consulted exactly as `--filter none` consults it, and what changes is where the light lands. A NES
+sends 240 lines and never interlaces into a set built to draw 480, so the beam lays one down, skips
+the position the other field would have used, and lays down the next -- the gaps are half of the
+screen rather than a defect of the picture. `--warp` adds the bow the glass gave it, which cuts the
+corners off; it is refused beside any other filter, since there is no glass in front of a lookup
+table. **Both work on either console**, unlike the decoder, because neither is the 2C02's.
+
+**It needs somewhere to put a scanline, so `--filter crt` under `--scale 2` is exit 2.** One row per
+line leaves nowhere for the gap, and a filter switched on and invisible is the thing `--filter
+none=low` is refused to avoid. The window cannot refuse -- 1x is a size a corner gets dragged
+through -- so there the mask fades out between 2x and 1x instead and comes back on the way up.
+`filter crt` inside an interactive session is refused the same way, since a session's magnification
+was fixed at `--scale` before it started, and `warp on|off` is a command of its own beside it.
+
+**Neither is on the checklist either**, for the reason above: `video.finalFrame` is byte-identical
+with them on and off and only the PNGs differ, and both ride freely with `--play`. `video.warp`
+joins `video.filter` and `video.filterStrength` in saying what drew, explicitly null when the tube
+did not.
+
+`CRTScreen` is where all of it lives, and the whole of the arithmetic is one antiderivative: the
+raster's profile is `0.5 - 0.5 sin(2*pi*u)` across a line, and every row of the picture takes the
+integral over its own slice of that rather than a sample of it -- which is what lets the window
+magnify by 2.37 without the mask breaking into moiré. **The beam sits a quarter of the way down a
+line's share of the raster rather than halfway**, which is the one decision in there that is not
+arithmetic: a gap centred on the boundary between two lines is the prettier model and any even
+magnification splits it exactly in half, so 2x -- the commonest there is -- would come out with two
+identical rows and no scanline anywhere.
+
+Magnifying, masking and bending are one pass, and the obvious arrangement is three. Bending a
+picture that has already been masked resamples a pattern that repeats every two rows, which is where
+a scanline filter picks up its moiré; masking one that has already been bent lays straight scanlines
+across a curved raster. Doing all three at once dodges both. It costs about 2.1ms a frame flat and
+6ms bent, at 4x, against an emulated frame's 3.7ms.
+
+`--filter crt=low|medium|strong` says how dark the gaps go, out of the same `FilterStrength` the
+decoder reads for its own purposes -- one enum because it is one question, and because a second one
+with the same three ids in it would be three chances for a command line, a config file and a report
+to disagree about which of them a word meant. At two rows to a line a white picture comes out with
+its lit rows at 95% of their light and its dark ones at 75% for `low`, 90% and 55% for `medium`, and
+85% and 30% for `strong`. **The picture is dimmer with it on and no gain is put back**: half the
+raster is unlit and the light really is gone, which is why every one of these televisions was
+brighter than its picture.
+
+There is no shadow mask, and that is deliberate rather than pending. A consumer tube's triad pitch is
+finer than an NES pixel is wide at any magnification anybody uses, so drawing one triad per pixel is
+not the tube's mask -- it is a different, coarser thing invented for the screenshot.
 
 ### It is deterministic
 
@@ -498,8 +548,9 @@ mynes-core/           depends on nothing
   mynes/debug/        the disassembler, the breakpoints and their conditions, and the tracer,
                       all shared by the window and the REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
-  mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, and the
-                      NTSC filter that decodes the signal instead of reading a palette
+  mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, the NTSC
+                      filter that decodes the signal instead of reading a palette, and the tube
+                      that lays the answer down between the lines of a raster
   mynes/palette/      the measured RGB tables, and the loader that reads them out of /palettes
 
 mynes-patch/          depends on nothing either, core included

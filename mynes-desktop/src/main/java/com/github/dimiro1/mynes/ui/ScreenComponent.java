@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
+import com.github.dimiro1.mynes.video.CRTScreen;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.NTSCFilter;
@@ -77,22 +78,52 @@ public class ScreenComponent extends JComponent {
     private int[] palette = Palettes.defaultPalette().colours();
 
     /**
-     * How the frame is coloured: through {@link #palette}, or by decoding the signal.
+     * How the frame is drawn: through {@link #palette}, by decoding the signal, or through the
+     * palette and onto a tube.
      */
     private VideoFilter videoFilter = VideoFilter.NONE;
 
     /**
-     * How much of the detail the decoder's chroma trap costs is given back. Kept beside the filter
-     * rather than only on the decoder, so that a window that has never switched to it still
-     * remembers what it was told.
+     * How hard whichever of the two filters is on is applied. Kept beside the filter rather than
+     * only on the decoder, so that a window that has never switched to either still remembers what
+     * it was told.
      */
     private FilterStrength filterStrength = FilterStrength.defaultStrength();
+
+    /**
+     * Whether the tube's glass is curved. Beside the strength and for the same reason: a window
+     * that is not showing a tube still remembers what it was told about one.
+     */
+    private boolean warp;
 
     /**
      * The composite decoder, built the first time somebody asks for it. A window that is never
      * switched to it should not carry its tables.
      */
     private @Nullable NTSCFilter ntsc;
+
+    /**
+     * The picture as a tube would have shown it, at the size the window is currently drawing, or
+     * null while nothing is asking for one.
+     * <p>
+     * A buffer of its own because this is the one filter whose answer depends on how big the
+     * picture is: {@link #image} is one pixel per pixel the chip drew, and a scanline lives between
+     * two rows of the picture <em>on screen</em>. So {@link CRTScreen} magnifies, masks and bends in
+     * one pass into here, and {@link Graphics2D} is handed the result rather than the frame.
+     * <p>
+     * Kept across frames because it is reallocated only when the window is resized. Touched only
+     * while painting, which is the event dispatch thread, so it is outside {@link #frameLock}.
+     */
+    private @Nullable BufferedImage tube;
+
+    private int @Nullable [] tubePixels;
+
+    /**
+     * The frame as {@link #colourise} left it, copied out from under {@link #frameLock} so that the
+     * tube pass -- which is a couple of milliseconds where the rest of a paint is microseconds --
+     * does not hold the emulation thread off while it runs.
+     */
+    private int @Nullable [] tubeSource;
 
     /**
      * Which of the three subcarrier alignments {@link #frame} was drawn at. Kept beside the frame
@@ -195,9 +226,12 @@ public class ScreenComponent extends JComponent {
                 return null;
             }
 
-            return videoFilter == VideoFilter.NTSC
-                    ? FrameRenderer.render(frame, ntsc(), framePhase, true, scale.factor())
-                    : FrameRenderer.render(frame, palette, true, scale.factor());
+            return switch (videoFilter) {
+                case NTSC -> FrameRenderer.render(frame, ntsc(), framePhase, true, scale.factor());
+                case CRT -> FrameRenderer.render(
+                        frame, palette, filterStrength, warp, true, scale.factor());
+                case NONE -> FrameRenderer.render(frame, palette, true, scale.factor());
+            };
         }
     }
 
@@ -216,14 +250,16 @@ public class ScreenComponent extends JComponent {
      * the emulator paused the picture behind the menu is the comparison, and there is no next frame
      * coming to apply the change to.
      * <p>
-     * Both at once rather than a setter each, because the window has one place that decides both
-     * and a picture redrawn twice for one menu click would be the decoder's two milliseconds paid
-     * for nothing.
+     * All three at once rather than a setter each, because the window has one place that decides
+     * all of them and a picture redrawn three times for one menu click would be the decoder's two
+     * milliseconds paid for twice over.
      */
-    public void setVideoFilter(final VideoFilter filter, final FilterStrength strength) {
+    public void setVideoFilter(
+            final VideoFilter filter, final FilterStrength strength, final boolean warp) {
         synchronized (frameLock) {
             this.videoFilter = filter;
             this.filterStrength = strength;
+            this.warp = warp;
 
             if (ntsc != null) {
                 ntsc.setStrength(strength);
@@ -262,6 +298,10 @@ public class ScreenComponent extends JComponent {
             return;
         }
 
+        // The tube comes through here too, and unchanged: what it does is a fact about the rows of
+        // the picture on screen rather than about the colour of a pixel, and this image is one
+        // pixel per pixel the chip drew. It is tubeAt that turns this into the other one, at the
+        // size the window is drawing, where those rows exist.
         for (var i = 0; i < pixels.length; i++) {
             pixels[i] = palette[frame[i]];
         }
@@ -299,13 +339,19 @@ public class ScreenComponent extends JComponent {
             var x = (getWidth() - width) / 2;
             var y = (getHeight() - height) / 2;
 
-            synchronized (frameLock) {
-                g2.drawImage(
-                        image,
-                        x, y, x + width, y + height,
-                        0, FrameRenderer.OVERSCAN_TOP,
-                        PPU.SCREEN_WIDTH, FrameRenderer.VISIBLE_BOTTOM,
-                        null);
+            var onATube = tubeAt(width, height);
+
+            if (onATube != null) {
+                g2.drawImage(onATube, x, y, null);
+            } else {
+                synchronized (frameLock) {
+                    g2.drawImage(
+                            image,
+                            x, y, x + width, y + height,
+                            0, FrameRenderer.OVERSCAN_TOP,
+                            PPU.SCREEN_WIDTH, FrameRenderer.VISIBLE_BOTTOM,
+                            null);
+                }
             }
 
             if (rewinding) {
@@ -315,6 +361,69 @@ public class ScreenComponent extends JComponent {
         } finally {
             g2.dispose();
         }
+    }
+
+    /**
+     * The picture as a tube would show it at this size, or null when a tube is not what is drawing.
+     * <p>
+     * Unlike the other two filters this one cannot be handed to {@link Graphics2D} to magnify:
+     * where a scanline goes is a question about the rows of the picture on screen, and a bent
+     * picture is not a rectangle for {@code drawImage} to stretch at all. So the whole picture is
+     * built here at the size it is going to be drawn -- magnification included -- and blitted one
+     * for one.
+     * <p>
+     * The magnification is a fraction whenever the window has been dragged to something that is not
+     * a multiple, and {@link CRTScreen} is built to answer for one, so the real number goes in
+     * rather than a rounded picture that would not line up with the pixels around it.
+     * <p>
+     * The frame is copied out from under {@link #frameLock} before the pass rather than the pass
+     * running inside it. The lock is otherwise held for tens of microseconds sixty times a second
+     * and this is a couple of milliseconds; holding it for that would be the emulation thread
+     * waiting on the drawing, which is the one thing the two buffers exist to avoid.
+     */
+    private @Nullable BufferedImage tubeAt(final int width, final int height) {
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+
+        var source = tubeSource;
+        FilterStrength strength;
+        boolean curved;
+
+        synchronized (frameLock) {
+            if (videoFilter != VideoFilter.CRT) {
+                return null;
+            }
+
+            if (source == null) {
+                source = new int[pixels.length];
+                tubeSource = source;
+            }
+
+            System.arraycopy(pixels, 0, source, 0, pixels.length);
+            strength = filterStrength;
+            curved = warp;
+        }
+
+        var target = tube;
+
+        if (target == null || target.getWidth() != width || target.getHeight() != height) {
+            target = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            tube = target;
+            tubePixels = ((DataBufferInt) target.getRaster().getDataBuffer()).getData();
+        }
+
+        CRTScreen.draw(
+                source,
+                FrameRenderer.OVERSCAN_TOP,
+                FrameRenderer.VISIBLE_HEIGHT,
+                tubePixels,
+                width,
+                height,
+                strength,
+                curved);
+
+        return target;
     }
 
     /**

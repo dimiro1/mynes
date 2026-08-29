@@ -275,12 +275,20 @@ public final class Report {
         video.put("palette", options.paletteFor(region).id());
         video.put("filter", session.filter().id());
 
-        // Explicitly null rather than absent when the palette is drawing, the way run.record and
-        // run.replay are: the question "how soft was this drawn" has an answer of "it was not".
-        if (session.filter() == VideoFilter.NTSC) {
+        // Explicitly null rather than absent when the bare palette is drawing, the way run.record
+        // and run.replay are: the question "how hard was the filter applied" has an answer of
+        // "there was none".
+        if (session.filter() != VideoFilter.NONE) {
             video.put("filterStrength", session.strength().id());
         } else {
             video.putNull("filterStrength");
+        }
+
+        // And the same again for the glass, which only the tube has.
+        if (session.filter() == VideoFilter.CRT) {
+            video.put("warp", session.warp());
+        } else {
+            video.putNull("warp");
         }
 
         video.put("overscan", options.fullFrame() ? "full" : "cropped");

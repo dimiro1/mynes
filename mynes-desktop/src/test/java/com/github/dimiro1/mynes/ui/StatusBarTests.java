@@ -42,6 +42,7 @@ class StatusBarTests {
         private boolean unlimitedSprites;
         private VideoFilter filter = VideoFilter.NONE;
         private FilterStrength strength = FilterStrength.defaultStrength();
+        private boolean warp;
         private String palette = "NESdev";
         private ScreenScale screenScale = ScreenScale.TWO_TIMES;
         private ScreenScale screenshotScale = ScreenScale.ONE_TIMES;
@@ -80,6 +81,11 @@ class StatusBarTests {
             return this;
         }
 
+        Setup behindCurvedGlass() {
+            this.warp = true;
+            return this;
+        }
+
         Setup colouredBy(final String palette) {
             this.palette = palette;
             return this;
@@ -102,8 +108,8 @@ class StatusBarTests {
 
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
-                    unlimitedSprites, filter, strength, palette, screenScale, screenshotScale,
-                    fastForward, rewindSeconds, muted);
+                    unlimitedSprites, filter, strength, warp, palette, screenScale,
+                    screenshotScale, fastForward, rewindSeconds, muted);
         }
     }
 
@@ -146,6 +152,49 @@ class StatusBarTests {
                     StatusBar.parts(setup()
                             .through(VideoFilter.NTSC)
                             .at(FilterStrength.LOW)
+                            .machine()));
+        }
+
+        /**
+         * The tube has a second qualifier, and the two share the brackets rather than taking one
+         * part each -- for the reason the strength does not take one of its own.
+         */
+        @Test
+        void theCurveOfTheGlassQualifiesTheTubeBesideTheStrength() {
+            assertEquals(
+                    List.of("NTSC", "CRT filter"),
+                    StatusBar.parts(setup().through(VideoFilter.CRT).machine()));
+
+            assertEquals(
+                    List.of("NTSC", "CRT filter (Curved)"),
+                    StatusBar.parts(setup()
+                            .through(VideoFilter.CRT)
+                            .behindCurvedGlass()
+                            .machine()));
+
+            assertEquals(
+                    List.of("NTSC", "CRT filter (Strong, Curved)"),
+                    StatusBar.parts(setup()
+                            .through(VideoFilter.CRT)
+                            .at(FilterStrength.STRONG)
+                            .behindCurvedGlass()
+                            .machine()));
+        }
+
+        /**
+         * And a glass nothing is drawing on says nothing, the way a strength does not.
+         */
+        @Test
+        void aCurveSaysNothingWhileSomethingElseIsDrawing() {
+            assertEquals(
+                    List.of("NTSC"),
+                    StatusBar.parts(setup().behindCurvedGlass().machine()));
+
+            assertEquals(
+                    List.of("NTSC", "NTSC filter"),
+                    StatusBar.parts(setup()
+                            .through(VideoFilter.NTSC)
+                            .behindCurvedGlass()
                             .machine()));
         }
 
@@ -331,7 +380,7 @@ class StatusBarTests {
 
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
                     "Unlimited sprites", "Video filter", "Filter strength", "Palette",
-                    "Screen size",
+                    "Curved glass", "Screen size",
                     "Screenshot size", "Fast forward speed", "Rewind history", "Sound"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
             }
@@ -368,7 +417,7 @@ class StatusBarTests {
         @Test
         void anUnfilteredPictureHasNoStrengthToReport() {
             assertTrue(StatusBar.detail(setup().machine())
-                    .contains("Filter strength&nbsp;&nbsp;&nbsp;</td><td>Not decoding"));
+                    .contains("Filter strength&nbsp;&nbsp;&nbsp;</td><td>No filter"));
 
             assertTrue(StatusBar.detail(
                             setup().through(VideoFilter.NTSC).at(FilterStrength.LOW).machine())
@@ -379,6 +428,33 @@ class StatusBarTests {
          * The same news the greyed-out Palette item carries: a decoder works its colours out of the
          * signal and never opens the table at all.
          */
+        @Test
+        void aTubeIsTheOneFilterWhoseGlassCanBeCurved() {
+            assertTrue(StatusBar.detail(setup().machine())
+                    .contains("Curved glass&nbsp;&nbsp;&nbsp;</td><td>No tube"));
+
+            assertTrue(StatusBar.detail(setup().through(VideoFilter.NTSC).machine())
+                    .contains("Curved glass&nbsp;&nbsp;&nbsp;</td><td>No tube"));
+
+            assertTrue(StatusBar.detail(setup().through(VideoFilter.CRT).machine())
+                    .contains("Curved glass&nbsp;&nbsp;&nbsp;</td><td>Off"));
+
+            assertTrue(StatusBar
+                    .detail(setup().through(VideoFilter.CRT).behindCurvedGlass().machine())
+                    .contains("Curved glass&nbsp;&nbsp;&nbsp;</td><td>On"));
+        }
+
+        /**
+         * The tube draws through the table like everything but the decoder, so it is the decoder
+         * alone that leaves the palette unread.
+         */
+        @Test
+        void aTubeStillNamesTheTableItIsDrawnThrough() {
+            assertTrue(StatusBar
+                    .detail(setup().colouredBy("NES Classic").through(VideoFilter.CRT).machine())
+                    .contains("NES Classic"));
+        }
+
         @Test
         void aFilteredPictureDoesNotConsultThePalette() {
             assertTrue(StatusBar.detail(setup().colouredBy("NES Classic").machine())

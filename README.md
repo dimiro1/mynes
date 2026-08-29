@@ -80,6 +80,7 @@ video.palette=nesdev
 video.palette.pal=2c07
 video.filter=none
 video.filter.strength=medium
+video.filter.warp=false
 video.scale=2
 video.screenshot.scale=1
 emulation.region=auto
@@ -140,20 +141,36 @@ it draws the waveform directly, out of twelve square waves at the colourburst ra
 rebuilds that waveform and decodes it the way a receiver did, slew and all: the 2C02's output
 impedance depends on the level it is driving, which rotates the hue of a colour with its row, and
 leaving that out puts every colour about seven degrees away from every palette here. The palette is
-not consulted while it is on, so **Settings > Palette...** is greyed out; and the filter is greyed
+not consulted while it is on, so **Settings > Palette...** is greyed out; and the item is greyed
 out itself on a PAL machine, whose 2C07 draws a different signal that would need a decoder of its
 own. Nothing measured moves -- the frame hash and the colour counts are taken over the colour
 indices the chip emits -- so it changes the picture and nothing else. `--filter ntsc` does the same
 from the command line.
 
-**Settings > Video Filter > Strength** says how soft it draws. Every receiver had to keep the
-subcarrier out of luma, and the bluntest way to do it is to average a whole colour cycle -- which
-takes every luma detail finer than that cycle down with the chroma, and is the whole of why a
-decoded picture is softer than a palette's. A television with a proper trap in it did not pay that
-price, so this is how much of the detail to give back: **Strong** is the bare average and the
+**A CRT filter**, from the same menu, which is the other half of the same television. A NES sends
+240 lines and never interlaces, into a set built to draw 480 of them -- so the beam lays down a
+line, skips the position the other field would have used, and lays down the next. The gaps are not
+a defect of the picture but half of the screen it was drawn on, and this puts them back. The colours
+are the palette's, unlike the decoder's, because a tube is not a rival answer to what colour entry
+$21 is; it is what happened to the answer afterwards. **Settings > Video Filter > Curved Glass**
+adds the bow the glass gave it, which cuts the corners off. Neither is the 2C02's, so both work on
+a PAL machine, and neither is measured -- like the decoder, this changes the picture and nothing
+else. `--filter crt` and `--warp` do the same from the command line.
+
+It needs somewhere to put a scanline. At **1x** there is one screen row per line and nowhere for the
+gap to go, so the mask fades away and the picture is the picture; drag the window past 2x and it
+fades back in. The command line, where the magnification is a number you typed rather than a corner
+you dragged, refuses `--filter crt` under `--scale 2` and says why.
+
+**Settings > Video Filter > Strength** says how hard whichever one is on is applied, and the two
+readings are not each other's. For the decoder it is how much of the fine detail to give back: every
+receiver had to keep the subcarrier out of luma, and the bluntest way to do it is to average a whole
+colour cycle -- which takes every luma detail finer than that cycle down with the chroma, and is the
+whole of why a decoded picture is softer than a palette's. **Strong** is that bare average and the
 softest of the three, **Low** is nearly as sharp as the palette and still bleeds its colours, and
-**Medium** is where it starts. The colours do not move at any of them -- only the detail between
-them. `--filter ntsc=low` does the same from the command line.
+**Medium** is where it starts; the colours do not move at any of them, only the detail between them.
+For the tube it is how dark the gaps go, so **Strong** is the most visible mask rather than the
+least. `--filter ntsc=low` and `--filter crt=strong` do the same from the command line.
 
 **Screen size** at 1x, 2x, 3x or 4x of the 256x224 picture, from **Settings > Screen Size**, which
 packs the window around it. Whole multiples only, so every NES pixel comes out the same size as
@@ -173,7 +190,7 @@ the window has been dragged to, and it works on a machine that is paused or stop
 cannot show you by being looked at: how many frames a second the machine is really getting through,
 which console it is, and every setting that is not the ordinary one — the overclock as the
 percentage the menu offered, how many Game Genie codes are in the slot, whether the sound is muted,
-unlimited sprites, the NTSC filter, a screenshot size that is not 1x. It fits as many of those as
+unlimited sprites, whichever video filter is on, a screenshot size that is not 1x. It fits as many of those as
 the window is wide enough for, in that order, and says how many it could not: `NTSC · Overclock
 +50% · 3 Genie codes · +3 ⓘ`. Hovering gives the rest, and gives it in full — every setting,
 including the ones nobody has touched, down to the palette in use and how many seconds of rewind are
@@ -401,6 +418,12 @@ seconds to start up, the jar about a third of one.
   only the PNGs differ. `--filter ntsc=low`, `=medium` or `=strong` says how much of the fine detail
   the decoder's chroma trap costs to give back; `filter` is a command in the interactive session
   too, and takes the strength as a second word.
+- **`--filter crt`** is the other half of the same television: the palette as usual, put on screen
+  the way a tube put it there, with the unlit half of the raster between the lines. `--warp` adds the
+  bow of the glass, which cuts the corners off. Either console, and neither is measured either. It
+  needs `--scale 2` or more -- a scanline is the row a line was not drawn on, and 1x has one row per
+  line -- and asking for less is exit 2 rather than a filter that quietly draws nothing. `filter crt`
+  and `warp on|off` are the interactive session's.
 - **`--region ntsc|pal`** overrides what the cartridge's header asks for. Two runs in different
   regions are not two measurements of the same thing — a frame is 106392 dots on one machine and
   89342 on the other — so `run.region` in the report is part of what to check before diffing them.

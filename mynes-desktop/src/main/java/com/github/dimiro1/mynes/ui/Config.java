@@ -42,6 +42,7 @@ public final class Config {
     private static final String PALETTE_KEY = "video.palette";
     private static final String FILTER_KEY = "video.filter";
     private static final String FILTER_STRENGTH_KEY = "video.filter.strength";
+    private static final String FILTER_WARP_KEY = "video.filter.warp";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -94,16 +95,23 @@ public final class Config {
             """;
 
     private static final String FILTER_HEADER = """
-            # How a frame becomes colours: none to look each pixel up in the palette above, or
-            # ntsc to rebuild the composite signal the chip drew and decode it, which is where
-            # colour bleed, dot crawl and artefact colours come from. The palette is not consulted
-            # while ntsc is set, and it is ignored on a PAL machine, whose signal is a different
-            # signal. Settings > Video Filter is the same setting.
+            # How a frame becomes a picture: none to look each pixel up in the palette above, ntsc
+            # to rebuild the composite signal the chip drew and decode it, which is where colour
+            # bleed, dot crawl and artefact colours come from, or crt to look the pixel up as usual
+            # and then lay it down the way a picture tube did, with the unlit half of the raster
+            # between the lines. The palette is not consulted while ntsc is set, and ntsc is ignored
+            # on a PAL machine, whose signal is a different signal; crt is every machine's.
+            # Settings > Video Filter is the same setting.
             #
-            # video.filter.strength is how soft it draws: low, medium or strong. Keeping the
-            # subcarrier out of luma is what costs the picture its fine detail, and this is how
-            # much of it to give back -- so strong is the plain cycle-wide average and the softest
-            # of the three, and low is a good television's trap and nearly as sharp as the palette.
+            # video.filter.strength is how hard it is applied: low, medium or strong. For ntsc that
+            # is how much of the fine detail to give back -- keeping the subcarrier out of luma is
+            # what costs the picture its detail, so strong is the plain cycle-wide average and the
+            # softest of the three, and low is a good television's trap and nearly as sharp as the
+            # palette. For crt it is how dark the gaps between the lines go, so strong is the most
+            # visible mask.
+            #
+            # video.filter.warp bends the picture the way the curve of a tube's glass bent it,
+            # which cuts the corners off. It belongs to crt and does nothing beside the other two.
             """;
 
     private static final String SCALE_HEADER = """
@@ -174,6 +182,7 @@ public final class Config {
     private NESPalette palPalette;
     private VideoFilter videoFilter;
     private FilterStrength filterStrength;
+    private boolean warp;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private boolean statusBar;
@@ -191,6 +200,7 @@ public final class Config {
             final NESPalette palPalette,
             final VideoFilter videoFilter,
             final FilterStrength filterStrength,
+            final boolean warp,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final boolean statusBar,
@@ -206,6 +216,7 @@ public final class Config {
         this.palPalette = palPalette;
         this.videoFilter = videoFilter;
         this.filterStrength = filterStrength;
+        this.warp = warp;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.statusBar = statusBar;
@@ -247,6 +258,7 @@ public final class Config {
                 paletteFrom(properties, PAL_PALETTE_KEY, Region.PAL),
                 videoFilterFrom(properties),
                 filterStrengthFrom(properties),
+                flagFrom(properties, FILTER_WARP_KEY),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 statusBarFrom(properties),
@@ -444,6 +456,10 @@ public final class Config {
                 .append(FILTER_STRENGTH_KEY)
                 .append('=')
                 .append(filterStrength.id())
+                .append('\n')
+                .append(FILTER_WARP_KEY)
+                .append('=')
+                .append(warp)
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
@@ -557,9 +573,9 @@ public final class Config {
     }
 
     /**
-     * How much of the detail the decoder's chroma trap costs it gives back. Remembered even while
-     * the palette is drawing, because it is a preference about the decoder rather than a fact about
-     * the picture -- the same reason the NTSC filter itself keeps its tick on a PAL machine.
+     * How hard whichever filter is on is applied. Remembered even while the bare palette is
+     * drawing, because it is a preference about the filters rather than a fact about the picture --
+     * the same reason the NTSC filter itself keeps its tick on a PAL machine.
      */
     public FilterStrength filterStrength() {
         return filterStrength;
@@ -567,6 +583,18 @@ public final class Config {
 
     public void setFilterStrength(final FilterStrength filterStrength) {
         this.filterStrength = filterStrength;
+    }
+
+    /**
+     * Whether the tube's glass is curved. Remembered while something else is drawing, for the
+     * reason the strength is.
+     */
+    public boolean warp() {
+        return warp;
+    }
+
+    public void setWarp(final boolean warp) {
+        this.warp = warp;
     }
 
     /**
