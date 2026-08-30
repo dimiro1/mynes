@@ -116,7 +116,7 @@ class OverclockRunTests {
 
         // Within one either way: the run stops mid-lap, so whether the last change landed inside
         // the frame count depends on where the beam was when it did.
-        assertEquals(PLAYED / 2, plain, 1.0, "one change of colour per finished lap");
+        assertEquals(PLAYED / 2.0, plain, 1.0, "one change of colour per finished lap");
         assertEquals(PLAYED, overclocked, 1.0, "and twice as many laps finished");
     }
 

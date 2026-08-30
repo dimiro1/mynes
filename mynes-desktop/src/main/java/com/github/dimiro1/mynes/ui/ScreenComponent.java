@@ -25,10 +25,10 @@ import java.awt.image.DataBufferInt;
  * anything having to remember to re-apply it.
  * <p>
  * Two threads meet here. The emulation thread hands over a finished frame through
- * {@link #present(int[])}, the event dispatch thread paints it, and a lock covers both buffers so
- * that a paint never catches a half copied picture. The lock is held for an arraycopy of 240KB and
- * 61440 array lookups, sixty times a second -- tens of microseconds, so neither side waits for
- * long.
+ * {@link #present(int[], int)}, the event dispatch thread paints it, and a lock covers both
+ * buffers so that a paint never catches a half copied picture. The lock is held for an arraycopy
+ * of 240KB and 61440 array lookups, sixty times a second -- tens of microseconds, so neither side
+ * waits for long.
  * <p>
  * The picture is cropped, by {@link FrameRenderer#OVERSCAN_TOP} and its neighbours, which is also
  * where the reason for it is written down.
@@ -187,10 +187,10 @@ public class ScreenComponent extends JComponent {
     /**
      * Draws the rewind marker over the picture, or stops.
      * <p>
-     * Called from the emulation thread, like {@link #present(int[])}, and by the same rule: that is
-     * the thread that knows whether the machine is actually going backwards, which is not the same
-     * question as whether the key is down -- a paused machine, or a history that has run out, is
-     * a key held with nothing happening.
+     * Called from the emulation thread, like {@link #present(int[], int)}, and by the same rule:
+     * that is the thread that knows whether the machine is actually going backwards, which is not
+     * the same question as whether the key is down -- a paused machine, or a history that has run
+     * out, is a key held with nothing happening.
      * <p>
      * Over the picture rather than in it. What the PPU drew is what the PPU drew, and a marker
      * painted into the framebuffer would end up in screenshots and in the frame hashes, where it
@@ -236,14 +236,6 @@ public class ScreenComponent extends JComponent {
     }
 
     /**
-     * Draws everything from now on in {@code palette}, including the frame already on screen.
-     * <p>
-     * Called on the event dispatch thread, which is what makes flicking through the palettes a
-     * live comparison: the picture behind the dialog changes on every selection, and it changes
-     * even with the emulator paused, because the recolouring works from the frame that is already
-     * here rather than from the next one.
-     */
-    /**
      * Colours everything from now on with {@code filter}, including the frame already on screen.
      * <p>
      * Called on the event dispatch thread, like {@link #setPalette}, and for the same reason: with
@@ -271,6 +263,14 @@ public class ScreenComponent extends JComponent {
         repaint();
     }
 
+    /**
+     * Draws everything from now on in {@code palette}, including the frame already on screen.
+     * <p>
+     * Called on the event dispatch thread, which is what makes flicking through the palettes a
+     * live comparison: the picture behind the dialog changes on every selection, and it changes
+     * even with the emulator paused, because the recolouring works from the frame that is already
+     * here rather than from the next one.
+     */
     public void setPalette(final NESPalette palette) {
         synchronized (frameLock) {
             this.palette = palette.colours();

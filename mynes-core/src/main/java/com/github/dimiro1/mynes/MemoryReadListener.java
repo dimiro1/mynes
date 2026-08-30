@@ -18,8 +18,8 @@ package com.github.dimiro1.mynes;
  * reads here" are different questions, and only one of them is answered by watching the bus.
  * <p>
  * The same hole as the write side, for the same reason: this sees what {@link MMU#read} carries,
- * which is the processor's own reads. An OAM transfer reads through {@link MMU#tickDMA} and a DMC
- * sample fetch through the same path, neither of which is the CPU driving the address.
+ * which is the processor's own reads. An OAM transfer reads through {@link MMU#beginDMACycle} and
+ * a DMC sample fetch through the same path, neither of which is the CPU driving the address.
  *
  * @see MemoryWriteListener
  */

@@ -247,7 +247,7 @@ final class Json {
                     out.append(':').append('\n');
                     child.writeText(out, depth + 1);
                 } else {
-                    out.append(" ".repeat(width - entry.getKey().length())).append(": ");
+                    out.repeat(' ', width - entry.getKey().length()).append(": ");
                     entry.getValue().writeInline(out);
                 }
             }
@@ -344,7 +344,7 @@ final class Json {
     }
 
     private static void newline(final StringBuilder out, final int depth) {
-        out.append('\n').append(" ".repeat(INDENT * depth));
+        out.append('\n').repeat(' ', INDENT * depth);
     }
 
     /**

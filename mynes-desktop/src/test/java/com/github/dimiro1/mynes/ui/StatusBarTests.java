@@ -44,9 +44,9 @@ class StatusBarTests {
         private FilterStrength strength = FilterStrength.defaultStrength();
         private boolean warp;
         private String palette = "NESdev";
-        private ScreenScale screenScale = ScreenScale.TWO_TIMES;
+        private final ScreenScale screenScale = ScreenScale.TWO_TIMES;
         private ScreenScale screenshotScale = ScreenScale.ONE_TIMES;
-        private EmulationSpeed fastForward = EmulationSpeed.FOUR_TIMES;
+        private final EmulationSpeed fastForward = EmulationSpeed.FOUR_TIMES;
         private int rewindSeconds = 30;
         private boolean muted;
 

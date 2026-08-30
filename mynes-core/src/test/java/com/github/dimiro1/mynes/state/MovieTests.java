@@ -469,7 +469,7 @@ class MovieTests {
         var file = recorded(30);
 
         // Well inside the gzipped body, so the CRC32 at the end of it catches this.
-        file[Movie.HEADER_BYTES + 20] ^= 0xFF;
+        file[Movie.HEADER_BYTES + 20] ^= (byte) 0xFF;
 
         assertThrows(MovieException.class, () -> Movie.read(new ByteArrayInputStream(file)));
     }

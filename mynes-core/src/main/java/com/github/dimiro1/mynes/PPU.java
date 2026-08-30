@@ -1444,7 +1444,6 @@ public class PPU {
                 case Y_POSITION -> evaluateYPosition(full);
                 case TILE, ATTRIBUTES -> copyByte(full);
                 case X_POSITION -> evaluateXPosition(full);
-                case FINISHED -> { }
             }
         }
 

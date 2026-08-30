@@ -218,7 +218,7 @@ public final class Rewind {
         // back goes past the entry that no longer describes anything rather than onto it.
         var pastTheTop = nes.getPPU().getFrame() > newestFrame;
 
-        var moved = Math.min(Math.max(steps, 0), rewindable() + (pastTheTop ? 1 : 0));
+        var moved = Math.clamp(steps, 0, rewindable() + (pastTheTop ? 1 : 0));
 
         if (moved == 0) {
             return 0;

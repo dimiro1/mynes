@@ -47,11 +47,6 @@ class FrameRendererTests {
     }
 
     /**
-     * The emphasis bits sit above the colour index, so entry 0x21 and entry 0x61 are the same
-     * colour with one of them dimmed. Getting this wrong would show up as a picture that ignored
-     * $2001 entirely.
-     */
-    /**
      * The other overload, which takes a decoder in place of the palette. What it shares with the
      * palette one is everything below the colours -- the crop, the magnification, the size of the
      * picture -- and that is what is checked here; what the decoder itself does is
@@ -130,6 +125,11 @@ class FrameRendererTests {
         assertEquals(PPU.SCREEN_HEIGHT * 2, full.getHeight());
     }
 
+    /**
+     * The emphasis bits sit above the colour index, so entry 0x21 and entry 0x61 are the same
+     * colour with one of them dimmed. Getting this wrong would show up as a picture that ignored
+     * $2001 entirely.
+     */
     @Test
     void emphasisPicksTheDimmedCopyOfTheColour() {
         var plain = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1).getRGB(0, 0);

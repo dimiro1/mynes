@@ -13,6 +13,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -58,6 +59,19 @@ class ScreenComponentTests {
         }
 
         return target;
+    }
+
+    /**
+     * The snapshot, insisted upon. It answers null only for a component that has never been given
+     * a frame -- which every caller here has done first, so a null is the test's own setup having
+     * gone wrong, and saying that is better than an NPE three lines further on.
+     */
+    private static BufferedImage snapshotOf(final ScreenComponent screen, final ScreenScale scale) {
+        var image = screen.snapshot(scale);
+
+        assertNotNull(image, "the component was given a frame and still drew nothing");
+
+        return image;
     }
 
     /**
@@ -190,12 +204,12 @@ class ScreenComponentTests {
 
         screen.present(frameOf(0x21), 0);
 
-        var throughThePalette = screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0);
+        var throughThePalette = snapshotOf(screen, ScreenScale.ONE_TIMES).getRGB(0, 0);
 
         screen.setVideoFilter(VideoFilter.NTSC, FilterStrength.defaultStrength(), false);
 
         assertNotEquals(
-                throughThePalette, screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0));
+                throughThePalette, snapshotOf(screen, ScreenScale.ONE_TIMES).getRGB(0, 0));
     }
 
     /**
@@ -252,11 +266,11 @@ class ScreenComponentTests {
 
         screen.present(frameOf(0x20), 0);
 
-        var plain = screen.snapshot(ScreenScale.TWO_TIMES);
+        var plain = snapshotOf(screen, ScreenScale.TWO_TIMES);
 
         screen.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, false);
 
-        var tube = screen.snapshot(ScreenScale.TWO_TIMES);
+        var tube = snapshotOf(screen, ScreenScale.TWO_TIMES);
 
         assertTrue((tube.getRGB(0, 0) & 0xFF) < (plain.getRGB(0, 0) & 0xFF));
         assertTrue((tube.getRGB(0, 1) & 0xFF) < (tube.getRGB(0, 0) & 0xFF),
@@ -274,7 +288,7 @@ class ScreenComponentTests {
         screen.present(frameOf(0x20), 0);
         screen.setVideoFilter(VideoFilter.CRT, FilterStrength.MEDIUM, true);
 
-        var tube = screen.snapshot(ScreenScale.FOUR_TIMES);
+        var tube = snapshotOf(screen, ScreenScale.FOUR_TIMES);
 
         assertEquals(0xFF000000, tube.getRGB(0, 0));
         assertNotEquals(0xFF000000, tube.getRGB(tube.getWidth() / 2, tube.getHeight() / 2));
@@ -378,7 +392,7 @@ class ScreenComponentTests {
         screen.present(frameOf(0x21), 0);
         screen.setRewinding(true);
 
-        var snapshot = screen.snapshot(ScreenScale.ONE_TIMES);
+        var snapshot = snapshotOf(screen, ScreenScale.ONE_TIMES);
 
         assertEquals(
                 0,
@@ -391,7 +405,7 @@ class ScreenComponentTests {
         var screen = new ScreenComponent();
         screen.present(frameOf(0x21), 0);
 
-        var image = screen.snapshot(ScreenScale.TWO_TIMES);
+        var image = snapshotOf(screen, ScreenScale.TWO_TIMES);
 
         assertEquals(PPU.SCREEN_WIDTH * 2, image.getWidth());
         assertEquals(VISIBLE_HEIGHT * 2, image.getHeight());
@@ -409,7 +423,7 @@ class ScreenComponentTests {
         Arrays.fill(frame, 0, OVERSCAN_TOP * PPU.SCREEN_WIDTH, 0x11);
         screen.present(frame, 0);
 
-        var image = screen.snapshot(ScreenScale.ONE_TIMES);
+        var image = snapshotOf(screen, ScreenScale.ONE_TIMES);
 
         assertEquals(
                 Palettes.defaultPalette().colour(0x21) & 0xFFFFFF,
@@ -426,7 +440,7 @@ class ScreenComponentTests {
         // none of that may reach it.
         screen.setSize(517, 300);
 
-        var image = screen.snapshot(ScreenScale.ONE_TIMES);
+        var image = snapshotOf(screen, ScreenScale.ONE_TIMES);
 
         assertEquals(PPU.SCREEN_WIDTH, image.getWidth());
         assertEquals(VISIBLE_HEIGHT, image.getHeight());
@@ -442,7 +456,7 @@ class ScreenComponentTests {
 
         assertEquals(
                 classic.colour(0x21) & 0xFFFFFF,
-                screen.snapshot(ScreenScale.ONE_TIMES).getRGB(0, 0) & 0xFFFFFF);
+                snapshotOf(screen, ScreenScale.ONE_TIMES).getRGB(0, 0) & 0xFFFFFF);
     }
 
     @Test

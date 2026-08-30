@@ -1883,8 +1883,9 @@ public class GameUIFrame extends JFrame {
      * The menu's way in: load a cartridge, and tell the player if it will not load.
      * <p>
      * A dialog rather than a log line, because the player has just picked the file out of a chooser
-     * and is owed an answer about it. Everything {@link Cart#load} and {@link IPSPatch#read} throw is
-     * unchecked, so the two are caught together and the machine already running is left alone.
+     * and is owed an answer about it. Everything {@link Cart#load} and
+     * {@link IPSPatch#read(byte[], String)} throw is unchecked, so the two are caught together and
+     * the machine already running is left alone.
      */
     private void open(final File rom, final File patch) {
         try {

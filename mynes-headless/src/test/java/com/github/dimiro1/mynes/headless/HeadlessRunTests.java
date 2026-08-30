@@ -576,7 +576,7 @@ class HeadlessRunTests {
 
         run("--hack", "overclock=30");
 
-        assertEquals(plain + 60L * 30 * 341 / 3, report().at("/run/cpuCycles").asLong(), 2.0);
+        assertEquals(plain + 60 * 30 * 341 / 3.0, report().at("/run/cpuCycles").asLong(), 2.0);
     }
 
     /**
@@ -955,7 +955,7 @@ class HeadlessRunTests {
     }
 
     @Test
-    void aMovieFromAnotherCartridgeExitsTwo() throws Exception {
+    void aMovieFromAnotherCartridgeExitsTwo() {
         var take = out.resolve("take.mnm");
         run("--frames", "20", "--record", take.toString());
 

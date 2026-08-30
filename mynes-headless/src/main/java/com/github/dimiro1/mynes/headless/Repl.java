@@ -752,19 +752,6 @@ public final class Repl {
     }
 
     /**
-     * Switches one of the things the console does not do on, mid-session -- or, for the one that
-     * takes a number, sets how much of it.
-     * <p>
-     * Worth having as a command rather than only as a flag because the difference a hack makes is
-     * something to look at: run to the frame the sprites flicker on, turn it on, take a screenshot,
-     * turn it off, take another. Nothing about the machine changes for that one, so the two pictures
-     * are of the same moment.
-     * <p>
-     * The overclock is not like that, and the command is here for a different reason. It changes the
-     * machine's timing, so the frame after it is set is not the frame that would have been drawn --
-     * what a session is for is watching a game that lags stop lagging, at whatever setting it takes.
-     */
-    /**
      * Says how screenshots are being drawn, or changes it.
      * <p>
      * The shape of {@code hack} rather than of {@code genie}: a filter is switched rather than put
@@ -873,6 +860,19 @@ public final class Repl {
         return wanted;
     }
 
+    /**
+     * Switches one of the things the console does not do on, mid-session -- or, for the one that
+     * takes a number, sets how much of it.
+     * <p>
+     * Worth having as a command rather than only as a flag because the difference a hack makes is
+     * something to look at: run to the frame the sprites flicker on, turn it on, take a screenshot,
+     * turn it off, take another. Nothing about the machine changes for that one, so the two pictures
+     * are of the same moment.
+     * <p>
+     * The overclock is not like that, and the command is here for a different reason. It changes the
+     * machine's timing, so the frame after it is set is not the frame that would have been drawn --
+     * what a session is for is watching a game that lags stop lagging, at whatever setting it takes.
+     */
     private void hack(final String[] words) {
         if (words.length < 2) {
             throw new UsageException(
