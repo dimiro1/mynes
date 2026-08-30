@@ -1064,7 +1064,7 @@ class ReplTests {
         var first = Files.readAllLines(path).getFirst();
 
         assertTrue(
-                first.matches("^[0-9A-F]{4}  .{8}  .{32}"
+                first.matches("^[0-9A-F]{4} {2}.{8} {2}.{32}"
                         + "A:[0-9A-F]{2} X:[0-9A-F]{2} Y:[0-9A-F]{2} P:[0-9A-F]{2}"
                         + " SP:[0-9A-F]{2} PPU:.{3},.{3} CYC:\\d+$"),
                 first);

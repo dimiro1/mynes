@@ -133,12 +133,6 @@ public final class OAMViewerFrame extends JFrame {
     }
 
     /**
-     * One sweep: the 256 bytes, then the 64 tiles they name.
-     * <p>
-     * Read in one pass and drawn from that copy rather than read again per column, so that every
-     * row of the table describes one moment of the machine rather than four.
-     */
-    /**
      * One tick of the refresh timer, which does nothing at all while the window is put away. The
      * first draw goes through {@link #refresh()} directly instead: a window that waited for the
      * timer would come up empty for a quarter of a second, and one painted into an image without
@@ -150,6 +144,12 @@ public final class OAMViewerFrame extends JFrame {
         }
     }
 
+    /**
+     * One sweep: the 256 bytes, then the 64 tiles they name.
+     * <p>
+     * Read in one pass and drawn from that copy rather than read again per column, so that every
+     * row of the table describes one moment of the machine rather than four.
+     */
     private void refresh() {
         for (var i = 0; i < bytes.length; i++) {
             bytes[i] = ppu.peekOAM(i);

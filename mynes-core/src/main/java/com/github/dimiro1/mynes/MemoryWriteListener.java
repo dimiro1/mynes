@@ -5,10 +5,10 @@ package com.github.dimiro1.mynes;
  * <p>
  * The one hole worth knowing about: this sees writes the <em>CPU</em> makes, because {@link MMU}'s
  * write is the only way one gets onto the bus. A sprite DMA does not pass through it -- it copies
- * into OAM by calling the PPU directly, 256 times, from inside {@link MMU#tickDMA} -- and neither do
- * the PPU's own writes into video memory. A watch on $2004 will not fire during a DMA. Closing that
- * would mean a hook inside a five hundred cycle transfer loop, which is a high price for a question
- * nobody has asked yet.
+ * into OAM by calling the PPU directly, 256 times, from inside {@link MMU#beginDMACycle} -- and
+ * neither do the PPU's own writes into video memory. A watch on $2004 will not fire during a DMA.
+ * Closing that would mean a hook inside a five hundred cycle transfer loop, which is a high price
+ * for a question nobody has asked yet.
  *
  * @see CPUEventListener
  */

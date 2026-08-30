@@ -166,7 +166,7 @@ class NTSCFilterTests {
             var pixels = filter.colourise(frame, 0);
             var here = luma(pixels[MIDDLE]);
             var spread = here + luma(pixels[MIDDLE - 1]) + luma(pixels[MIDDLE + 1]);
-            var kept = (double) here / spread;
+            var kept = here / spread;
 
             assertTrue(
                     kept > previous,

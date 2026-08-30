@@ -67,7 +67,7 @@ final class StatusBar extends JPanel {
      * in every system font worth the name, but a machine whose default font has not got it would
      * otherwise draw the one thing on the bar that says "there is more here" as an empty box.
      */
-    private static final char INFO = '\u24D8';
+    private static final char INFO = 'ⓘ';
     private static final String ASCII_INFO = "(i)";
 
     /**
@@ -215,7 +215,7 @@ final class StatusBar extends JPanel {
     }
 
     /**
-     * The rate as the bar spells it. Package-private and static for the reason {@link #describe}
+     * The rate as the bar spells it. Package-private and static for the reason {@link #parts}
      * is: what the bar says is worth checking without a window to say it in.
      */
     static String describeRate(final int fps) {
