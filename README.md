@@ -87,6 +87,8 @@ rewind off — that one has no menu item, so the file is where it lives.
   video, so it is a few kilobytes a minute and replays byte for byte.
 - IPS patches via **File > Open with Patch...**. The patch is applied in memory, the ROM on disk
   is never touched, and a patched game keeps its own saves.
+- The last ten games you opened, under **File > Open Recent**. One opened with a patch comes back
+  patched, and anything whose file has moved is greyed out rather than dropped.
 - Game Genie codes from the **Hacks** menu. Nothing is patched — the codes answer the bus the way
   the real device did.
 

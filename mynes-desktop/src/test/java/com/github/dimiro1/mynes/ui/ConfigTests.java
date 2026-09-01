@@ -16,6 +16,7 @@ import java.awt.event.KeyEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -48,6 +49,16 @@ class ConfigTests {
 
     private Path write(final String contents) throws IOException {
         return Files.writeString(config(), contents);
+    }
+
+    /**
+     * A game somewhere under the temporary directory, which is what makes the paths in these tests
+     * absolute on whichever machine they run on: {@link RecentRom} makes every path absolute, so a
+     * relative one would come back joined to the working directory and compare equal to nothing
+     * anybody wrote down.
+     */
+    private RecentRom game(final String name) {
+        return new RecentRom(directory.resolve(name), null);
     }
 
     @Nested
@@ -498,6 +509,173 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the recent games")
+    class LoadingRecent {
+        @Test
+        void aMissingFileHasOpenedNothing() {
+            assertEquals(List.of(),
+                    Config.load(directory.resolve("not-there.properties")).recentRoms());
+        }
+
+        @Test
+        void theyComeBackInTheOrderTheyAreNumbered() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/a.nes
+                    recent.2=/roms/b.nes
+                    """)).recentRoms();
+
+            assertEquals(
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), null),
+                            new RecentRom(Path.of("/roms/b.nes"), null)),
+                    loaded);
+        }
+
+        /**
+         * Deleting the line is how a game is taken off the menu by hand, and renumbering the rest
+         * is not something anybody should have to do afterwards.
+         */
+        @Test
+        void aDeletedLineIsSteppedOverRatherThanEndingTheList() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/a.nes
+                    recent.3=/roms/c.nes
+                    """)).recentRoms();
+
+            assertEquals(
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), null),
+                            new RecentRom(Path.of("/roms/c.nes"), null)),
+                    loaded);
+        }
+
+        @Test
+        void anEmptyEntryIsNotAGame() throws IOException {
+            assertEquals(List.of(), Config.load(write("recent.1=\n")).recentRoms());
+        }
+
+        @Test
+        void aGameNamedTwiceIsListedOnce() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/a.nes
+                    recent.2=/roms/a.nes
+                    """)).recentRoms();
+
+            assertEquals(List.of(new RecentRom(Path.of("/roms/a.nes"), null)), loaded);
+        }
+
+        @Test
+        void aPatchIsRememberedWithItsCartridge() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/a.nes
+                    recent.1.patch=/hacks/a.ips
+                    """)).recentRoms();
+
+            assertEquals(
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), Path.of("/hacks/a.ips"))),
+                    loaded);
+        }
+
+        /**
+         * A patch is something applied to a cartridge, so an entry naming one and no cartridge is
+         * not half an entry -- it is nothing at all.
+         */
+        @Test
+        void aPatchWithNoCartridgeIsNoGame() throws IOException {
+            assertEquals(List.of(), Config.load(write("recent.1.patch=/hacks/a.ips\n")).recentRoms());
+        }
+
+        /**
+         * The one entry in the file that can name something the platform will not even accept as a
+         * name. It costs its own line, the way every other unreadable entry costs its own setting.
+         */
+        @Test
+        void somethingThatIsNotAPathCostsOnlyItsOwnEntry() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=\\u0000
+                    recent.2=/roms/b.nes
+                    """)).recentRoms();
+
+            assertEquals(List.of(new RecentRom(Path.of("/roms/b.nes"), null)), loaded);
+        }
+
+        @Test
+        void tenIsAsFarAsItReads() throws IOException {
+            var text = new StringBuilder();
+
+            for (var n = 1; n <= 14; n++) {
+                text.append("recent.").append(n).append("=/roms/").append(n).append(".nes\n");
+            }
+
+            assertEquals(10, Config.load(write(text.toString())).recentRoms().size());
+        }
+    }
+
+    @Nested
+    @DisplayName("the recent games")
+    class Recent {
+        @Test
+        void theNewestIsFirst() {
+            var config = Config.load(config());
+            config.addRecentRom(game("a.nes"));
+            config.addRecentRom(game("b.nes"));
+
+            assertEquals(List.of(game("b.nes"), game("a.nes")), config.recentRoms());
+        }
+
+        /**
+         * The whole behaviour of the menu: the same few games are opened over and over, and a list
+         * that let each of them in ten times would be a list holding one game.
+         */
+        @Test
+        void openingAGameAgainMovesItUpRatherThanAddingIt() {
+            var config = Config.load(config());
+            config.addRecentRom(game("a.nes"));
+            config.addRecentRom(game("b.nes"));
+            config.addRecentRom(game("a.nes"));
+
+            assertEquals(List.of(game("a.nes"), game("b.nes")), config.recentRoms());
+        }
+
+        /**
+         * Because a hack is a different game from the cartridge it was cut against, which is the
+         * same thing the save states say when they are named after the patch.
+         */
+        @Test
+        void aPatchedGameIsNotTheSameGameUnpatched() {
+            var patched = new RecentRom(directory.resolve("a.nes"), directory.resolve("a.ips"));
+
+            var config = Config.load(config());
+            config.addRecentRom(game("a.nes"));
+            config.addRecentRom(patched);
+
+            assertEquals(List.of(patched, game("a.nes")), config.recentRoms());
+        }
+
+        @Test
+        void theOldestFallsOffTheEndAtTen() {
+            var config = Config.load(config());
+
+            for (var n = 1; n <= 14; n++) {
+                config.addRecentRom(game(n + ".nes"));
+            }
+
+            var recent = config.recentRoms();
+
+            assertEquals(10, recent.size());
+            assertEquals(game("14.nes"), recent.getFirst());
+            assertEquals(game("5.nes"), recent.getLast());
+        }
+
+        @Test
+        void clearingLeavesNothing() {
+            var config = Config.load(config());
+            config.addRecentRom(game("a.nes"));
+            config.clearRecentRoms();
+
+            assertEquals(List.of(), config.recentRoms());
+        }
+    }
+
+    @Nested
     @DisplayName("saving")
     class Saving {
         @Test
@@ -632,6 +810,64 @@ class ConfigTests {
         }
 
         @Test
+        void theRecentGamesSurviveTheRoundTrip() throws IOException {
+            var patched = new RecentRom(directory.resolve("a.nes"), directory.resolve("a.ips"));
+
+            var config = Config.load(config());
+            config.addRecentRom(game("b.nes"));
+            config.addRecentRom(patched);
+            config.save(config());
+
+            assertEquals(List.of(patched, game("b.nes")), Config.load(config()).recentRoms());
+        }
+
+        /**
+         * Properties reads a backslash as an escape character, so a Windows path written straight
+         * out comes back as C:romsgame.nes -- a path that is not the game's and is not anybody's.
+         */
+        @Test
+        void aBackslashInAPathSurvivesTheRoundTrip() throws IOException {
+            var game = new RecentRom(directory.resolve("C:\\roms\\game.nes"), null);
+
+            var config = Config.load(config());
+            config.addRecentRom(game);
+            config.save(config());
+
+            assertEquals(List.of(game), Config.load(config()).recentRoms());
+        }
+
+        /**
+         * The file is written as Latin-1, which is what Properties reads. A Japanese filename does
+         * not fit in it, so without the escaping this does not come back wrong -- the write throws
+         * and no file is left behind at all, so it takes every other setting in the save with it.
+         */
+        @Test
+        void aPathOutsideLatinOneSurvivesTheRoundTrip() throws IOException {
+            var game = game("\u30C9\u30E9\u3048\u3082\u3093.nes");
+
+            var config = Config.load(config());
+            config.addRecentRom(game);
+            config.save(config());
+
+            assertEquals(List.of(game), Config.load(config()).recentRoms());
+        }
+
+        /**
+         * A filename may hold one on every platform this runs on, and a value split over two lines
+         * is a file that will not read back.
+         */
+        @Test
+        void aTabInAPathSurvivesTheRoundTrip() throws IOException {
+            var game = game("two\twords.nes");
+
+            var config = Config.load(config());
+            config.addRecentRom(game);
+            config.save(config());
+
+            assertEquals(List.of(game), Config.load(config()).recentRoms());
+        }
+
+        @Test
         void createsTheDirectory() throws IOException {
             var path = directory.resolve("nested").resolve("config.properties");
 
@@ -671,6 +907,7 @@ class ConfigTests {
             config.setOverclock(OverclockSetting.PLUS_50);
             config.setRewindSeconds(45);
             config.setRewindKey(KeyEvent.VK_BACK_SPACE);
+            config.addRecentRom(game("a.nes"));
             config.save(config());
 
             var text = Files.readString(config());
@@ -688,6 +925,7 @@ class ConfigTests {
             assertTrue(text.contains("rewind.seconds=45"), text);
             assertTrue(text.contains("rewind.key=VK_BACK_SPACE"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
+            assertTrue(text.contains("recent.1=" + directory.resolve("a.nes")), text);
         }
 
         @Test
@@ -709,6 +947,27 @@ class ConfigTests {
             assertSame(OTHER, reloaded.palette(Region.NTSC), "the palette just picked");
             assertEquals(KeyEvent.VK_L, reloaded.keyBindings().keyFor(Button.A),
                     "and the binding from the run before");
+        }
+
+        /**
+         * The list is written by opening a game rather than by a dialog, so it is the one section
+         * that is rewritten without anybody meaning to touch the file -- which makes it the likeliest
+         * to take the rest of it away.
+         */
+        @Test
+        void openingAGameKeepsTheSettings() throws IOException {
+            var first = Config.load(config());
+            first.setPalette(Region.NTSC, OTHER);
+            first.save(config());
+
+            var second = Config.load(config());
+            second.addRecentRom(game("a.nes"));
+            second.save(config());
+
+            var reloaded = Config.load(config());
+
+            assertEquals(List.of(game("a.nes")), reloaded.recentRoms(), "the game just opened");
+            assertSame(OTHER, reloaded.palette(Region.NTSC), "and the palette from the run before");
         }
     }
 }

@@ -6,6 +6,7 @@ import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
+import org.jetbrains.annotations.Nullable;
 
 import java.awt.event.KeyEvent;
 import java.io.IOException;
@@ -13,7 +14,11 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 
 /**
@@ -24,6 +29,10 @@ import java.util.Properties;
  * whole thing back, so a second writer would quietly drop whatever the first one had put there --
  * picking a palette would cost the user their key bindings. Everything settable goes through here
  * instead, and the settings dialogs only say what changed.
+ * <p>
+ * It holds one thing that is not a setting: the games File &gt; Open Recent lists. That is
+ * history rather than preference, so it is written last and nowhere near the rest -- opening a
+ * game changes the end of the file and leaves everything anybody chose exactly where it was.
  * <p>
  * Nothing in the file is trusted. It is meant to be edited by hand as much as through the menu,
  * and an entry that is missing or that this version does not understand falls back to its default
@@ -54,6 +63,18 @@ public final class Config {
     private static final String OVERCLOCK_KEY = "hacks.overclock";
     private static final String REWIND_SECONDS_KEY = "rewind.seconds";
     private static final String REWIND_KEY_KEY = "rewind.key";
+    private static final String RECENT_KEY_PREFIX = "recent.";
+    private static final String RECENT_PATCH_SUFFIX = ".patch";
+
+    /**
+     * How many games File &gt; Open Recent holds.
+     * <p>
+     * Ten, which is what the same menu holds in most other programs, and for the reason they
+     * settled on roughly that: the list is read down rather than counted, so its useful length is
+     * however far somebody will look before giving up and going back to the file chooser. Longer
+     * than that is a folder with worse tools.
+     */
+    private static final int MAX_RECENT = 10;
 
     /**
      * How much history rewind keeps unless the file says otherwise. Long enough to undo the jump
@@ -177,6 +198,21 @@ public final class Config {
             # for this one, so this file is where it is remapped.
             """;
 
+    private static final String RECENT_HEADER = """
+            # The games File > Open Recent lists, most recently opened first. An entry that names
+            # a patch as well is a romhack, which is a different game from the cartridge it was cut
+            # against -- so the pair is remembered, and opening it from the menu applies the patch
+            # again. Numbering is only the order they are read back in: a line deleted by hand is
+            # stepped over rather than taken as the end of the list.
+            #
+            # These are the only values in this file that are paths rather than words out of a
+            # fixed list, and so the only ones that are escaped: a backslash is written twice, and
+            # anything outside Latin-1 is written \\uXXXX. A path typed in here by hand has to do
+            # the same -- C:\\\\roms\\\\game.nes rather than C:\\roms\\game.nes -- because a lone
+            # backslash is dropped, and a \\u that is not followed by four hex digits costs every
+            # setting in this file rather than only this one.
+            """;
+
     private KeyBindings keyBindings;
     private NESPalette palette;
     private NESPalette palPalette;
@@ -194,6 +230,12 @@ public final class Config {
     private int rewindSeconds;
     private int rewindKey;
 
+    /**
+     * Most recently opened first, each game once. Immutable and replaced wholesale rather than
+     * edited, so the menu being built from it never sees half of a change.
+     */
+    private List<RecentRom> recent;
+
     private Config(
             final KeyBindings keyBindings,
             final NESPalette palette,
@@ -210,7 +252,8 @@ public final class Config {
             final boolean unlimitedSprites,
             final OverclockSetting overclock,
             final int rewindSeconds,
-            final int rewindKey) {
+            final int rewindKey,
+            final List<RecentRom> recent) {
         this.keyBindings = keyBindings;
         this.palette = palette;
         this.palPalette = palPalette;
@@ -227,6 +270,7 @@ public final class Config {
         this.overclock = overclock;
         this.rewindSeconds = rewindSeconds;
         this.rewindKey = rewindKey;
+        this.recent = recent;
     }
 
     /**
@@ -272,7 +316,62 @@ public final class Config {
                 KeyBindings.codeOf(
                         properties.getProperty(REWIND_KEY_KEY),
                         DEFAULT_REWIND_KEY,
-                        REWIND_KEY_KEY));
+                        REWIND_KEY_KEY),
+                recentFrom(properties));
+    }
+
+    /**
+     * The games File &gt; Open Recent lists, in the order it lists them.
+     * <p>
+     * A numbered entry each rather than one line with separators in it, because a path may hold
+     * any character the filesystem allows and there is none left to separate them with. The
+     * numbers are how they come back in order and nothing else: a gap is stepped over, since
+     * deleting a line is how somebody takes a game off the menu by hand, and a game named twice
+     * is listed once, since that is the invariant the menu is built on.
+     */
+    private static List<RecentRom> recentFrom(final Properties properties) {
+        var recent = new ArrayList<RecentRom>();
+
+        for (var n = 1; n <= MAX_RECENT; n++) {
+            var rom = pathFrom(properties, RECENT_KEY_PREFIX + n);
+
+            if (rom == null) {
+                continue;
+            }
+
+            var game = new RecentRom(
+                    rom, pathFrom(properties, RECENT_KEY_PREFIX + n + RECENT_PATCH_SUFFIX));
+
+            if (!recent.contains(game)) {
+                recent.add(game);
+            }
+        }
+
+        return List.copyOf(recent);
+    }
+
+    /**
+     * One path out of the file, or null for an entry that is not there or has been emptied out.
+     * <p>
+     * Not trimmed, unlike every other value here, because each character of a path counts: a file
+     * whose name ends in a space is a file whose name ends in a space, and this is the one reader
+     * that would quietly rename it. A value that is nothing but space is somebody emptying the
+     * line out rather than a cartridge called three spaces.
+     */
+    private static @Nullable Path pathFrom(final Properties properties, final String key) {
+        var value = properties.getProperty(key);
+
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        try {
+            return Path.of(value);
+        } catch (InvalidPathException e) {
+            logger.log(Level.WARNING, value + " is not a path, dropping " + key);
+
+            return null;
+        }
     }
 
     /**
@@ -427,6 +526,44 @@ public final class Config {
     }
 
     /**
+     * A path, written so that {@link Properties#load} hands back the path that was written.
+     * <p>
+     * The recent games are the first values in this file that are not words out of a fixed list,
+     * and so the first that need this. Properties reads a backslash as an escape character, which
+     * turns an unwritten {@code C:\roms\game.nes} back into {@code C:romsgame.nes}; and the file
+     * is written as Latin-1, which a Japanese filename does not fit into, so
+     * {@link Files#writeString} would refuse to write one at all.
+     * <p>
+     * Deliberately less than {@link Properties#store} escapes. {@code =}, {@code :}, {@code #} and
+     * {@code !} are left alone: each is special only in a key or at the start of a line, neither of
+     * which a value here can be, and a path is easier to recognise with them in it. So is a leading
+     * space, which the reader would eat -- {@link RecentRom} makes every path absolute, and none of
+     * those begin with one.
+     */
+    private static String escape(final String value) {
+        var escaped = new StringBuilder(value.length());
+
+        for (var c : value.toCharArray()) {
+            switch (c) {
+                case '\\' -> escaped.append("\\\\");
+                case '\n' -> escaped.append("\\n");
+                case '\r' -> escaped.append("\\r");
+                case '\t' -> escaped.append("\\t");
+                case '\f' -> escaped.append("\\f");
+                default -> {
+                    if (c < 0x20 || c > 0xFF) {
+                        escaped.append(String.format(Locale.ROOT, "\\u%04X", (int) c));
+                    } else {
+                        escaped.append(c);
+                    }
+                }
+            }
+        }
+
+        return escaped.toString();
+    }
+
+    /**
      * Writes the settings to {@code path}, creating the directory if it is not there yet.
      * <p>
      * Written by hand rather than through {@link Properties#store} so that the entries come out in
@@ -519,6 +656,32 @@ public final class Config {
                 .append("\n\n");
 
         keyBindings.appendTo(text);
+
+        // Last, and after the bindings rather than among the settings, because it is the one
+        // section that is not one: opening a game rewrites the tail of the file and leaves
+        // everything anybody chose untouched.
+        text.append('\n').append(RECENT_HEADER);
+
+        var number = 1;
+
+        for (var game : recent) {
+            text.append(RECENT_KEY_PREFIX)
+                    .append(number)
+                    .append('=')
+                    .append(escape(game.rom().toString()))
+                    .append('\n');
+
+            if (game.patch() != null) {
+                text.append(RECENT_KEY_PREFIX)
+                        .append(number)
+                        .append(RECENT_PATCH_SUFFIX)
+                        .append('=')
+                        .append(escape(game.patch().toString()))
+                        .append('\n');
+            }
+
+            number++;
+        }
 
         var parent = path.getParent();
         if (parent != null) {
@@ -727,5 +890,45 @@ public final class Config {
 
     public void setRewindKey(final int rewindKey) {
         this.rewindKey = rewindKey;
+    }
+
+    /**
+     * The games File &gt; Open Recent offers, most recently opened first.
+     * <p>
+     * The one thing here that is a record of what the emulator was used for rather than a choice
+     * somebody made about it, which is why it is the one thing with no dialog behind it: it is put
+     * there by opening a game and taken away by Clear Menu.
+     */
+    public List<RecentRom> recentRoms() {
+        return recent;
+    }
+
+    /**
+     * Puts a game at the top of the list, taking it off wherever else it was and dropping whatever
+     * falls off the end.
+     * <p>
+     * Moving rather than adding is the whole behaviour of the menu: the same handful of games get
+     * opened over and over, and a list that let each of them in ten times would hold one game.
+     */
+    public void addRecentRom(final RecentRom game) {
+        var updated = new ArrayList<RecentRom>(MAX_RECENT);
+
+        updated.add(game);
+
+        for (var other : recent) {
+            if (updated.size() == MAX_RECENT) {
+                break;
+            }
+
+            if (!other.equals(game)) {
+                updated.add(other);
+            }
+        }
+
+        recent = List.copyOf(updated);
+    }
+
+    public void clearRecentRoms() {
+        recent = List.of();
     }
 }

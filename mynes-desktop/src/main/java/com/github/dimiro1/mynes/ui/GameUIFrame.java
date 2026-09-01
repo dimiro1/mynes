@@ -208,6 +208,13 @@ public class GameUIFrame extends JFrame {
     private JMenu settingsMenuFilterStrength;
 
     /**
+     * The games somebody has opened before. Built afresh each time the File menu is pulled down
+     * rather than kept in step with the list, because half of what it shows is not the list: a
+     * cartridge can be moved, renamed or unplugged without the emulator being anywhere near it.
+     */
+    private final JMenu fileMenuOpenRecent = new JMenu("Open Recent");
+
+    /**
      * The two pictures, kept because they are the items in an always-enabled menu that need a
      * machine. There is nothing to photograph until one is running, and a File menu greyed out as a
      * whole would take Open with it.
@@ -377,6 +384,12 @@ public class GameUIFrame extends JFrame {
         fileMenuOpenPatched.setAccelerator(
                 KeyStroke.getKeyStroke(KeyEvent.VK_O, command | InputEvent.SHIFT_DOWN_MASK));
         fileMenu.add(fileMenuOpenPatched);
+
+        // Under both of the things it is a shortcut for, since either kind of game can end up in
+        // it. No accelerator and no numbers down the side: the list is read rather than counted,
+        // and this window has already spent its unmodified function keys.
+        fileMenuOpenRecent.setMnemonic(KeyEvent.VK_R);
+        fileMenu.add(fileMenuOpenRecent);
 
         // A function key, for the reasons the two quick state items are on function keys: it is in
         // the same physical place on every keyboard layout, it is the key every emulator since ZSNES
@@ -660,6 +673,23 @@ public class GameUIFrame extends JFrame {
         machineMenuStopPlayback.addActionListener(e -> {
             if (runner != null) {
                 runner.stopPlayback();
+            }
+        });
+
+        // For the reason the slots are relabelled when the Machine menu opens: what is on the disk
+        // moves without anybody telling the emulator about it.
+        fileMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(final MenuEvent e) {
+                describeRecent();
+            }
+
+            @Override
+            public void menuDeselected(final MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(final MenuEvent e) {
             }
         });
 
@@ -1838,6 +1868,57 @@ public class GameUIFrame extends JFrame {
         }
     }
 
+    /**
+     * Puts the games somebody has opened onto Open Recent, and greys out the ones whose files are
+     * not where they were left.
+     * <p>
+     * Greyed rather than dropped, which is the same answer {@link #describeSlots} gives for a slot
+     * with nothing in it: a cartridge on a volume that is not mounted this afternoon is still the
+     * game somebody was playing, and a list that quietly shortened itself every time a drive was
+     * unplugged would be worse than one with a dead entry in it.
+     */
+    private void describeRecent() {
+        fileMenuOpenRecent.removeAll();
+
+        var recent = config.recentRoms();
+
+        // A submenu that opens onto an empty box reads as a broken menu rather than as an answer,
+        // so before anything has been opened there is nothing to pull down at all.
+        fileMenuOpenRecent.setEnabled(!recent.isEmpty());
+
+        if (recent.isEmpty()) {
+            return;
+        }
+
+        for (var game : recent) {
+            var item = new JMenuItem(game.label());
+
+            // The labels are file names, so two cartridges called the same thing in two folders are
+            // two entries that read identically. This is the only thing that tells them apart.
+            item.setToolTipText(game.describe());
+            item.setEnabled(game.isThere());
+            item.addActionListener(e -> open(
+                    game.rom().toFile(),
+                    game.patch() == null ? null : game.patch().toFile()));
+
+            fileMenuOpenRecent.add(item);
+        }
+
+        fileMenuOpenRecent.addSeparator();
+
+        // The list is the only thing in the config file nobody chose, so it is the only thing worth
+        // a way of taking back -- and where somebody has been playing is not always something they
+        // want the next person at the computer to read off a menu.
+        var clear = new JMenuItem("Clear Menu");
+
+        clear.addActionListener(e -> {
+            config.clearRecentRoms();
+            saveConfig();
+        });
+
+        fileMenuOpenRecent.add(clear);
+    }
+
     private void describeQuickItems() {
         machineMenuQuickSave.setText("Quick Save (Slot " + currentSlot + ")");
         machineMenuQuickLoad.setText("Quick Load (Slot " + currentSlot + ")");
@@ -1930,6 +2011,13 @@ public class GameUIFrame extends JFrame {
                 loaded,
                 selectedFile.toPath().toAbsolutePath(),
                 patchFile == null ? null : patchFile.toPath().toAbsolutePath());
+
+        // After the cartridge has loaded rather than when the file was picked, so that a file which
+        // turned out not to be one is not offered again from the menu. Written out at once, since
+        // the alternative is a list that only survives a tidy exit.
+        config.addRecentRom(new RecentRom(
+                selectedFile.toPath(), patchFile == null ? null : patchFile.toPath()));
+        saveConfig();
 
         logger.log(Level.INFO, "loaded rom " + selectedFile.getName());
     }
