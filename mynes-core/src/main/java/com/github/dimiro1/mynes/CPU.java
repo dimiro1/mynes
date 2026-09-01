@@ -182,30 +182,19 @@ public class CPU {
         intTick = 1;
     }
 
-    /**
-     * Updates the program counter.
-     *
-     * @param pc the new program counter.
-     */
     public void setPC(final int pc) {
         this.pc = ByteUtils.ensureWord(pc);
     }
 
     /**
-     * Sets the CPU cycle counter.
-     * This method is primarily for testing purposes.
-     *
-     * @param cycles the new cycle count.
+     * Moves the cycle counter without moving the beam, which only a test harness has any business
+     * doing: nestest's log counts reset as seven CPU cycles where this emulator spends eight, so
+     * {@code NesTestTests} lines the counter up with the answer key before comparing a line of it.
      */
     public void setCycles(final long cycles) {
         this.cycles = cycles;
     }
 
-    /**
-     * Returns the architectural state of the CPU.
-     *
-     * @return a snapshot of the registers and the cycle counter.
-     */
     public State getState() {
         return new State(a, x, y, sp, pc, p, cycles);
     }

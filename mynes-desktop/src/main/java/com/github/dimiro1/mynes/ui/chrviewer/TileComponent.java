@@ -114,9 +114,6 @@ public class TileComponent extends JComponent {
         }
     }
 
-    /**
-     * Returns the index of the tile.
-     */
     public int getTileNumber() {
         return tileNumber;
     }

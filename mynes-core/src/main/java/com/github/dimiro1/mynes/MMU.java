@@ -747,15 +747,13 @@ public class MMU {
         halted = true;
     }
 
-    /**
-     * Checks if DMA is currently in progress.
-     */
     public boolean isDMAInProgress() {
         return dmaInProgress;
     }
 
     /**
-     * Gets the internal RAM array (for testing/debugging).
+     * The console's own 2KB, as the live array rather than a copy -- what {@code --dump ram} writes
+     * out, and the one memory a front end may read without going through the bus at all.
      */
     public int[] getInternalRAM() {
         return internalRAM;

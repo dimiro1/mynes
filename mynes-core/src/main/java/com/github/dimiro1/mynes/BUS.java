@@ -213,11 +213,6 @@ public class BUS implements CPUBus, PPUBus {
         apu.reset();
     }
 
-    /**
-     * Checks if DMA transfer is currently in progress.
-     *
-     * @return true if DMA is active
-     */
     public boolean isDMAInProgress() {
         return mmu.isDMAInProgress();
     }
@@ -243,65 +238,30 @@ public class BUS implements CPUBus, PPUBus {
         mmu.endHaltCycle(cpuWrote);
     }
 
-    /**
-     * Gets the CPU component.
-     *
-     * @return the CPU
-     */
     public CPU getCPU() {
         return cpu;
     }
 
-    /**
-     * Gets the PPU component.
-     *
-     * @return the PPU
-     */
     public PPU getPPU() {
         return ppu;
     }
 
-    /**
-     * Gets the APU component.
-     *
-     * @return the APU
-     */
     public APU getAPU() {
         return apu;
     }
 
-    /**
-     * Gets the MMU component.
-     *
-     * @return the MMU
-     */
     public MMU getMMU() {
         return mmu;
     }
 
-    /**
-     * Gets the mapper.
-     *
-     * @return the mapper
-     */
     public Mapper getMapper() {
         return mapper;
     }
 
-    /**
-     * Gets the first controller.
-     *
-     * @return controller 1
-     */
     public Controller getController1() {
         return controller1;
     }
 
-    /**
-     * Gets the second controller.
-     *
-     * @return controller 2
-     */
     public Controller getController2() {
         return controller2;
     }
