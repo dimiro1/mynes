@@ -73,7 +73,8 @@ together are a fast reverse.
 
 **Settings > Controller...** remaps any of them. Click a button, press the key you want on it, and
 that is it: there is no save button. Your choices land in `~/.mynes/config.properties`, along with
-the palette, screen size, fast forward speed and how much rewind keeps:
+the palette, screen size, fast forward speed, how much rewind keeps, and the last ten games you
+opened:
 
 ```properties
 video.palette=nesdev
@@ -90,6 +91,7 @@ rewind.seconds=30
 rewind.key=VK_BACK_SPACE
 controller1.a=VK_X
 controller1.left=VK_LEFT
+recent.1=/home/you/roms/Super Mario Bros.nes
 ```
 
 `rewind.seconds=0` switches rewind off, which costs nothing at all; it is the one setting with no
@@ -274,6 +276,13 @@ is applied to the bytes on their way into the emulator, so the ROM on disk is le
 and there is no patched copy of it to keep anywhere. A patched game keeps its own save states and
 battery file, named after the patch rather than the ROM, so an afternoon with a hack cannot write
 over fifty hours of the original. `--patch` does the same thing from the command line.
+
+**A recent games list**, from **File > Open Recent**, which holds the last ten and opens one again
+with a click. A game opened with a patch is remembered as the pair and comes back patched, since the
+hack is the game that was asked for and reopening the cartridge underneath it would quietly be a
+different one. Entries whose files have moved are greyed out rather than dropped — a cartridge on a
+drive that is not plugged in this afternoon is still the game you were playing — and **Clear Menu**
+at the bottom empties the list.
 
 **Session recordings**, from **Machine > Record Movie...** and **Machine > Play Movie...**. A movie
 is not a video: it is where the run started, one button mask per frame, and the frames Reset was
