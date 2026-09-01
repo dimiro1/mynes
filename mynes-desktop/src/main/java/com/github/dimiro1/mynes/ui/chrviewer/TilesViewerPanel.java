@@ -135,9 +135,6 @@ public class TilesViewerPanel extends JPanel {
         }
     }
 
-    /**
-     * Returns the current mode.
-     */
     public Mode getMode() {
         return mode;
     }
