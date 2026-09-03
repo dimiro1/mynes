@@ -120,9 +120,18 @@ Not there yet: a second player, and Dendy (run as PAL for now).
 
 ![Tetris](shots/game-tetris.png)
 
-### Super Mario Bros. 2 (mapper 4, MMC3)
+### The NTSC filter
 
-![Super Mario Bros. 2](shots/game-smb2.png)
+The picture decoded from the chip's composite signal rather than looked up in a palette, which is
+where the colour fringes on the logo come from.
+
+![The NTSC filter](shots/filter-ntsc.png)
+
+### The CRT filter
+
+The palette's colours laid down between the lines of a 480-line raster, with the curved glass on.
+
+![The CRT filter with curved glass](shots/filter-crt.png)
 
 ### The palette picker
 
@@ -130,11 +139,30 @@ Every selection applies the moment it is made, so the game behind the dialog is 
 
 ![The palette dialog over a running game](shots/palette-dialog.png)
 
+### The nametable viewer
+
+All four nametables, with the scroll window drawn over the two Super Mario Bros. is scrolling
+between.
+
+![The nametable viewer](shots/nametable-viewer.png)
+
+### The OAM viewer
+
+All sixty-four sprites with their attributes, and where each one lands on the screen.
+
+![The OAM viewer](shots/oam-viewer.png)
+
 ### The CHR viewer
 
-A bank of Super Mario Bros. 3's character ROM, drawn with one of the game's own palettes.
+A bank of Super Mario Bros. 3's character ROM.
 
 ![The CHR viewer](shots/chr-viewer.png)
+
+### The debugger
+
+Stopped on a conditional breakpoint at Super Mario Bros.' NMI handler.
+
+![The debugger stopped on a breakpoint](shots/debugger.png)
 
 ### The controller dialog
 
@@ -200,7 +228,8 @@ java -jar mynes-desktop/target/mynes.jar
 
 Four Maven modules — `mynes-core` (the console, no dependencies), `mynes-patch` (IPS),
 `mynes-headless` (the command line) and `mynes-desktop` (the window) — flattened into one jar.
-The same `mvn package` also produces the release zip.
+The same `mvn package` also produces the release zip. A fifth, `mynes-shots`, takes the pictures
+above and is not in the jar.
 
 ## Tests
 

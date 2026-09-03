@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.dimiro1</groupId>
+        <artifactId>mynes</artifactId>
+        <version>0.3.0</version>
+    </parent>
+
+    <artifactId>mynes-shots</artifactId>
+    <packaging>jar</packaging>
+
+    <name>mynes-shots</name>
+    <description>Takes the README's pictures off the real window, into shots/.</description>
+
+    <properties>
+        <main.class>com.github.dimiro1.mynes.shots.Shots</main.class>
+
+        <!-- What `mvn compile exec:exec@shots` passes on. Empty rather than absent, for the reason
+             mynes-desktop's mynes.args is. -->
+        <shots.args></shots.args>
+    </properties>
+
+    <dependencies>
+        <!-- The window and every dialog off it, which is what gets photographed. Nothing depends
+             on this module in turn, so the jar and the zip carry none of it. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-desktop</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- mvn -q compile exec:exec@shots -Dshots.args="... DIR", where the argument names
+                 the directory the cartridges are in; Shots says which flag.
+
+                 Its own execution id, so that plain exec:exec still opens the emulator's window
+                 and never this. The parent declares the same id skipped everywhere else, which is
+                 what lets the command run from the root without naming a module. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>shots</id>
+                        <configuration>
+                            <skip>false</skip>
+                            <executable>java</executable>
+
+                            <!-- The checkout, so that a directory on the command line means what
+                                 it looks like and the default output is the shots/ the README
+                                 reads. -->
+                            <workingDirectory>${project.parent.basedir}</workingDirectory>
+
+                            <!-- The native access grant is FlatLaf's, the same one the window
+                                 gets. -->
+                            <commandlineArgs>--enable-native-access=ALL-UNNAMED -classpath %classpath ${main.class} ${shots.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
