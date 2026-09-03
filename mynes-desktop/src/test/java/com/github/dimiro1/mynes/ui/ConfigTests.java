@@ -387,6 +387,58 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the volume")
+    class LoadingVolume {
+        @Test
+        void aMissingEntryIsFullVolume() throws IOException {
+            assertSame(Volume.defaultVolume(),
+                    Config.load(write("video.palette=nesdev\n")).volume());
+        }
+
+        @Test
+        void aStepIsTakenAsWritten() throws IOException {
+            assertSame(Volume.QUARTER, Config.load(write("audio.volume=25\n")).volume());
+        }
+
+        @Test
+        void aStepThatIsNotOneOfTheFiveFallsBackToTheDefault() throws IOException {
+            assertSame(Volume.defaultVolume(), Config.load(write("audio.volume=33\n")).volume());
+        }
+    }
+
+    @Nested
+    @DisplayName("loading the audio latency")
+    class LoadingLatency {
+        @Test
+        void aMissingEntryIsTheDefault() throws IOException {
+            assertEquals(AudioOutput.DEFAULT_LATENCY_MS,
+                    Config.load(write("video.palette=nesdev\n")).audioLatencyMs());
+        }
+
+        @Test
+        void aNumberIsTakenAsMilliseconds() throws IOException {
+            assertEquals(35, Config.load(write("audio.latency-ms=35\n")).audioLatencyMs());
+        }
+
+        /**
+         * The two ways of being wrong, answered differently: a word says nothing about what was
+         * wanted and falls back, and a number out of range is a wish that can be granted
+         * approximately.
+         */
+        @Test
+        void somethingThatIsNotANumberFallsBackAndOneOutOfRangeIsClamped() throws IOException {
+            assertEquals(AudioOutput.DEFAULT_LATENCY_MS,
+                    Config.load(write("audio.latency-ms=low\n")).audioLatencyMs());
+
+            assertEquals(AudioOutput.MAX_LATENCY_MS,
+                    Config.load(write("audio.latency-ms=5000\n")).audioLatencyMs());
+
+            assertEquals(AudioOutput.MIN_LATENCY_MS,
+                    Config.load(write("audio.latency-ms=0\n")).audioLatencyMs());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the hacks")
     class LoadingHacks {
         @Test
@@ -777,6 +829,30 @@ class ConfigTests {
         }
 
         @Test
+        void theVolumeSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setVolume(Volume.HALF);
+            config.save(config());
+
+            assertSame(Volume.HALF, Config.load(config()).volume());
+        }
+
+        /**
+         * There is no setter, so the round trip is what has to carry it: a file written by the menus
+         * that dropped the entry would take somebody's latency back to the default the next time
+         * they picked a palette.
+         */
+        @Test
+        void theAudioLatencySurvivesTheRoundTrip() throws IOException {
+            Files.writeString(config(), "audio.latency-ms=120\n");
+
+            var config = Config.load(config());
+            config.save(config());
+
+            assertEquals(120, Config.load(config()).audioLatencyMs());
+        }
+
+        @Test
         void theSpriteLimitHackSurvivesTheRoundTrip() throws IOException {
             var config = Config.load(config());
             config.setUnlimitedSprites(true);
@@ -903,6 +979,7 @@ class ConfigTests {
             config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
             config.setMuted(true);
+            config.setVolume(Volume.TENTH);
             config.setUnlimitedSprites(true);
             config.setOverclock(OverclockSetting.PLUS_50);
             config.setRewindSeconds(45);
@@ -920,6 +997,8 @@ class ConfigTests {
             assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
             assertTrue(text.contains("audio.muted=true"), text);
+            assertTrue(text.contains("audio.volume=10"), text);
+            assertTrue(text.contains("audio.latency-ms=" + AudioOutput.DEFAULT_LATENCY_MS), text);
             assertTrue(text.contains("hacks.unlimited-sprites=true"), text);
             assertTrue(text.contains("hacks.overclock=50"), text);
             assertTrue(text.contains("rewind.seconds=45"), text);

@@ -89,7 +89,8 @@ class EmulatorRunnerTests {
         stops = new ArrayBlockingQueue<>(16);
         failures = new ArrayBlockingQueue<>(16);
 
-        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, REWIND_FRAMES);
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, REWIND_FRAMES,
+                AudioOutput.DEFAULT_LATENCY_MS);
         runner.setStopListener(stops::add);
     }
 
@@ -240,7 +241,8 @@ class EmulatorRunnerTests {
      */
     @Test
     void aMachineKeepingNoHistoryIgnoresTheRewindKey() {
-        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0);
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0,
+                AudioOutput.DEFAULT_LATENCY_MS);
         runner.start();
         runner.setRewinding(true);
 
@@ -353,7 +355,8 @@ class EmulatorRunnerTests {
         var second = new NES(Cart.load(rom(), "runner.nes"));
 
         // No history, so nothing here depends on the ring: the point is the cursor and the handover.
-        runner = new EmulatorRunner(second, new ScreenComponent(), new Debugger(), 0);
+        runner = new EmulatorRunner(second, new ScreenComponent(), new Debugger(), 0,
+                AudioOutput.DEFAULT_LATENCY_MS);
         runner.setPlaybackEndedListener(() -> ended.add(true));
         runner.startPlayback(movie);
         runner.start();

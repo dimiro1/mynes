@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
@@ -297,6 +298,48 @@ class OptionsTests {
     @Test
     void allIsEveryDump() {
         assertEquals(Session.DUMPS, parse("--rom", "x.nes", "--dump", "all").dumps());
+    }
+
+    @Test
+    void everyVoiceIsHeardUnlessOneIsMuted() {
+        assertTrue(parse("--rom", "x.nes").mute().isEmpty(), "the console is the default");
+    }
+
+    @Test
+    void mutedVoicesAreTakenAsNamed() {
+        assertEquals(
+                Set.of(APUChannel.PULSE_1, APUChannel.DMC),
+                parse("--rom", "x.nes", "--mute", "pulse1,dmc").mute());
+    }
+
+    @Test
+    void severalMuteFlagsAddUp() {
+        assertEquals(
+                Set.of(APUChannel.TRIANGLE, APUChannel.NOISE),
+                parse("--rom", "x.nes", "--mute", "triangle", "--mute", "noise").mute());
+    }
+
+    /**
+     * Refused for the reason a misspelled hack is, and a sharper one: the only way to tell a voice
+     * that was silenced from one that had nothing to play is that somebody asked for it.
+     */
+    @Test
+    void aVoiceThatIsNotOnTheListIsRejected() {
+        var message = refused("--rom", "x.nes", "--mute", "pulse3").getMessage();
+
+        assertTrue(message.contains("pulse3"));
+        assertTrue(message.contains("triangle"), "the message should offer the real ids");
+    }
+
+    /**
+     * It changes nothing a replay depends on -- the machine runs exactly as it did -- so it rides
+     * along, the way unlimited sprites does and unlike the overclock.
+     */
+    @Test
+    void muteCombinesWithAReplay() {
+        assertEquals(
+                Set.of(APUChannel.DMC),
+                parse("--rom", "x.nes", "--play", "take.mnm", "--mute", "dmc").mute());
     }
 
     @Test

@@ -99,11 +99,15 @@ final class StatusBar extends JPanel {
      *                         least to show for itself: it changes nothing on screen and nothing at
      *                         all until a file is written.
      * @param fastForward      the speed Fast Forward runs at, whether or not it is switched on.
-     * @param rewindSeconds    how much history is kept, or 0 for none. The only setting in the
-     *                         program with no menu item at all, so this tooltip is the one place in
-     *                         the window it can be read.
+     * @param rewindSeconds    how much history is kept, or 0 for none. One of the two settings in
+     *                         the program with no menu item at all, so this tooltip is the one place
+     *                         in the window it can be read.
      * @param muted            whether the sound is switched off, which is the one question on this
      *                         list somebody asks out loud.
+     * @param volume           how loud it is when it is not, which the mute can make irrelevant.
+     * @param audioLatencyMs   how much sound is kept queued at the card. The other setting with no
+     *                         menu item, and the one with the least to look at: what it buys is a
+     *                         click that does not happen.
      */
     record Machine(
             Region region,
@@ -119,7 +123,9 @@ final class StatusBar extends JPanel {
             ScreenScale screenshotScale,
             EmulationSpeed fastForward,
             int rewindSeconds,
-            boolean muted) {
+            boolean muted,
+            Volume volume,
+            int audioLatencyMs) {
     }
 
     /**
@@ -354,6 +360,10 @@ final class StatusBar extends JPanel {
 
         if (machine.muted()) {
             parts.add("Muted");
+        } else if (machine.volume() != Volume.defaultVolume()) {
+            // Only when it is not muted, because a mute is the whole answer: a bar saying "Muted"
+            // and "Volume 25%" would be offering two of them.
+            parts.add("Volume " + machine.volume().label());
         }
 
         if (machine.unlimitedSprites()) {
@@ -435,6 +445,11 @@ final class StatusBar extends JPanel {
                 ? "Off"
                 : machine.rewindSeconds() + " seconds");
         row(rows, "Sound", machine.muted() ? "Muted" : "On");
+
+        // Said even while muted, unlike on the line above, because this is the inventory: what the
+        // volume is set to is a fact about the emulator whether or not it can be heard right now.
+        row(rows, "Volume", machine.volume().label());
+        row(rows, "Audio latency", machine.audioLatencyMs() + " ms");
 
         return rows.append("</table></html>").toString();
     }

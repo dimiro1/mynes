@@ -41,7 +41,7 @@ Everything under `--out`, which defaults to `target/headless`:
 |---|---|
 | `report.json` | Where the machine ended up, and what the picture and the sound were like. Also printed, so `--report - \| jq .` works. |
 | `frame-000300.png` | The picture at that frame. **Read these** -- it is the only way to see whether a change actually worked. |
-| `audio.wav` | The APU's output, with `--audio`. Peak, RMS and silent-frame counts are in the report either way. |
+| `audio.wav` | The APU's output, with `--audio`. Peak, RMS and silent-frame counts are in the report either way, and `--mute` takes a voice out of all four. |
 | `ram.bin`, `oam.bin`, … | With `--dump ram,oam,palette,nametables,prgram,chr` or `--dump all`. |
 
 The report describes the picture for you: `video.finalFrame.blank` (one flat colour, which is what a
@@ -178,7 +178,7 @@ They are not one machine at two speeds: 312 scanlines against 262, 3.2 dots to a
 3, 50.0070 frames a second against 60.0988, and a different APU table for everything counted in CPU
 cycles. So **a PAL run and an NTSC run of the same ROM are not comparable** -- `run.region` in the
 report is part of what to check before diffing two of them, alongside `run.state.startedFromPowerOn`,
-`run.hacks` and `run.genie`.
+`run.hacks`, `run.genie` and `audio.muted`.
 
 `run.hacks` is the third thing in that list, and it is there for the same reason: `--hack
 unlimited-sprites` draws the sprites the chip would have dropped, so a scanline holding more than
@@ -328,6 +328,82 @@ There is no shadow mask, and that is deliberate rather than pending. A consumer 
 finer than an NES pixel is wide at any magnification anybody uses, so drawing one triad per pixel is
 not the tube's mask -- it is a different, coarser thing invented for the screenshot.
 
+### Taking a voice out of the mixer
+
+`--mute triangle` keeps one of the APU's five voices out of the sum, and `--mute pulse1,dmc` keeps
+two. The names are `pulse1`, `pulse2`, `triangle`, `noise` and `dmc`, the flag is repeatable, and an
+unknown name is exit 2 rather than a run where the voice somebody wanted silenced was still playing.
+
+**Nothing the game can observe changes**, which is what separates this from a hack. It happens at
+the mixer: the timers, the sequencers, the envelopes and the length counters all run, $4015 answers
+exactly what it would have, the frame counter's and the DMC's interrupts still arrive, and the DMC
+still stops the CPU to fetch its bytes. A muted run's picture, cycle counts and everything under
+`run` are the unmuted run's, byte for byte.
+
+What it does change is every number under `audio` -- the peak, the RMS, the silent frame count and
+the WAV -- so **`audio.muted` is on the comparability checklist**, and it is the one thing on that
+list that is not under `run`. It is there because it belongs beside the numbers it moves. It is
+always present, empty when nobody muted anything, and read off the machine at the end of the run
+rather than off the command line, so a session that switched one half way through is reported as it
+ended.
+
+It is not in a movie and does not refuse `--play`, for the reason `--hack unlimited-sprites` does
+not: a replay does not depend on which voices anybody could hear. `mute NAME on|off` does it inside
+an interactive session and a bare `mute` lists what is off, which is how to ask the same bar twice
+and diff the two answers:
+
+```sh
+printf 'run 300\naudio\nmute triangle on\nrun 60\naudio\nquit\n' \
+  | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+Do not go looking for a game to see it on: nestest never touches the APU, and the power-on step on
+the triangle's ladder is the whole of its sound -- so `--mute triangle` takes a run of it from a peak
+of 0.20 to silence, which is what `HeadlessRunTests` asserts.
+
+The window has the same five under **Debug > Sound Channels**, ticked when audible, beside Show
+Background and Show Sprites rather than anywhere near Mute. That is the distinction worth keeping:
+Mute and **Machine > Volume** decide how loudly the machine is played and these decide what it is
+playing.
+
+### The sound card is not the same clock
+
+Nothing above applies to the window's sound output, which has a problem the headless mode does not
+have: the APU makes 44100 samples per second of *emulated* time and the card plays 44100 per second
+of *its own crystal's* time. The loop paces the first against the host's monotonic clock, so what is
+left over is the difference between that clock and the card's -- tens of parts per million, which
+at 50ppm is a whole sixty millisecond cushion gained or lost inside twenty minutes. Either way it is
+a click.
+
+So `AudioOutput` measures how full the card is every frame and resamples by up to **half a percent**
+to steer it back to the middle. Three things about that are worth knowing before touching it:
+
+- **The blocking write is no longer the pacing.** It used to be, and two things pacing one loop is
+  what the drift was made of; the loop's own deadline paces now and the write is the backstop, which
+  the rate control is what stops from ever being reached.
+- **The card is opened at twice the wanted latency and held at half of it**, so there is always a
+  whole latency's worth of room above the target and a whole one below it.
+- **Half a percent is chosen for being small**, not as a compromise. It is eight cents of pitch and a
+  hundred times the authority a real crystal pair needs, so a mixer that reports its fill level badly
+  costs half a percent of pitch rather than a loop that hunts audibly. The approach is exponential
+  with a twelve second time constant, which is why the queue is primed with silence at `open` and at
+  every `flush` rather than left for the control to fill.
+
+`audio.latency-ms` in `~/.mynes/config.properties` is how much to hold, 20 to 200 and 60 by default.
+It has no menu item -- it is the question "how much delay will you trade for how much robustness",
+which is not one to answer by trying five items until the clicking stops -- so the file is where it
+is set and the status bar's tooltip is where it is read back. `rewind.seconds` is the only other
+setting like that.
+
+`Resampler` is the half a percent, kept apart from `AudioOutput` because it has state that has to
+survive a frame boundary: the output grid's position and the sample before the frame. A resampler
+that started afresh each frame would pass every test about how many samples come out and put a buzz
+at sixty hertz in anyway, which is what `ResamplerTests` holds it to.
+
+**Machine > Volume** is the other half of the same class: five steps, squared on their way to the
+amplitude, because a fader that moved it linearly would do all of its audible work in the top tenth
+of its travel. There is no zero -- Mute already is one, and it remembers the volume to come back to.
+
 ### It is deterministic
 
 Nothing in the machine reads a clock or a random number, so the same ROM, input and frame count give
@@ -411,7 +487,7 @@ movie pins both at the moment it starts and a file naming one set of codes, or o
 scanlines, that was played against another cannot be replayed.
 
 **`run.record` and `run.replay` join the comparability checklist**, beside `run.state`, `run.region`,
-`run.hacks` and `run.genie`. Both are always present with explicit nulls. A run that started at power
+`run.hacks`, `run.genie` and `audio.muted`. Both are always present with explicit nulls. A run that started at power
 on records a movie that starts there and carries no state at all; anything else -- a `--load-state`,
 a `--sram-in`, a loaded state mid-session, or a rewind that went back past the start of the recording
 -- puts a save state inside the file, and `run.replay.anchored` is what says so.
@@ -597,7 +673,9 @@ mynes-headless/       depends on core and patch
   mynes/headless/     the command line mode
 
 mynes-desktop/        depends on core, patch and headless; FlatLaf and MigLayout live here
-  mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger
+  mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger, and
+                      the sound card: the line, the volume, and the half a percent of resampling
+                      that holds its queue where it was put
   mynes/ui/ppuviewer/ the two windows over what the PPU is drawing from: the four nametables with
                       the scroll window over them, and the sixty four sprites with their attributes
 

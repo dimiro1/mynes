@@ -230,6 +230,48 @@ class HeadlessRunTests {
         assertFalse(Files.exists(out.resolve("audio.wav")));
     }
 
+    /**
+     * The triangle's ladder is driven whether or not the channel is playing, so a machine that has
+     * just been switched on has a standing level on the mixer that the high pass takes a moment to
+     * carry away -- and nestest never touches the APU, so that thump is the whole of its sound.
+     * Which makes it exactly the right thing to mute: what is left afterwards is nothing at all.
+     */
+    @Test
+    void aMutedVoiceIsMissingFromTheSound() throws Exception {
+        run();
+
+        assertTrue(report().at("/audio/peak").asDouble() > 0.0, "the power-on step is the sound");
+        assertTrue(report().at("/audio/muted").isEmpty(), "and nothing is muted by default");
+
+        run("--mute", "triangle");
+
+        assertEquals(0.0, report().at("/audio/peak").asDouble());
+        assertEquals(60, report().at("/audio/silentFrames").asLong());
+        assertEquals("triangle", report().at("/audio/muted/0").asText(),
+                "which is the only thing in the report that tells the two runs apart");
+    }
+
+    /**
+     * A voice nobody could hear is not a change to the machine, which is what separates this from a
+     * hack: the picture, the cycle counts and everything under run are the run that was not muted.
+     */
+    @Test
+    void aMutedVoiceChangesNothingTheMachineDid() throws Exception {
+        run();
+
+        var plain = report();
+
+        run("--mute", "pulse1,pulse2,triangle,noise,dmc");
+
+        var silenced = report();
+
+        assertEquals(plain.at("/video/finalFrame/hash").asLong(),
+                silenced.at("/video/finalFrame/hash").asLong());
+        assertEquals(plain.at("/run/cpuCycles").asLong(), silenced.at("/run/cpuCycles").asLong());
+        assertEquals(plain.at("/audio/samples").asLong(), silenced.at("/audio/samples").asLong(),
+                "the chip still made every sample; they are all zero");
+    }
+
     @Test
     void aWavFileIsWrittenWhenItIsAskedFor() throws Exception {
         run("--audio");

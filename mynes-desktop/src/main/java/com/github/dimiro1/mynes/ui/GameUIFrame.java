@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Overclock;
@@ -147,6 +148,24 @@ public class GameUIFrame extends JFrame {
     private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
     private final JCheckBoxMenuItem hacksMenuUnlimitedSprites =
             new JCheckBoxMenuItem("Unlimited Sprites");
+
+    /**
+     * The five sound channels, ticked when they can be heard -- the same way round as the two layer
+     * switches above, and the same kind of thing: what a machine somebody is watching is allowed to
+     * show them.
+     * <p>
+     * Kept for the reason those are: they outlive the machines, and {@link #startMachine} replays
+     * every one of them onto whichever one is built next.
+     */
+    private final Map<APUChannel, JCheckBoxMenuItem> debugMenuChannels =
+            new EnumMap<>(APUChannel.class);
+
+    /**
+     * The Volume items, kept so that Louder and Quieter can move the dot. Setting it rather than
+     * clicking it, which fires no listener, is what keeps the three ways of picking a volume down to
+     * one path.
+     */
+    private final Map<Volume, JRadioButtonMenuItem> machineMenuVolumes = new EnumMap<>(Volume.class);
 
     /**
      * The one item in the Hacks menu that needs a cartridge. The menu as a whole is deliberately not
@@ -484,6 +503,8 @@ public class GameUIFrame extends JFrame {
         machineMenuMute.setSelected(config.muted());
         machineMenu.add(machineMenuMute);
 
+        machineMenu.add(volumeMenu());
+
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
 
@@ -516,6 +537,8 @@ public class GameUIFrame extends JFrame {
 
         debugMenuSprites.setMnemonic(KeyEvent.VK_S);
         debugMenu.add(debugMenuSprites);
+
+        debugMenu.add(soundChannelsMenu());
 
         // Not gated on a machine, unlike Debug: mostly these are preferences that are remembered and
         // re-applied to whatever runs next, so there is something to change before a ROM is open. The
@@ -944,6 +967,102 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Builds the Volume submenu: two steps and five positions.
+     * <p>
+     * Louder and Quieter are in here with the positions rather than out in the Machine menu,
+     * because they are the same setting reached the other way round -- and because they are the
+     * only two things in this program anybody adjusts while looking at the screen rather than at
+     * the menu, which is what the accelerators are for. Command with the two keys either side of
+     * the minus sign, which sit in the same physical place on every keyboard layout the way the
+     * function keys do and the letters do not.
+     * <p>
+     * The dot moves whichever way the volume was changed, so a Louder that lands on 75% ticks 75%.
+     */
+    private JMenu volumeMenu() {
+        var menu = new JMenu("Volume");
+        menu.setMnemonic(KeyEvent.VK_V);
+
+        var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+
+        var louder = new JMenuItem("Louder", KeyEvent.VK_L);
+        louder.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, command));
+        louder.addActionListener(e -> applyVolume(config.volume().louder()));
+        menu.add(louder);
+
+        var quieter = new JMenuItem("Quieter", KeyEvent.VK_Q);
+        quieter.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, command));
+        quieter.addActionListener(e -> applyVolume(config.volume().quieter()));
+        menu.add(quieter);
+
+        menu.addSeparator();
+
+        // The group is what makes them one choice rather than five independent ticks.
+        var group = new ButtonGroup();
+
+        for (var volume : Volume.values()) {
+            var item = new JRadioButtonMenuItem(volume.label(), volume == config.volume());
+
+            item.addActionListener(e -> applyVolume(volume));
+
+            group.add(item);
+            menu.add(item);
+            machineMenuVolumes.put(volume, item);
+        }
+
+        return menu;
+    }
+
+    /**
+     * Remembers a volume, ticks it, and tells the running machine.
+     * <p>
+     * One path for all three ways of picking one, because Louder and Quieter have to move the dot
+     * as well -- and a listener that fired on the way would set the volume it was leaving.
+     */
+    private void applyVolume(final Volume volume) {
+        config.setVolume(volume);
+        saveConfig();
+
+        machineMenuVolumes.get(volume).setSelected(true);
+        updateStatusBar();
+
+        if (runner != null) {
+            runner.setVolume(volume);
+        }
+    }
+
+    /**
+     * Builds the Sound Channels submenu, one tick per voice the APU mixes.
+     * <p>
+     * Beside Show Background and Show Sprites rather than anywhere near Mute, because it is the same
+     * kind of thing as those and not the same kind of thing as that: Mute is how loudly the machine
+     * is played and these change what it is playing. Ticked means audible, the way ticked means
+     * visible above.
+     * <p>
+     * What it is for is the question "which voice is that?". Untick four of them and the fifth is
+     * alone; untick one and hear what the music loses. Nothing a game can observe moves -- see
+     * {@link APUChannel} -- so the machine goes on running exactly as it was.
+     */
+    private JMenu soundChannelsMenu() {
+        var menu = new JMenu("Sound Channels");
+        menu.setMnemonic(KeyEvent.VK_U);
+
+        for (var channel : APUChannel.values()) {
+            var item = new JCheckBoxMenuItem(channel.label(), true);
+
+            item.addActionListener(e -> {
+                if (runner != null) {
+                    runner.setChannelMuted(channel, !item.isSelected());
+                }
+            });
+
+            menu.add(item);
+            debugMenuChannels.put(channel, item);
+        }
+
+        return menu;
+    }
+
+    /**
      * Builds the Fast Forward Speed submenu, one item per speed {@link EmulationSpeed} offers.
      * <p>
      * How fast is a matter of taste and of what the computer manages, so it is a setting rather
@@ -1286,7 +1405,9 @@ public class GameUIFrame extends JFrame {
                 config.screenshotScale(),
                 config.fastForwardSpeed(),
                 config.rewindSeconds(),
-                config.muted()));
+                config.muted(),
+                config.volume(),
+                config.audioLatencyMs()));
 
         statusBar.setActivity(machineState());
     }
@@ -2126,11 +2247,16 @@ public class GameUIFrame extends JFrame {
         // back.
         applyVideoFilter();
 
-        // A fresh PPU has both layers on and no hacks, but the menus remember what the last one was
-        // told. The runner has not started yet, so the machine is still this thread's to touch.
+        // A fresh PPU has both layers on and no hacks, and a fresh APU has all five voices in the
+        // mixer, but the menus remember what the last machine was told. The runner has not started
+        // yet, so the machine is still this thread's to touch.
         nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
         nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
         nes.getPPU().setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
+
+        for (var channel : APUChannel.values()) {
+            nes.getAPU().setChannelMuted(channel, !debugMenuChannels.get(channel).isSelected());
+        }
 
         // A movie carries its own, for the reason it carries the codes and a sharper one: this is
         // how much of its work the game gets through in a frame, so a replay at another setting is
@@ -2192,7 +2318,8 @@ public class GameUIFrame extends JFrame {
         frameRate.reset();
 
         runner = new EmulatorRunner(nes, screen, debugger,
-                Rewind.framesFor(nes.getRegion(), config.rewindSeconds()));
+                Rewind.framesFor(nes.getRegion(), config.rewindSeconds()),
+                config.audioLatencyMs());
         runner.setStopListener(this::stopped);
 
         // Per machine, like the controller above and for the same reason: each one keeps its own
@@ -2223,9 +2350,10 @@ public class GameUIFrame extends JFrame {
             debuggerFrame.setMachine(nes, runner);
         }
 
-        // Posted before the thread exists, so it is the first thing that runs on it: a machine
-        // started with the sound off must not get a frame of it in first.
+        // Posted before the thread exists, so they are the first things that run on it: a machine
+        // started with the sound off, or quiet, must not get a frame of it at full volume in first.
         runner.setMuted(machineMenuMute.isSelected());
+        runner.setVolume(config.volume());
         runner.start();
 
         machineMenu.setEnabled(true);

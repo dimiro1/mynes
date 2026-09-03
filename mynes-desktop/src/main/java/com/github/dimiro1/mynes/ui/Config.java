@@ -59,6 +59,8 @@ public final class Config {
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String MUTED_KEY = "audio.muted";
+    private static final String VOLUME_KEY = "audio.volume";
+    private static final String LATENCY_KEY = "audio.latency-ms";
     private static final String UNLIMITED_SPRITES_KEY = "hacks.unlimited-sprites";
     private static final String OVERCLOCK_KEY = "hacks.overclock";
     private static final String REWIND_SECONDS_KEY = "rewind.seconds";
@@ -170,7 +172,16 @@ public final class Config {
 
     private static final String AUDIO_HEADER = """
             # Whether Machine > Mute is on. true or false; anything else is taken as false, which
-            # is sound switched on.
+            # is sound switched on. audio.volume is how loud it is otherwise: 100, 75, 50, 25 or
+            # 10 percent, and Machine > Volume is the same setting. There is no 0, because Mute
+            # already is one and remembers the volume to come back to.
+            #
+            # audio.latency-ms is how much sound is kept queued at the sound card, and the one
+            # entry here with no menu item. Less of it is a button heard sooner; more of it is a
+            # machine that survives a longer hiccup without a click. Anything outside 20 to 200 is
+            # pulled into that range. The emulator resamples by up to half a percent to hold the
+            # queue at this figure, so it is what the latency really is rather than a ceiling on
+            # it.
             """;
 
     private static final String HACKS_HEADER = """
@@ -225,6 +236,8 @@ public final class Config {
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean muted;
+    private Volume volume;
+    private final int audioLatencyMs;
     private boolean unlimitedSprites;
     private OverclockSetting overclock;
     private int rewindSeconds;
@@ -249,6 +262,8 @@ public final class Config {
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean muted,
+            final Volume volume,
+            final int audioLatencyMs,
             final boolean unlimitedSprites,
             final OverclockSetting overclock,
             final int rewindSeconds,
@@ -266,6 +281,8 @@ public final class Config {
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.muted = muted;
+        this.volume = volume;
+        this.audioLatencyMs = audioLatencyMs;
         this.unlimitedSprites = unlimitedSprites;
         this.overclock = overclock;
         this.rewindSeconds = rewindSeconds;
@@ -309,6 +326,9 @@ public final class Config {
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, MUTED_KEY),
+                Volume.byId(
+                        properties.getProperty(VOLUME_KEY, Volume.defaultVolume().id()).trim()),
+                latencyFrom(properties),
                 flagFrom(properties, UNLIMITED_SPRITES_KEY),
                 OverclockSetting.byId(
                         properties.getProperty(OVERCLOCK_KEY, OverclockSetting.OFF.id()).trim()),
@@ -372,6 +392,43 @@ public final class Config {
 
             return null;
         }
+    }
+
+    /**
+     * How many milliseconds of sound to keep queued at the card.
+     * <p>
+     * The two ways of being wrong are answered the way {@link #rewindSecondsFrom} answers them, and
+     * for the same reason: a word is not a wish and a number out of range is one that can be granted
+     * approximately. {@link AudioOutput} clamps it again on the way in, since it is reachable
+     * without a config file at all.
+     */
+    private static int latencyFrom(final Properties properties) {
+        var value = properties.getProperty(LATENCY_KEY);
+
+        if (value == null) {
+            return AudioOutput.DEFAULT_LATENCY_MS;
+        }
+
+        int latency;
+
+        try {
+            latency = Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            logger.log(Level.WARNING, value.trim() + " is not a number of milliseconds, "
+                    + LATENCY_KEY + " falls back to " + AudioOutput.DEFAULT_LATENCY_MS);
+            return AudioOutput.DEFAULT_LATENCY_MS;
+        }
+
+        var clamped = Math.clamp(latency, AudioOutput.MIN_LATENCY_MS, AudioOutput.MAX_LATENCY_MS);
+
+        if (clamped != latency) {
+            logger.log(Level.WARNING,
+                    LATENCY_KEY + " is " + latency + ", which is outside "
+                            + AudioOutput.MIN_LATENCY_MS + " to " + AudioOutput.MAX_LATENCY_MS
+                            + " -- keeping " + clamped + "ms");
+        }
+
+        return clamped;
     }
 
     /**
@@ -633,6 +690,14 @@ public final class Config {
                 .append(MUTED_KEY)
                 .append('=')
                 .append(muted)
+                .append('\n')
+                .append(VOLUME_KEY)
+                .append('=')
+                .append(volume.id())
+                .append('\n')
+                .append(LATENCY_KEY)
+                .append('=')
+                .append(audioLatencyMs)
                 .append("\n\n");
 
         text.append(HACKS_HEADER)
@@ -833,6 +898,32 @@ public final class Config {
 
     public void setMuted(final boolean muted) {
         this.muted = muted;
+    }
+
+    /**
+     * How loud it is when it is not muted. Remembered for the reason the mute is, and kept apart
+     * from it for the reason {@link Volume} has no zero: the two answer different questions, and
+     * unmuting has to land back on the volume somebody chose.
+     */
+    public Volume volume() {
+        return volume;
+    }
+
+    public void setVolume(final Volume volume) {
+        this.volume = volume;
+    }
+
+    /**
+     * How much sound to keep queued at the card, in milliseconds. Already inside
+     * {@link AudioOutput#MIN_LATENCY_MS}..{@link AudioOutput#MAX_LATENCY_MS}.
+     * <p>
+     * There is no menu item for this one and no setter, which are the same decision: it is the
+     * question "how much delay will you trade for how much robustness", which is not one to answer
+     * by trying the five items until the clicking stops. The file is where it is set, and the status
+     * bar's tooltip is where it can be read back.
+     */
+    public int audioLatencyMs() {
+        return audioLatencyMs;
     }
 
     /**

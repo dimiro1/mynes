@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
@@ -100,7 +101,7 @@ public class EmulatorRunner {
 
     private final NES nes;
     private final ScreenComponent screen;
-    private final AudioOutput audio = new AudioOutput();
+    private final AudioOutput audio;
 
     /**
      * How long one frame of this machine lasts, which is the whole of what the region means to this
@@ -237,19 +238,24 @@ public class EmulatorRunner {
     private Thread thread;
 
     /**
-     * @param rewindFrames how many frames of history to keep so the machine can be run backwards
-     *                     through them, or 0 for a machine that keeps none -- which costs one null
-     *                     check a frame and nothing else. Frames rather than states: the ring holds
-     *                     one state per {@link #REWIND_INTERVAL} of them.
+     * @param rewindFrames    how many frames of history to keep so the machine can be run backwards
+     *                        through them, or 0 for a machine that keeps none -- which costs one
+     *                        null check a frame and nothing else. Frames rather than states: the
+     *                        ring holds one state per {@link #REWIND_INTERVAL} of them.
+     * @param audioLatencyMs  how much sound to keep the card holding, which is decided here rather
+     *                        than posted later: {@link AudioOutput#open()} is the first thing this
+     *                        thread does and the size of a line cannot be changed once it is open.
      */
     public EmulatorRunner(
             final NES nes,
             final ScreenComponent screen,
             final Debugger debugger,
-            final int rewindFrames) {
+            final int rewindFrames,
+            final int audioLatencyMs) {
         this.nes = nes;
         this.screen = screen;
         this.debugger = debugger;
+        this.audio = new AudioOutput(audioLatencyMs);
         this.frameNanos = nes.getRegion().frameNanos();
 
         var states = rewindFrames / REWIND_INTERVAL;
@@ -287,8 +293,9 @@ public class EmulatorRunner {
      * thread is likely to be sitting in.
      * <p>
      * The one wait it cannot cut is a full-buffer write to the sound card, which is not
-     * interruptible and can be another 67 milliseconds on top. Still under a tenth of a second,
-     * and only on the frame a machine happens to be torn down on.
+     * interruptible and can be another latency on top -- 60 milliseconds by default. Still under a
+     * tenth of a second, only on the frame a machine happens to be torn down on, and rarer than it
+     * was now that the rate control keeps the card half empty rather than letting it fill.
      */
     public void stop() {
         if (thread == null) {
@@ -568,12 +575,35 @@ public class EmulatorRunner {
     /**
      * Silences the sound, or lets it be heard again. Takes effect within a frame.
      * <p>
-     * The machine is not told: a muted APU still runs, still raises its interrupts and still
-     * paces the loop, because a game that sounded different depending on the volume would be a
-     * different game.
+     * The machine is not told: a muted APU still runs, still raises its interrupts and still fills
+     * the card with the silence that keeps the rate control fed, because a game that sounded
+     * different depending on the volume would be a different game. Which is also why this is not
+     * {@link #setChannelMuted} with all five voices named -- that one changes what the samples are,
+     * and this one changes only how loudly they are played.
      */
     public void setMuted(final boolean muted) {
         post(() -> audio.setMuted(muted));
+    }
+
+    /**
+     * How loud to play it. Takes effect within a frame, and does not lift a mute.
+     */
+    public void setVolume(final Volume volume) {
+        post(() -> audio.setVolume(volume));
+    }
+
+    /**
+     * Keeps one of the APU's five voices out of the mixer, or lets it back in.
+     * <p>
+     * Unlike {@link #setMuted} this one <em>is</em> the machine being told, and is the only thing on
+     * this class that changes the samples rather than the playback: it is the sound half of the
+     * Debug menu's layer switches, and it is how to find out which voice a noise belongs to.
+     * Nothing a game can observe moves -- see {@link APUChannel}.
+     */
+    public void setChannelMuted(final APUChannel channel, final boolean muted) {
+        var apu = nes.getAPU();
+
+        post(() -> apu.setChannelMuted(channel, muted));
     }
 
     private void run() {
@@ -720,7 +750,15 @@ public class EmulatorRunner {
                 // Skipped while stepping: the machine is still stopped, the card was emptied when
                 // it stopped, and a speed schedule belongs to a loop that is running.
                 if (!paused) {
-                    wasPaused = false;
+                    if (wasPaused) {
+                        // The other edge, and it matters more than the one going in: what the card
+                        // is holding is the tail of a pause, and behind it is an empty queue. The
+                        // rate control can only refill one at a couple of hundred samples a second,
+                        // so a resume that left it empty would click its way through the next ten
+                        // seconds of the game. Flushing lays a fresh cushion of silence down.
+                        audio.flush();
+                        wasPaused = false;
+                    }
 
                     if (this.speed != speed) {
                         // Both schedules start again from here rather than carrying a deadline
@@ -835,12 +873,13 @@ public class EmulatorRunner {
                     continue;
                 }
 
-                // A frame's worth of sound, handed over before the picture is: at normal speed
-                // this blocks until the card has room, which is the other half of the pacing
-                // below, and there is no sense making the audio wait on a frame that is only
-                // going to be dropped anyway. Fast forwarding cannot block -- there is no way to
-                // hand a sound card audio faster than real time -- so what does not fit is lost,
-                // and fast forward sounds chopped rather than sped up.
+                // A frame's worth of sound, handed over before the picture is. At normal speed it
+                // is rate controlled against how full the card is and written blocking, which the
+                // rate control is what stops from ever actually blocking; the deadline below is
+                // what paces the loop, and two things pacing one loop is what the drift the rate
+                // control exists to remove was made of. Fast forwarding is not paced by anything --
+                // there is no way to hand a sound card audio faster than real time -- so what does
+                // not fit is lost, and it sounds chopped rather than sped up.
                 audio.write(samples, sampleCount, speed == EmulationSpeed.NORMAL);
 
                 // Fast forward finishes frames faster than any display can show them, so most of

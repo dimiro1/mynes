@@ -5,7 +5,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -191,6 +194,117 @@ class APUMixerTests {
 
         private double tndLevel(final int n) {
             return n == 0 ? 0.0 : 163.67 / (24329.0 / n + 100);
+        }
+    }
+
+    @Nested
+    @DisplayName("the voices somebody has switched off")
+    class Muting {
+        @Test
+        void everyVoiceIsAudibleUntilSomebodyAsks() {
+            for (var channel : APUChannel.values()) {
+                assertFalse(apu.isChannelMuted(channel), channel.id());
+            }
+        }
+
+        @Test
+        void aMutedVoiceIsNotHeard() {
+            armBothPulses();
+
+            apu.setChannelMuted(APUChannel.PULSE_1, true);
+            apu.setChannelMuted(APUChannel.PULSE_2, true);
+
+            // Four frames for the high pass to take away the step that switching them off is.
+            for (var i = 0; i < 4; i++) {
+                frame();
+            }
+
+            for (var sample : frame()) {
+                assertEquals(0, sample, "expected silence but got " + sample);
+            }
+        }
+
+        @Test
+        void theOthersAreStillHeard() {
+            armBothPulses();
+
+            apu.setChannelMuted(APUChannel.PULSE_1, true);
+
+            frame();
+
+            assertTrue(loudest(frame()) > 1000, "pulse 2 should still be playing");
+        }
+
+        @Test
+        void lettingItBackInBringsItBack() {
+            armBothPulses();
+
+            apu.setChannelMuted(APUChannel.PULSE_1, true);
+            apu.setChannelMuted(APUChannel.PULSE_2, true);
+
+            for (var i = 0; i < 4; i++) {
+                frame();
+            }
+
+            apu.setChannelMuted(APUChannel.PULSE_1, false);
+            apu.setChannelMuted(APUChannel.PULSE_2, false);
+
+            frame();
+
+            assertTrue(loudest(frame()) > 1000, "both pulses should be back");
+        }
+
+        /**
+         * The whole claim this makes about itself: it happens at the mixer and nowhere the chip can
+         * see, so everything upstream runs exactly as it would have. $4015 is the only thing a game
+         * can read the APU through, so a run of it read frame by frame is the whole of what there is
+         * to compare -- and the length counter running out is the interesting moment in it.
+         */
+        @Test
+        void theMachineCannotTell() {
+            assertArrayEquals(statusOverTenFrames(false), statusOverTenFrames(true));
+        }
+
+        private int[] statusOverTenFrames(final boolean muted) {
+            var chip = new APU(level -> { }, level -> { });
+
+            chip.setChannelMuted(APUChannel.PULSE_1, muted);
+
+            chip.write(0x4015, 0x01);
+            chip.write(0x4000, 0x1F);  // 12.5% duty, no halt, constant volume 15
+            chip.write(0x4001, 0x00);
+            chip.write(0x4002, 0x40);
+            chip.write(0x4003, 0x18);  // length index 3, which is two half frames
+
+            var status = new int[10];
+
+            for (var i = 0; i < status.length; i++) {
+                for (var cycle = 0; cycle < FRAME_CYCLES; cycle++) {
+                    chip.tick();
+                }
+
+                status[i] = chip.readStatus();
+            }
+
+            return status;
+        }
+
+        @Test
+        void aChannelIsNamedTheSameWayEverywhere() {
+            assertEquals(APUChannel.PULSE_1, APUChannel.byId("pulse1"));
+            assertEquals(APUChannel.DMC, APUChannel.byId(" DMC "));
+            assertNull(APUChannel.byId("pulse3"));
+            assertEquals("pulse1, pulse2, triangle, noise, dmc", APUChannel.ids());
+        }
+
+        private int loudest(final short[] samples) {
+            var peak = 0;
+
+            for (var sample : samples) {
+                peak = Math.max(peak, Math.abs(sample));
+            }
+
+            return peak;
         }
     }
 

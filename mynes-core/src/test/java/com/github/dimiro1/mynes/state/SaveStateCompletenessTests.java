@@ -105,6 +105,10 @@ class SaveStateCompletenessTests {
             Map.entry("APU.sampleRead", "an index into that queue"),
             Map.entry("APU.sampleWrite", "an index into that queue"),
             Map.entry("APU.sampleCount", "how full that queue is"),
+            Map.entry("APU.mutedChannels",
+                    "which voices whoever is listening has switched off, which is the Debug menu's"
+                            + " ticks rather than anything the chip holds -- the same argument as"
+                            + " PPU.backgroundLayerVisible, and the machine cannot tell either way"),
             Map.entry("CPU.speculating",
                     "true only in the middle of a halted cycle, which is run and then taken back."
                             + " A state is taken between cycles, where it is always false"),
