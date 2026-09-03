@@ -34,6 +34,7 @@ Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring y
 | Rewind (hold) | Backspace |
 | Screenshot | F12 |
 | Copy Screenshot | Cmd/Ctrl+F12 |
+| Louder / Quieter | Cmd/Ctrl+= and Cmd/Ctrl+- |
 
 Remap anything under **Settings > Controller...** — click a button, press a key, done. Everything
 lands in `~/.mynes/config.properties`, which you can also edit by hand:
@@ -42,12 +43,14 @@ lands in `~/.mynes/config.properties`, which you can also edit by hand:
 video.palette=nesdev
 video.scale=2
 emulation.fast-forward=4x
+audio.latency-ms=60
 rewind.seconds=30
 controller1.a=VK_X
 ```
 
 Key names are the `VK_` constants from `java.awt.event.KeyEvent`. `rewind.seconds=0` switches
-rewind off — that one has no menu item, so the file is where it lives.
+rewind off and `audio.latency-ms` trades delay for robustness — those two have no menu item, so the
+file is where they live.
 
 ## What works
 
@@ -75,6 +78,16 @@ rewind off — that one has no menu item, so the file is where it lives.
 - Whole-number scaling from 1x to 4x, with free window resizing on top.
 - Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
 - A status bar showing the real frame rate and any setting that isn't the default one.
+
+**Sound**
+
+- Dynamic rate control: the emulator watches how full the sound card is and resamples by up to half
+  a percent to hold it there, so the two clocks drifting apart stops being a click every few
+  minutes. The latency is `audio.latency-ms` in the config file, 60 ms by default.
+- Volume in five steps under **Machine > Volume**, or `Cmd/Ctrl+=` and `Cmd/Ctrl+-`. Mute is
+  separate and remembers the volume to come back to.
+- Per-channel mute under **Debug > Sound Channels** — untick four of the five and hear what the
+  fifth is playing. It happens at the mixer, so the game can't tell.
 
 **Playing**
 
@@ -106,7 +119,8 @@ rewind off — that one has no menu item, so the file is where it lives.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
 - A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, and an OAM
   viewer showing all sixty-four sprites.
-- Toggles to hide the background or the sprite layer.
+- Toggles to hide the background or the sprite layer, and to take any of the five sound channels
+  out of the mixer (`--mute pulse1,dmc` headless).
 
 Not there yet: a second player, and Dendy (run as PAL for now).
 

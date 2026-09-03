@@ -219,6 +219,16 @@ public class APU {
     private int sampleCount;
 
     /**
+     * Which voices are being kept out of the mixer, one bit per {@link APUChannel#ordinal()}.
+     * <p>
+     * A bitmask rather than five booleans or a set, because {@link #mix()} reads it once per CPU
+     * cycle -- 1.79 million times a second -- and what a machine nobody is debugging should pay for
+     * it is one load and a bit test per channel. The shift folds away: every call site names a
+     * constant.
+     */
+    private int mutedChannels;
+
+    /**
      * @param frameIRQHandler the frame counter's end of the shared /IRQ line.
      * @param dmcIRQHandler   the DMC's end of the shared /IRQ line.
      */
@@ -348,10 +358,46 @@ public class APU {
      * really share.
      */
     private double mix() {
-        var pulses = pulse1.output() + pulse2.output();
-        var rest = 3 * triangle.output() + 2 * noise.output() + dmc.output;
+        var pulses = audible(APUChannel.PULSE_1, pulse1.output())
+                + audible(APUChannel.PULSE_2, pulse2.output());
+        var rest = 3 * audible(APUChannel.TRIANGLE, triangle.output())
+                + 2 * audible(APUChannel.NOISE, noise.output())
+                + audible(APUChannel.DMC, dmc.output);
 
         return PULSE_TABLE[pulses] + TND_TABLE[rest];
+    }
+
+    /**
+     * A channel's level, or zero if somebody has switched that voice off.
+     * <p>
+     * Zeroed here, at the mixer, rather than anywhere the channel could notice. Everything upstream
+     * runs exactly as it did -- the timer, the sequencer, the envelope, the length counter -- so
+     * $4015 answers the same, the interrupts still arrive, and the DMC still stops the CPU to fetch
+     * its bytes. And zeroing the <em>level</em> rather than subtracting the channel's contribution
+     * is what keeps the ladders honest: a silent voice on a resistor ladder is a voice putting out
+     * nothing, which is what the other four are then mixed against.
+     */
+    private int audible(final APUChannel channel, final int level) {
+        return (mutedChannels & (1 << channel.ordinal())) == 0 ? level : 0;
+    }
+
+    /**
+     * Keeps one voice out of the mixer, or lets it back in.
+     * <p>
+     * A debug tool rather than a feature of the console -- see {@link APUChannel} for what it does
+     * not touch. Off for every channel until somebody asks, and deliberately not part of a save
+     * state: it belongs to whoever is listening.
+     */
+    public void setChannelMuted(final APUChannel channel, final boolean muted) {
+        if (muted) {
+            mutedChannels |= 1 << channel.ordinal();
+        } else {
+            mutedChannels &= ~(1 << channel.ordinal());
+        }
+    }
+
+    public boolean isChannelMuted(final APUChannel channel) {
+        return (mutedChannels & (1 << channel.ordinal())) != 0;
     }
 
     private static short clamp(final double sample) {

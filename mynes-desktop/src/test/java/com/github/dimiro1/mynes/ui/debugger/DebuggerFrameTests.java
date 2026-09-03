@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
 import org.junit.jupiter.api.BeforeAll;
@@ -41,7 +42,8 @@ class DebuggerFrameTests {
         debugger.attach(nes);
 
         // Never started, so the machine is this thread's throughout and nothing below races.
-        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0);
+        runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0,
+                AudioOutput.DEFAULT_LATENCY_MS);
     }
 
     @Test

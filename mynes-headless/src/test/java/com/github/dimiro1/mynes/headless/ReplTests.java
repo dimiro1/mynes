@@ -248,6 +248,55 @@ class ReplTests {
         assertFalse(replies.get(2).get("on").asBoolean());
     }
 
+    @Test
+    void aVoiceCanBeSwitchedOutAndBackMidSession() throws Exception {
+        var replies = session(
+                "run 5",
+                "mute",
+                "mute triangle on",
+                "mute dmc on",
+                "mute triangle off",
+                "quit");
+
+        replies.forEach(reply -> assertTrue(reply.get("ok").asBoolean(), reply.toString()));
+
+        assertTrue(replies.get(1).get("muted").isEmpty(), "nothing is muted to begin with");
+
+        assertEquals("triangle", replies.get(2).get("channel").asText());
+        assertTrue(replies.get(2).get("on").asBoolean(), "so jq .on works here as it does for hack");
+
+        assertEquals(
+                List.of("triangle", "dmc"),
+                names(replies.get(3).get("muted")),
+                "the whole list rides along, in the order the chip mixes them");
+
+        assertEquals(List.of("dmc"), names(replies.get(4).get("muted")));
+    }
+
+    @Test
+    void aVoiceThatIsMisspeltOrHalfTypedIsAnError() throws Exception {
+        var replies = session(
+                "mute pulse3 on",
+                "mute noise",
+                "mute noise maybe",
+                "quit");
+
+        for (var i = 0; i < 3; i++) {
+            assertFalse(replies.get(i).get("ok").asBoolean(), replies.get(i).toString());
+        }
+
+        assertTrue(replies.getFirst().get("error").asText().contains("pulse3"));
+        assertTrue(replies.get(2).get("error").asText().contains("maybe"));
+    }
+
+    private static List<String> names(final JsonNode array) {
+        var names = new ArrayList<String>();
+
+        array.forEach(node -> names.add(node.asText()));
+
+        return names;
+    }
+
     /**
      * Taking the same frame twice and diffing the two pictures is the whole use for this command,
      * so what it has to support is switching without the machine moving underneath it.

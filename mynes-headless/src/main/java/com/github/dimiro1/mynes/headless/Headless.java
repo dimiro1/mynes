@@ -188,6 +188,20 @@ public final class Headless {
             session.nes().getPPU().setUnlimitedSprites(
                     options.hacks().contains(Options.UNLIMITED_SPRITES));
 
+            // Not machine state either, and for the same reason as the layer switches rather than as
+            // the hacks: this is whoever is listening rather than anything the chip holds. Which is
+            // also why it survives a --load-state and rides freely with --play -- a replay does not
+            // depend on which voices anybody could hear.
+            for (var channel : options.mute()) {
+                session.nes().getAPU().setChannelMuted(channel, true);
+            }
+
+            if (!options.mute().isEmpty()) {
+                logger.log(Level.INFO, "muted " + options.mute().size()
+                        + " of the APU's five voices; the machine is unchanged, so audio.muted"
+                        + " rather than the picture is what tells this run from a plain one");
+            }
+
             // The other hack, and the one that has to come off the movie when there is one: it
             // changes how much of its work the game gets through in a frame, so a replay at another
             // setting is a replay of a different game. --play and --hack overclock refuse each

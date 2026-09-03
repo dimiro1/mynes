@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
 import com.github.dimiro1.mynes.APU;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.video.VideoFilter;
@@ -331,6 +332,21 @@ public final class Report {
         audio.put("peak", audioStats.peak());
         audio.put("rms", audioStats.rms());
         audio.put("silentFrames", audioStats.silentFrames());
+
+        // The one thing on the comparability checklist that is not under run, and put here on
+        // purpose: everything a muted voice changes is one of the five numbers above it, and nothing
+        // it changes is anything the machine did. Read back off the machine rather than off the
+        // command line, for the reason run.hacks is: a session that switched one half way through is
+        // reported as it ended. Walked in the enum's own order rather than the set's, so two reports
+        // of one run list them the same way round, and empty rather than absent when nobody muted
+        // anything.
+        var muted = audio.putArray("muted");
+
+        for (var channel : APUChannel.values()) {
+            if (nes.getAPU().isChannelMuted(channel)) {
+                muted.add(channel.id());
+            }
+        }
 
         if (options.audio()) {
             audio.put("wav", options.wavPath().toString());

@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.APU;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenie;
@@ -95,6 +97,9 @@ public final class Repl {
             record start               start writing down what is pressed
             record stop [PATH]         stop, and write it where --record said if PATH is left off
             audio                      peak, RMS and silence since the last audio command
+            mute [NAME on|off]         list the voices that are switched off, or switch one: pulse1,
+                                       pulse2, triangle, noise or dmc. Nothing the game can observe
+                                       changes
             help                       this
             quit                       stop
 
@@ -289,6 +294,7 @@ public final class Repl {
             case "rewind" -> rewind(words);
             case "record" -> record(words);
             case "audio" -> audio();
+            case "mute" -> mute(words);
             case "help" -> reply("help", node -> node.put("commands", HELP));
             default -> error(name, "\"" + name + "\" is not a command. Try help.");
         }
@@ -1288,6 +1294,74 @@ public final class Repl {
             node.put("totalSamples", total.samples());
             node.put("totalPeak", total.peak());
         });
+    }
+
+    /**
+     * Keeps one of the APU's five voices out of the mixer, or says which are already out.
+     * <p>
+     * The shape of {@code hack NAME on|off} rather than of {@code genie}, because a voice is
+     * switched rather than put down and picked up -- and with a bare listing form on top, which
+     * {@code hack} has no use for and this does: it is the debugging tool of the three, and "which
+     * of these did I leave off" is the question it gets asked after four of them are.
+     * <p>
+     * Worth having as a command rather than only as a flag for the reason {@code hack} is: the whole
+     * use of it is the difference between two answers taken from one machine. Run to the bar the
+     * question is about, mute the triangle, {@code audio}, unmute it, {@code audio} again -- and
+     * nothing about the machine changed between the two, because nothing here reaches it.
+     */
+    private void mute(final String[] words) {
+        var apu = session.nes().getAPU();
+
+        if (words.length < 2) {
+            reply("mute", node -> putMuted(node, apu));
+            return;
+        }
+
+        var channel = APUChannel.byId(words[1]);
+
+        if (channel == null) {
+            throw new UsageException(
+                    "mute does not know \"" + words[1] + "\". It knows " + APUChannel.ids() + ".");
+        }
+
+        if (words.length < 3) {
+            throw new UsageException(
+                    "mute " + channel.id() + " is switched on or off, as in \"mute " + channel.id()
+                            + " on\" to silence it.");
+        }
+
+        var on = switch (words[2].toLowerCase(Locale.ROOT)) {
+            case "on" -> true;
+            case "off" -> false;
+            default -> throw new UsageException(
+                    "mute " + channel.id() + " is switched on or off, not \"" + words[2] + "\".");
+        };
+
+        apu.setChannelMuted(channel, on);
+
+        // "on" rather than "muted" for the switch, which is the shape hack NAME on|off replies in
+        // and leaves the name free for the list -- two keys called muted, one a boolean and one an
+        // array, would be a reply nothing could read.
+        reply("mute", node -> {
+            node.put("channel", channel.id());
+            node.put("on", on);
+
+            putMuted(node, apu);
+        });
+    }
+
+    /**
+     * The whole list, in the enum's own order, so that two replies from one session line up. Empty
+     * rather than absent when every voice is audible, for the reason the report's array is.
+     */
+    private static void putMuted(final Json.Object node, final APU apu) {
+        var muted = node.putArray("muted");
+
+        for (var candidate : APUChannel.values()) {
+            if (apu.isChannelMuted(candidate)) {
+                muted.add(candidate.id());
+            }
+        }
     }
 
     // ================================================================================== internals

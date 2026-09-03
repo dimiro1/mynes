@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.headless;
 
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
@@ -17,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -56,6 +58,10 @@ import java.util.TreeSet;
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
+ * @param mute             which of the APU's five voices to keep out of the mixer. Not a hack and
+ *                         not a change to the machine -- see {@link APUChannel} -- but it does
+ *                         change every number under {@code audio} in the report, which is why
+ *                         {@code audio.muted} is what tells a muted run from a plain one.
  * @param hacks            which of the things the hardware does not do to switch on.
  * @param overclock        how many idle scanlines a frame to add, which is the one hack that takes
  *                         a number rather than a yes. {@link Overclock#NONE} unless one was named.
@@ -102,6 +108,7 @@ public record Options(
         FilterStrength strength,
         boolean warp,
         boolean audio,
+        Set<APUChannel> mute,
         Set<String> hacks,
         Overclock overclock,
         List<GameGenieCode> genie,
@@ -289,6 +296,14 @@ public record Options(
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
                                     44100Hz. The report's peak, RMS and silent frame counts are
                                     there either way; this only adds the file.
+              --mute NAME[,NAME..]  Keep a voice out of the mixer: pulse1, pulse2, triangle, noise
+                                    or dmc. Repeatable. Nothing the game can observe changes -- the
+                                    length counters still count, $4015 answers the same, and the
+                                    DMC still steals its cycles -- so this is how to ask which voice
+                                    a noise is coming from rather than a hack. It does change the
+                                    peak, the RMS, the silent frame count and the WAV, so
+                                    audio.muted in the report is what tells a muted run from a plain
+                                    one.
 
             Hacks, which are things the console does not do
               --hack NAME[,NAME..]  Switch one on. All of them are off unless named here, and
@@ -443,6 +458,7 @@ public record Options(
         var strength = FilterStrength.defaultStrength();
         var warp = false;
         var audio = false;
+        var mute = EnumSet.noneOf(APUChannel.class);
         var hacks = new LinkedHashSet<String>();
         var overclock = Overclock.NONE;
         var genie = new ArrayList<GameGenieCode>();
@@ -503,6 +519,7 @@ public record Options(
                 }
                 case "--warp" -> warp = true;
                 case "--audio" -> audio = true;
+                case "--mute" -> parseMute(value(args, ++i, flag), mute);
                 case "--hack" -> overclock =
                         parseHacks(value(args, ++i, flag), hacks, overclock);
                 case "--genie" -> parseGenie(value(args, ++i, flag), genie);
@@ -605,6 +622,7 @@ public record Options(
                 strength,
                 warp,
                 audio,
+                Set.copyOf(mute),
                 Set.copyOf(hacks),
                 overclock,
                 List.copyOf(genie),
@@ -771,6 +789,28 @@ public record Options(
         }
 
         return last;
+    }
+
+    /**
+     * Reads a channel list, adding what it names to {@code mute}.
+     * <p>
+     * An unknown name is refused rather than stepped over, for the reason {@link #parseHacks}
+     * refuses one: a run where the voice somebody wanted silenced was still playing would look
+     * exactly like a run where it had nothing to play, and the whole use of this flag is telling
+     * those two apart.
+     */
+    private static void parseMute(final String text, final Set<APUChannel> mute) {
+        for (var name : text.split(",", -1)) {
+            var channel = APUChannel.byId(name);
+
+            if (channel == null) {
+                throw new UsageException(
+                        "--mute does not know \"" + name.trim() + "\". It knows "
+                                + APUChannel.ids() + ".");
+            }
+
+            mute.add(channel);
+        }
     }
 
     /**

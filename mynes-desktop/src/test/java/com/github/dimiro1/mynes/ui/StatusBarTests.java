@@ -49,6 +49,8 @@ class StatusBarTests {
         private final EmulationSpeed fastForward = EmulationSpeed.FOUR_TIMES;
         private int rewindSeconds = 30;
         private boolean muted;
+        private Volume volume = Volume.defaultVolume();
+        private int audioLatencyMs = AudioOutput.DEFAULT_LATENCY_MS;
 
         Setup on(final Region region, final RegionSetting setting) {
             this.region = region;
@@ -106,10 +108,15 @@ class StatusBarTests {
             return this;
         }
 
+        Setup at(final Volume volume) {
+            this.volume = volume;
+            return this;
+        }
+
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
                     unlimitedSprites, filter, strength, warp, palette, screenScale,
-                    screenshotScale, fastForward, rewindSeconds, muted);
+                    screenshotScale, fastForward, rewindSeconds, muted, volume, audioLatencyMs);
         }
     }
 
@@ -295,6 +302,24 @@ class StatusBarTests {
         }
 
         @Test
+        void aVolumeSomebodyTurnedDownIsNamed() {
+            assertEquals("NTSC · Volume 25%", line(setup().at(Volume.QUARTER).machine()));
+        }
+
+        @Test
+        void fullVolumeIsNotWorthSaying() {
+            assertEquals("NTSC", line(setup().at(Volume.FULL).machine()));
+        }
+
+        /**
+         * A mute is the whole answer, so the bar does not go on to offer a second one.
+         */
+        @Test
+        void aMutedMachineDoesNotAlsoNameItsVolume() {
+            assertEquals("NTSC · Muted", line(setup().silent().at(Volume.QUARTER).machine()));
+        }
+
+        @Test
         void aScreenshotSizeIsNamedOnlyWhenItIsNotThePictureTheMachineDrew() {
             assertEquals("NTSC · Screenshot 3x",
                     line(setup().shotAt(ScreenScale.THREE_TIMES).machine()));
@@ -381,7 +406,8 @@ class StatusBarTests {
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
                     "Unlimited sprites", "Video filter", "Filter strength", "Palette",
                     "Curved glass", "Screen size",
-                    "Screenshot size", "Fast forward speed", "Rewind history", "Sound"}) {
+                    "Screenshot size", "Fast forward speed", "Rewind history", "Sound", "Volume",
+                    "Audio latency"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
             }
         }
@@ -408,6 +434,32 @@ class StatusBarTests {
             assertTrue(detail.contains("Game Genie&nbsp;&nbsp;&nbsp;</td><td>None"), detail);
             assertTrue(detail.contains("Unlimited sprites&nbsp;&nbsp;&nbsp;</td><td>Off"), detail);
             assertTrue(detail.contains("Sound&nbsp;&nbsp;&nbsp;</td><td>On"), detail);
+        }
+
+        /**
+         * The two settings with no menu item, which makes this tooltip the one place in the window
+         * either of them can be read at all.
+         */
+        @Test
+        void theSettingsWithNoMenuItemAreReadableHere() {
+            var detail = StatusBar.detail(setup().keeping(45).machine());
+
+            assertTrue(detail.contains("Rewind history&nbsp;&nbsp;&nbsp;</td><td>45 seconds"),
+                    detail);
+            assertTrue(detail.contains("Audio latency&nbsp;&nbsp;&nbsp;</td><td>"
+                    + AudioOutput.DEFAULT_LATENCY_MS + " ms"), detail);
+        }
+
+        /**
+         * Unlike the line on screen, which stops at the mute: this is the inventory, and what the
+         * volume is set to is a fact about the emulator whether or not it can be heard.
+         */
+        @Test
+        void aMutedMachineStillSaysWhatItsVolumeIs() {
+            var detail = StatusBar.detail(setup().silent().at(Volume.HALF).machine());
+
+            assertTrue(detail.contains("Sound&nbsp;&nbsp;&nbsp;</td><td>Muted"), detail);
+            assertTrue(detail.contains("Volume&nbsp;&nbsp;&nbsp;</td><td>50%"), detail);
         }
 
         /**
