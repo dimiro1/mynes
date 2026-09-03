@@ -6,6 +6,7 @@ import com.github.dimiro1.mynes.debug.Debugger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
@@ -88,6 +89,39 @@ class MachineSnapshotTests {
         }
 
         assertNotEquals(0, MachineSnapshot.of(nes, debugger).trail().length);
+    }
+
+    /**
+     * The pointer names the next free slot, so a byte pushed is one above it -- and the listing
+     * shows the top first, because that is the order the bytes come off in.
+     */
+    @Test
+    void theStackIsReadTopFirstFromAboveThePointer() {
+        var memory = nes.getMemory();
+
+        // The first step is the reset sequence, which leaves the pointer at $FD: two slots already
+        // spoken for, and the top of the stack at $01FE.
+        nes.step();
+        assertEquals(0xFD, nes.getCPU().getState().sp());
+
+        memory.write(0x01FE, 0x11);
+        memory.write(0x01FF, 0x22);
+
+        var snapshot = MachineSnapshot.of(nes, debugger);
+
+        assertEquals(0x01FE, snapshot.stackTop());
+        assertArrayEquals(new int[]{0x11, 0x22}, snapshot.stack());
+    }
+
+    @Test
+    void theBeamAndTheScrollRegistersRideAlong() {
+        var snapshot = MachineSnapshot.of(nes, debugger);
+
+        assertEquals(nes.getPPU().getScanline(), snapshot.scanline());
+        assertEquals(nes.getPPU().getV(), snapshot.v());
+        assertEquals(nes.getPPU().getT(), snapshot.t());
+        assertEquals(8, snapshot.spriteHeight());
+        assertEquals(0x0000, snapshot.backgroundPatternTable());
     }
 
     /**

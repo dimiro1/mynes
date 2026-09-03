@@ -1,150 +1,279 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.formdev.flatlaf.FlatClientProperties;
+import com.github.dimiro1.mynes.debug.Debugger;
 import net.miginfocom.swing.MigLayout;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.KeyStroke;
+import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
-import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
-import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Toolkit;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 
 /**
- * A hex view of the CPU's address space, sixteen bytes to a row.
+ * A hex view of the CPU's address space.
  * <p>
- * Every byte comes out of the snapshot rather than out of the machine, which is what makes it safe
- * to have a table model at all: Swing asks a model for cells whenever it repaints, and a model that
- * answered by reading the machine would be reading a running one.
+ * The whole 64K in one scrolling table -- see {@link MemoryModel} for why -- with a box to jump to
+ * an address and a list of the places worth jumping to, since "the stack", "cartridge RAM" and
+ * "wherever the PC is" are what somebody actually wants and nobody remembers that the APU starts at
+ * $4000 while they are thinking about something else.
+ * <p>
+ * The colours are the point of the renderer. A page of hex is unreadable because every byte has
+ * the same weight; fading the zeros makes the shape of the data show through, and the three bytes
+ * somebody is most likely looking for -- the one at the PC, the top of the stack, and the one a
+ * watchpoint just caught -- are the three that are coloured.
  */
 final class MemoryPanel extends JPanel {
-    private static final int ROWS = 16;
-    private static final int COLUMNS = 16;
-
     /**
      * The window the PPU and the controllers answer on, which {@code peek} deliberately reads as
-     * zero rather than for real. Greyed, so that a row of zeros there is not mistaken for a machine
+     * zero rather than for real. Faded, so that a row of zeros there is not mistaken for a machine
      * that has cleared its registers.
      */
     private static final int REGISTERS_FROM = 0x2000;
     private static final int REGISTERS_TO = 0x4020;
 
-    private final Model model = new Model();
-    private final JTextField address = new JTextField("0000", 6);
+    /**
+     * Somewhere in the address space worth a name. The two with no fixed address are resolved
+     * against the snapshot when they are chosen.
+     */
+    private enum Landmark {
+        PROMPT("Go to…", -1),
+        ZERO_PAGE("Zero page  $0000", 0x0000),
+        STACK("Stack  $0100", 0x0100),
+        RAM("RAM  $0200", 0x0200),
+        PPU("PPU registers  $2000", 0x2000),
+        APU("APU and I/O  $4000", 0x4000),
+        CART_RAM("Cartridge RAM  $6000", 0x6000),
+        PRG("PRG ROM  $8000", 0x8000),
+        VECTORS("Vectors  $FFFA", 0xFFFA),
+        PC("PC", -1),
+        SP("Stack top", -1);
 
-    private MachineSnapshot snapshot;
-    private int base;
+        private final String label;
+        private final int address;
 
-    MemoryPanel() {
-        super(new MigLayout("insets 8, fill", "[][grow,fill]", "[][grow,fill]"));
+        Landmark(final String label, final int address) {
+            this.label = label;
+            this.address = address;
+        }
 
-        setBorder(BorderFactory.createTitledBorder("Memory"));
-
-        var table = new JTable(model);
-        table.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        table.setRowSelectionAllowed(false);
-        table.setDefaultRenderer(Object.class, new Renderer());
-        table.getTableHeader().setReorderingAllowed(false);
-        table.setToolTipText("Registers at $2000-$401F read as zero on purpose: looking at them"
-                + " for real would clear latches the game is using.");
-
-        address.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        address.addActionListener(e -> goTo(address.getText()));
-
-        add(new JLabel("Address"));
-        add(address, "wrap");
-        add(new JScrollPane(table), "span 2, grow");
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 
-    void show(final MachineSnapshot snapshot) {
-        this.snapshot = snapshot;
+    private final MemoryModel model = new MemoryModel();
+    private final JTable table = new JTable(model);
+    private final JTextField address = new JTextField(7);
+    private final JComboBox<Landmark> landmarks = new JComboBox<>(Landmark.values());
+    private final JLabel selected = new JLabel(" ");
 
-        model.fireTableDataChanged();
+    private MachineSnapshot snapshot;
+
+    /**
+     * The address a watchpoint caught on the last stop, or -1.
+     */
+    private int hit = -1;
+
+    MemoryPanel() {
+        super(new MigLayout("insets 4 8 8 8, fill", "[][grow][][][]", "[][grow,fill]"));
+
+        table.setFont(Theme.MONOSPACED);
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        table.setCellSelectionEnabled(true);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setDefaultRenderer(Object.class, new Renderer());
+        table.getTableHeader().setReorderingAllowed(false);
+        table.getTableHeader().setResizingAllowed(false);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setToolTipText("Registers at $2000-$401F read as zero on purpose: looking at them"
+                + " for real would clear latches the game is using.");
+        table.getSelectionModel().addListSelectionListener(e -> describeSelection());
+        table.getColumnModel().getSelectionModel().addListSelectionListener(e -> describeSelection());
+
+        sizeColumns();
+
+        selected.setFont(Theme.MONOSPACED);
+        selected.setForeground(Theme.muted());
+
+        address.setFont(Theme.MONOSPACED);
+        address.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "$0000");
+        address.setToolTipText("An address, in hex. Enter or Go jumps there.");
+        address.addActionListener(e -> goToTyped());
+
+        var go = new JButton("Go");
+        go.setToolTipText("Jump to that address");
+        go.addActionListener(e -> goToTyped());
+
+        landmarks.setToolTipText("Somewhere worth looking");
+        landmarks.addActionListener(e -> goToLandmark());
+
+        var scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+
+        add(Theme.heading("Memory"));
+        add(selected, "gapleft 12");
+        add(address, "gapleft 8, gapright 4");
+        add(go, "gapright 8");
+        add(landmarks, "wrap");
+        add(scroll, "span 5, grow");
+
+        bindGoTo();
+    }
+
+    /**
+     * Redraws from a fresh snapshot, keeping the scroll position: the user was looking at
+     * something, and a step should show them how it changed rather than send them back to $0000.
+     */
+    void show(final MachineSnapshot snapshot, final Debugger.Stop stop) {
+        this.snapshot = snapshot;
+        this.hit = stop != null && stop.reason() == Debugger.Reason.WATCHPOINT ? stop.address() : -1;
+
+        model.setSnapshot(snapshot);
+        describeSelection();
     }
 
     void clear() {
         snapshot = null;
+        hit = -1;
 
-        model.fireTableDataChanged();
+        model.setSnapshot(null);
+        selected.setText(" ");
     }
 
     /**
-     * Moves the view.
-     * <p>
-     * A bare number here is <em>hexadecimal</em>, unlike the REPL's, where it is decimal. This is a
-     * box next to a grid of hex, and somebody typing {@code 6000} into it means $6000; being taken
-     * to $1770 instead would be a small daily annoyance. A leading {@code $} or {@code 0x} works
-     * too, and a word that is not a number at all leaves the view where it was rather than jumping
-     * somewhere arbitrary.
+     * Scrolls the row holding this address to the top of the view and selects the byte.
      */
-    private void goTo(final String text) {
-        var trimmed = text.trim();
+    void goTo(final int address) {
+        var row = MemoryModel.rowOf(address);
+        var column = MemoryModel.columnOf(address);
+        var cell = table.getCellRect(row, column, true);
 
-        try {
-            var parsed = trimmed.startsWith("$")
-                    ? Integer.parseInt(trimmed.substring(1), 16)
-                    : trimmed.startsWith("0x") || trimmed.startsWith("0X")
-                    ? Integer.parseInt(trimmed.substring(2), 16)
-                    : Integer.parseInt(trimmed, 16);
+        // The rect asked for is a whole viewport tall, starting at the row, which is what puts the
+        // row at the top rather than merely somewhere on screen.
+        cell.height = Math.max(cell.height, table.getVisibleRect().height);
+        cell.x = 0;
+        table.scrollRectToVisible(cell);
 
-            base = (parsed & 0xFFFF) & -COLUMNS;
-            model.fireTableDataChanged();
-        } catch (NumberFormatException e) {
-            address.setText(String.format("%04X", base));
+        table.changeSelection(row, column, false, false);
+    }
+
+    // ================================================================================== internals
+
+    /**
+     * Widths from the font rather than from pixel counts, so that a different font size on a
+     * different machine still shows whole addresses. This is the bug the old window had: eighteen
+     * columns sharing the width equally, and "$..." where the address should have been.
+     */
+    private void sizeColumns() {
+        var metrics = table.getFontMetrics(table.getFont());
+        var pad = metrics.charWidth('0');
+        var columns = table.getColumnModel();
+
+        table.setRowHeight(metrics.getHeight() + 4);
+
+        for (var column = 0; column < MemoryModel.COLUMNS; column++) {
+            var width = switch (column) {
+                case MemoryModel.ADDRESS_COLUMN -> metrics.stringWidth("$0000") + pad * 2;
+                case MemoryModel.SPACER_COLUMN -> pad;
+                case MemoryModel.ASCII_COLUMN -> metrics.stringWidth("W".repeat(16)) + pad * 2;
+                default -> metrics.stringWidth("00") + pad;
+            };
+
+            var model = columns.getColumn(column);
+
+            model.setMinWidth(width);
+            model.setMaxWidth(width);
+            model.setPreferredWidth(width);
         }
     }
 
-    private final class Model extends AbstractTableModel {
-        @Override
-        public int getRowCount() {
-            return ROWS;
+    /**
+     * The platform's shortcut key and G, which is where every editor puts "go to". Bound on the
+     * window rather than the field, so that it works while the table has focus.
+     */
+    private void bindGoTo() {
+        var shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        var key = KeyStroke.getKeyStroke(KeyEvent.VK_G, shortcut);
+
+        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, "goTo");
+        getActionMap().put("goTo", new AbstractAction() {
+            @Override
+            public void actionPerformed(final ActionEvent e) {
+                address.requestFocusInWindow();
+                address.selectAll();
+            }
+        });
+    }
+
+    /**
+     * A word that is not an address leaves the view where it was and the text selected, rather
+     * than jumping somewhere arbitrary.
+     */
+    private void goToTyped() {
+        try {
+            goTo(Addresses.parse(address.getText()));
+            address.setText("");
+            table.requestFocusInWindow();
+        } catch (IllegalArgumentException e) {
+            address.selectAll();
+        }
+    }
+
+    private void goToLandmark() {
+        var landmark = (Landmark) landmarks.getSelectedItem();
+
+        if (landmark == null || landmark == Landmark.PROMPT) {
+            return;
         }
 
-        @Override
-        public int getColumnCount() {
-            return COLUMNS + 2;
+        var target = switch (landmark) {
+            case PC -> snapshot == null ? -1 : snapshot.cpu().pc();
+            case SP -> snapshot == null ? -1 : Math.min(0x01FF, snapshot.stackTop());
+            default -> landmark.address;
+        };
+
+        if (target >= 0) {
+            goTo(target);
         }
 
-        @Override
-        public String getColumnName(final int column) {
-            if (column == 0) {
-                return "";
-            }
+        // Back to the prompt, so the box reads as a menu of places rather than as a setting that
+        // is still "PC" three steps later when the view is somewhere else entirely.
+        landmarks.setSelectedItem(Landmark.PROMPT);
+    }
 
-            return column == COLUMNS + 1 ? "ASCII" : String.format("%X", column - 1);
+    private void describeSelection() {
+        var row = table.getSelectedRow();
+        var column = table.getSelectedColumn();
+        var at = row < 0 || column < 0 ? -1 : MemoryModel.addressAt(row, column);
+
+        if (at < 0 || snapshot == null) {
+            selected.setText(" ");
+
+            return;
         }
 
-        @Override
-        public Object getValueAt(final int row, final int column) {
-            var start = (base + row * COLUMNS) & 0xFFFF;
+        var value = snapshot.read(at);
 
-            if (column == 0) {
-                return String.format("$%04X", start);
-            }
-
-            if (snapshot == null) {
-                return column == COLUMNS + 1 ? "" : "--";
-            }
-
-            if (column == COLUMNS + 1) {
-                var text = new StringBuilder(COLUMNS);
-
-                for (var i = 0; i < COLUMNS; i++) {
-                    var value = snapshot.read(start + i);
-
-                    text.append(value >= 0x20 && value < 0x7F ? (char) value : '.');
-                }
-
-                return text.toString();
-            }
-
-            return String.format("%02X", snapshot.read(start + column - 1));
-        }
+        selected.setText(String.format("$%04X = $%02X  %d  %%%8s", at, value, value,
+                Integer.toBinaryString(value)).replace(' ', '0').replace("=0$", "= $"));
     }
 
     private final class Renderer extends DefaultTableCellRenderer {
@@ -152,19 +281,45 @@ final class MemoryPanel extends JPanel {
         public Component getTableCellRendererComponent(
                 final JTable table,
                 final Object value,
-                final boolean selected,
+                final boolean isSelected,
                 final boolean focused,
                 final int row,
                 final int column) {
 
-            super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+            super.getTableCellRendererComponent(table, value, isSelected, false, row, column);
 
-            var start = (base + row * COLUMNS) & 0xFFFF;
+            var at = MemoryModel.addressAt(row, column);
+            var text = column == MemoryModel.ASCII_COLUMN || column == MemoryModel.ADDRESS_COLUMN;
 
-            setHorizontalAlignment(column == COLUMNS + 1 ? SwingConstants.LEFT : SwingConstants.CENTER);
-            setForeground(start >= REGISTERS_FROM && start < REGISTERS_TO
-                    ? Color.GRAY
-                    : table.getForeground());
+            setHorizontalAlignment(text ? SwingConstants.LEFT : SwingConstants.CENTER);
+            setFont(Theme.MONOSPACED);
+
+            if (isSelected) {
+                return this;
+            }
+
+            setBackground(Theme.background());
+
+            if (column == MemoryModel.ADDRESS_COLUMN) {
+                setForeground(Theme.muted());
+            } else if (at < 0 || snapshot == null) {
+                setForeground(Theme.dim());
+            } else if (at == hit) {
+                setForeground(Theme.breakpoint());
+                setFont(Theme.MONOSPACED.deriveFont(Font.BOLD));
+            } else if (at == snapshot.cpu().pc()) {
+                setForeground(Theme.accent());
+                setBackground(Theme.currentRow());
+            } else if (at == snapshot.stackTop() && at <= 0x01FF) {
+                setForeground(Theme.stackPointer());
+                setFont(Theme.MONOSPACED.deriveFont(Font.BOLD));
+            } else if (at >= REGISTERS_FROM && at < REGISTERS_TO) {
+                setForeground(Theme.dim());
+            } else if (snapshot.read(at) == 0) {
+                setForeground(Theme.dim());
+            } else {
+                setForeground(Theme.foreground());
+            }
 
             return this;
         }

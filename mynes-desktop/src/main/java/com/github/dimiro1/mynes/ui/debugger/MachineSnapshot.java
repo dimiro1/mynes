@@ -16,6 +16,14 @@ import com.github.dimiro1.mynes.debug.Debugger;
  * So the machine is read exactly once, on the event dispatch thread, from inside the stop callback,
  * with the machine halted and a happens-before edge behind it. Everything painted afterwards is
  * painted from this.
+ *
+ * @param v                      the PPU's current VRAM address, which is where the beam is reading.
+ * @param t                      the temporary one, which is what the next frame will start from.
+ * @param fineX                  the fine horizontal scroll, the three bits $2005 keeps outside t.
+ * @param writeLatch             whether the next $2005/$2006 write is the second of a pair.
+ * @param backgroundPatternTable $0000 or $1000, by $2000 bit 4.
+ * @param spritePatternTable     $0000 or $1000, by $2000 bit 3 -- ignored for tall sprites.
+ * @param spriteHeight           8 or 16.
  */
 record MachineSnapshot(
         CPU.State cpu,
@@ -23,6 +31,13 @@ record MachineSnapshot(
         int scanline,
         int dot,
         boolean renderingEnabled,
+        int v,
+        int t,
+        int fineX,
+        boolean writeLatch,
+        int backgroundPatternTable,
+        int spritePatternTable,
+        int spriteHeight,
         int[] bus,
         int[] trail) {
 
@@ -31,6 +46,11 @@ record MachineSnapshot(
      */
     private static final int CART_RAM = 0x6000;
     private static final int CART_RAM_SIZE = 0x2000;
+
+    /**
+     * Where the stack lives. The 6502 has one page of it and no way to move it.
+     */
+    private static final int STACK_PAGE = 0x0100;
 
     /**
      * Reads the whole machine.
@@ -66,12 +86,43 @@ record MachineSnapshot(
                 ppu.getScanline(),
                 ppu.getDot(),
                 ppu.isRenderingEnabled(),
+                ppu.getV(),
+                ppu.getT(),
+                ppu.getFineX(),
+                ppu.isWriteLatchSet(),
+                ppu.getBackgroundPatternTable(),
+                ppu.getSpritePatternTable(),
+                ppu.getSpriteHeight(),
                 bus,
                 debugger.trail());
     }
 
     int read(final int address) {
         return bus[address & 0xFFFF];
+    }
+
+    /**
+     * The address of the byte on top of the stack, or $0200 when there is nothing on it.
+     * <p>
+     * The pointer names the next free slot rather than the last used one, so the top is one above
+     * it -- and an empty stack's top would be $0200, which is the first address that is not stack.
+     */
+    int stackTop() {
+        return STACK_PAGE + cpu.sp() + 1;
+    }
+
+    /**
+     * What is on the stack, top first, which is the order it will come off in.
+     */
+    int[] stack() {
+        var depth = 0xFF - cpu.sp();
+        var out = new int[depth];
+
+        for (var i = 0; i < depth; i++) {
+            out[i] = read(stackTop() + i);
+        }
+
+        return out;
     }
 
     /**
