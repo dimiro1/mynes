@@ -102,7 +102,8 @@ rewind off — that one has no menu item, so the file is where it lives.
 **Debugging**
 
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
-  watchpoints, single stepping, a live disassembly and a hex view of the address space.
+  watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
+  the address space.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
 - A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, and an OAM
   viewer showing all sixty-four sprites.

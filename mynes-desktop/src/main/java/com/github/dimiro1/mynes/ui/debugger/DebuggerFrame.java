@@ -12,11 +12,19 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
-import java.util.Locale;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.util.Map;
 import java.util.Set;
 
@@ -39,16 +47,23 @@ import java.util.Set;
  * </ol>
  * There is deliberately no refresh timer. The CHR viewer's poll is exactly the wrong idea here: it
  * would be polling a running machine, and what came back could not be trusted.
+ * <p>
+ * The panes are split rather than fixed because no two questions want the same shape of window: a
+ * raster bug wants the registers, a corrupted table wants the memory, a lost jump wants the listing
+ * and nothing else. The dividers remember nothing between sessions, which is deliberate for now --
+ * a window that opened at a size chosen for the last bug is a small trap.
  */
 public final class DebuggerFrame extends JFrame {
     private final Debugger debugger;
 
-    private final DisassemblyPanel disassembly = new DisassemblyPanel();
+    private final DisassemblyPanel disassembly = new DisassemblyPanel(new Listing());
     private final RegistersPanel registers = new RegistersPanel();
+    private final StackPanel stack = new StackPanel();
     private final MemoryPanel memory = new MemoryPanel();
     private final PointsPanel points;
 
-    private final JLabel status = new JLabel("running");
+    private final Dot dot = new Dot();
+    private final JLabel status = new JLabel("Running");
     private final JButton run = new JButton("Run");
     private final JButton breakNow = new JButton("Break");
     private final JButton step = new JButton("Step");
@@ -62,6 +77,17 @@ public final class DebuggerFrame extends JFrame {
      * whether closing it should let the machine go again.
      */
     private boolean stoppedByUs;
+
+    /**
+     * The breakpoints as the debugger last reported them, so that Run to Here can tell a point it
+     * put down itself from one the user did and only take the first kind back up.
+     */
+    private Set<Integer> knownBreakpoints = Set.of();
+
+    /**
+     * A breakpoint this window put down for Run to Here and owes the debugger back, or -1.
+     */
+    private int runToAddress = -1;
 
     public DebuggerFrame(
             final Component parent,
@@ -79,33 +105,84 @@ public final class DebuggerFrame extends JFrame {
 
     private void init(final Component parent) {
         setTitle("Debugger");
-        setLayout(new MigLayout("fill, insets 8", "[grow,fill][320!]", "[][grow,fill][260!]"));
+        setLayout(new MigLayout("fill, insets 0, gap 0", "[grow,fill]", "[][grow,fill][]"));
 
         run.addActionListener(e -> resume());
         breakNow.addActionListener(e -> runner.breakNow());
         step.addActionListener(e -> stepInstruction());
         stepFrame.addActionListener(e -> stepOneFrame());
 
-        disassembly.addSelectionListener(this::toggleBreakpointAtSelection);
+        run.setToolTipText("Let the machine go (F5)");
+        breakNow.setToolTipText("Stop at the next instruction");
+        step.setToolTipText("Run one instruction (F10)");
+        stepFrame.setToolTipText("Run to the end of the frame (F8)");
 
-        var controls = new JPanel(new MigLayout("insets 0", "[][][][]push[]", ""));
+        var controls = new JPanel(new MigLayout("insets 8 8 4 8, gap 4", "[][][][]push", ""));
         controls.add(run);
         controls.add(breakNow);
         controls.add(step);
         controls.add(stepFrame);
-        controls.add(status);
 
-        add(controls, "span 2, growx, wrap");
-        add(disassembly, "grow");
-        add(registers, "grow, wrap");
-        add(memory, "grow");
-        add(points, "grow");
+        var side = new JPanel(new MigLayout("insets 0, fill, wrap 1, gap 0", "[grow,fill]", "[][grow,fill]"));
+        side.add(registers);
+        side.add(stack, "hmin 120");
+        // A split pane opens its divider at the first component's preferred width and never takes
+        // one below its minimum, so both are said for every pane: the preferred sizes are where the
+        // dividers start, and the minimums are what stops a drag from squashing a panel into
+        // buttons drawn as "...". The points panel works its own minimum out from its rows.
+        disassembly.setPreferredSize(new Dimension(700, 400));
+        disassembly.setMinimumSize(new Dimension(380, 160));
+        side.setPreferredSize(new Dimension(400, 400));
+        side.setMinimumSize(new Dimension(300, 200));
+        memory.setPreferredSize(new Dimension(660, 280));
+        memory.setMinimumSize(new Dimension(420, 120));
+        points.setPreferredSize(new Dimension(Math.max(440, points.getMinimumSize().width), 280));
+
+        var top = split(JSplitPane.HORIZONTAL_SPLIT, disassembly, side, 0.7);
+        var bottom = split(JSplitPane.HORIZONTAL_SPLIT, memory, points, 0.62);
+        var body = split(JSplitPane.VERTICAL_SPLIT, top, bottom, 0.56);
+
+        var hints = new JLabel(hints());
+        hints.setForeground(Theme.muted());
+        hints.setFont(hints.getFont().deriveFont(11f));
+
+        var strip = new JPanel(new MigLayout("insets 5 10 7 10, gap 6", "[][grow][]", "[]"));
+        strip.add(dot);
+        strip.add(status);
+        strip.add(hints);
+
+        add(controls, "wrap");
+        add(body, "wrap");
+        add(strip);
 
         bindKeys();
 
-        setSize(1000, 720);
+        setSize(1120, 780);
+        setMinimumSize(new Dimension(900, 620));
         setLocationRelativeTo(parent);
         running();
+    }
+
+    private static JSplitPane split(
+            final int orientation, final Component first, final Component second, final double weight) {
+
+        var pane = new JSplitPane(orientation, true, first, second);
+
+        pane.setResizeWeight(weight);
+        pane.setDividerSize(6);
+        pane.setBorder(null);
+
+        return pane;
+    }
+
+    /**
+     * The keys, spelled for the platform: {@code ⌘G} here, {@code Ctrl+G} elsewhere.
+     */
+    private static String hints() {
+        var shortcut = InputEvent.getModifiersExText(
+                Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx());
+
+        return "F5 Run   F10 Step   F8 Step Frame   F9 Breakpoint   " + shortcut + "G Go to";
     }
 
     /**
@@ -152,6 +229,7 @@ public final class DebuggerFrame extends JFrame {
         // but the listing and the memory are emptied rather than left to be believed.
         disassembly.clear();
         memory.clear();
+        stack.clear();
 
         running();
     }
@@ -165,19 +243,33 @@ public final class DebuggerFrame extends JFrame {
 
         var snapshot = MachineSnapshot.of(nes, debugger);
         var breaks = Set.copyOf(debugger.breakpoints());
+        var conditions = Map.copyOf(debugger.conditions());
 
-        disassembly.show(snapshot, breaks);
+        knownBreakpoints = breaks;
+
+        disassembly.show(snapshot, breaks, conditions);
         registers.show(snapshot);
-        memory.show(snapshot);
-        points.show(
-                breaks, Map.copyOf(debugger.conditions()), Map.copyOf(debugger.watchpoints()));
+        stack.show(snapshot);
+        memory.show(snapshot, stop);
+        points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
 
         status.setText(describe(stop));
+        dot.setColour(Theme.stopped());
 
         run.setEnabled(true);
         breakNow.setEnabled(false);
         step.setEnabled(true);
         stepFrame.setEnabled(true);
+
+        // The point Run to Here put down has done its job, wherever the machine actually stopped:
+        // a watchpoint that fired first is a real answer, and leaving the temporary point behind
+        // would stop the machine there again later, at a place nobody asked to break any more.
+        if (runToAddress >= 0) {
+            var address = runToAddress;
+
+            runToAddress = -1;
+            edit(() -> debugger.removeBreakpoint(address));
+        }
     }
 
     /**
@@ -187,7 +279,9 @@ public final class DebuggerFrame extends JFrame {
         stoppedByUs = false;
 
         registers.stale();
-        status.setText("running");
+        stack.stale();
+        status.setText("Running");
+        dot.setColour(Theme.running());
 
         run.setEnabled(false);
         breakNow.setEnabled(true);
@@ -243,6 +337,35 @@ public final class DebuggerFrame extends JFrame {
     }
 
     /**
+     * What the listing asks for.
+     */
+    private final class Listing implements DisassemblyPanel.Actions {
+        @Override
+        public void toggleBreakpoint(final int address) {
+            DebuggerFrame.this.toggleBreakpoint(address);
+        }
+
+        /**
+         * A breakpoint and a resume, with the breakpoint taken back at the next stop -- unless the
+         * user already had one there, in which case it is theirs and stays.
+         */
+        @Override
+        public void runTo(final int address) {
+            if (!knownBreakpoints.contains(address)) {
+                runToAddress = address;
+                edit(() -> debugger.addBreakpoint(address));
+            }
+
+            resume();
+        }
+
+        @Override
+        public void showInMemory(final int address) {
+            memory.goTo(address);
+        }
+    }
+
+    /**
      * What the points panel asks for, all of it posted onto the emulation thread.
      */
     private final class Editing implements PointsPanel.Points {
@@ -288,21 +411,56 @@ public final class DebuggerFrame extends JFrame {
             var watches = Map.copyOf(debugger.watchpoints());
 
             SwingUtilities.invokeLater(() -> {
+                knownBreakpoints = breaks;
                 points.show(breaks, conditions, watches);
-                disassembly.setBreakpoints(breaks);
+                disassembly.setBreakpoints(breaks, conditions);
             });
         });
     }
 
     private static String describe(final Debugger.Stop stop) {
-        var reason = stop.reason().name().toLowerCase(Locale.ROOT);
+        return "Stopped  ·  " + switch (stop.reason()) {
+            case BREAKPOINT -> String.format("breakpoint at $%04X", stop.pc());
+            case WATCHPOINT -> String.format(
+                    "watchpoint: $%04X %s $%02X by the instruction at $%04X",
+                    stop.address(),
+                    stop.access() == Debugger.Access.READ ? "read as" : "written with",
+                    stop.value(),
+                    stop.by());
+            case STEP -> String.format("stepped to $%04X", stop.pc());
+            case FRAME -> String.format("end of frame, at $%04X", stop.pc());
+            case ASKED -> String.format("at $%04X", stop.pc());
+        };
+    }
 
-        if (stop.reason() == Debugger.Reason.WATCHPOINT) {
-            return String.format(
-                    "%s: $%04X %s $%02X, by $%04X",
-                    reason, stop.address(), stop.access().id(), stop.value(), stop.by());
+    /**
+     * The little circle beside the status: one colour for a machine that is going and another for
+     * one that is not, which is readable from across the room where the word is not.
+     */
+    private static final class Dot extends JComponent {
+        private Color colour = Color.GRAY;
+
+        private Dot() {
+            setPreferredSize(new Dimension(10, 10));
+            setMinimumSize(getPreferredSize());
         }
 
-        return String.format("%s at $%04X", reason, stop.pc());
+        void setColour(final Color colour) {
+            this.colour = colour;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(final Graphics g) {
+            var g2 = (Graphics2D) g.create();
+
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(colour);
+                g2.fillOval(1, 1, getWidth() - 2, getHeight() - 2);
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 }
