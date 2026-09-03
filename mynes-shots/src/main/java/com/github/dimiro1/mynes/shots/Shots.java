@@ -9,6 +9,7 @@ import com.github.dimiro1.mynes.headless.InputSchedule;
 import com.github.dimiro1.mynes.headless.Session;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.state.SaveState;
+import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.GameUIFrame;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
@@ -374,8 +375,10 @@ public final class Shots {
 
         onEdt(() -> {
             // Never started: the window only needs something to hand its buttons, and the machine
-            // is already exactly where the picture wants it.
-            var runner = new EmulatorRunner(nes, new ScreenComponent(), debugger, 0);
+            // is already exactly where the picture wants it. So no ring and no sound card either --
+            // the latency is a number for a line that is never opened.
+            var runner = new EmulatorRunner(
+                    nes, new ScreenComponent(), debugger, 0, AudioOutput.DEFAULT_LATENCY_MS);
 
             window[0] = new DebuggerFrame(null, nes, runner, debugger);
             window[0].stopped(stopped);
