@@ -1,13 +1,16 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. Four modules -- `mynes-core`, `mynes-patch`,
-`mynes-headless`, `mynes-desktop` -- and `mvn -B test` at the root still runs everything.
+A NES emulator in Java 25, built with Maven. Five modules -- `mynes-core`, `mynes-patch`,
+`mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test` at the root still runs
+everything.
 
 ## Seeing what the emulator does
 
 **Use headless mode.** Do not write a harness that reaches into `GameUIFrame`'s private fields, and
 do not photograph the screen with `java.awt.Robot`. Everything those used to do is a flag now, and
-a flag survives a refactor.
+a flag survives a refactor. The one camera in the repository is `mynes-shots`, and it exists for
+the README's pictures of the *window*, which is the one thing a flag cannot draw -- see
+[Taking the README's pictures](#taking-the-readmes-pictures).
 
 Build the jar once, then run it as often as you like:
 
@@ -491,6 +494,40 @@ makes **the same edit twice**, once as the `.ips` above and once as ten codes at
 addresses, and asserts the two draw byte-identical pictures. That works because the hello-world
 cartridge is 32KB of PRG and so unmirrored, which makes file offset `n` exactly CPU `$8000 + (n-16)`.
 
+## Taking the README's pictures
+
+`shots/` is not drawn by hand and is not edited by hand. One command retakes every picture in it
+but AccuracyCoin's results table:
+
+```sh
+mvn -q compile exec:exec@shots -Dshots.args="--roms DIR"
+```
+
+`DIR` holds the three cartridges named at the top of `Shots`, as No-Intro names them, and nothing
+in the repository does: the pictures are of real games, which is why the module can only run on a
+machine that has them. `--out` puts the pictures somewhere other than `shots/`, and
+`--only name,name` takes a few rather than all twelve -- the names are the file names without
+`.png`, and an unknown one is refused with the list.
+
+Two kinds of picture come out of it, and they are taken two ways. A picture of the *game* -- the
+two filter pictures -- is a framebuffer, written by the headless `Session` with no window
+anywhere. A picture of a *window* has the window's chrome in it, which only the screen has, so the
+real Swing windows are put up and photographed: through macOS's `screencapture`, which leaves the
+pointer out, and through `java.awt.Robot` anywhere else, which draws it in. The viewers and the
+debugger are built straight from their constructors around a machine the `Session` put at the
+right frame, so those pictures are deterministic. The game window is driven through its own menus
+-- File > Open Recent, Machine > Quick Load, Settings > Palette... -- and is the one thing on the
+clock: it is handed a save state taken at the frame wanted and photographed a moment later.
+
+**It needs a display and a logged-in session**, so it does not run in CI and `mvn -B test` only
+compiles it. That compile is the point of its being a module rather than a script kept somewhere
+gitignored: it uses the window's public surface and nothing private, so a refactor that breaks the
+camera breaks the build, where the old harness broke at the next release.
+
+The window's settings go to a temporary home rather than to `~/.mynes`, because opening a game
+from the menu rewrites the recent list. Nothing depends on `mynes-shots`, so the jar and the zip
+carry none of it.
+
 ## What gets released
 
 `mvn package` also writes `mynes-desktop/target/mynes-<version>.zip` -- the jar, a launcher for each
@@ -537,7 +574,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
-Four Maven modules, and the arrows between them only point one way.
+Five Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
@@ -563,6 +600,9 @@ mynes-desktop/        depends on core, patch and headless; FlatLaf and MigLayout
   mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger
   mynes/ui/ppuviewer/ the two windows over what the PPU is drawing from: the four nametables with
                       the scroll window over them, and the sixty four sprites with their attributes
+
+mynes-shots/          depends on desktop, and nothing depends on it
+  mynes/shots/        the camera that takes the README's pictures off the real window
 ```
 
 `mynes-patch` is beside the console rather than inside it because IPS says nothing about what it

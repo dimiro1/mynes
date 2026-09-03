@@ -79,7 +79,7 @@
 
                  Run from the root and without naming a module, which is why the parent declares
                  this same plugin and this same execution id skipped: the goal is invoked on every
-                 project in the reactor, and four of the five have no main class to give it.
+                 project in the reactor, and all but this one have no main class to give it.
 
                  Both forks of the same goal, and deliberately not exec:java for the second, which
                  would be the obvious choice. exec:java cannot read this plugin's configuration at
