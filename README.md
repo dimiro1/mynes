@@ -18,7 +18,8 @@ cd mynes-0.3.0
 The same zip works on macOS, Windows and Linux. You need Java 25 —
 [Adoptium](https://adoptium.net) has builds for everything.
 
-Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own.
+Then **File > Open...** and pick a `.nes` file, or drag one onto the window. No ROMs are
+included, so bring your own.
 
 ## Controls
 

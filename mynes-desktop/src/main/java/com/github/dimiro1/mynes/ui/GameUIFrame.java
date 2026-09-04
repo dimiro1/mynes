@@ -388,6 +388,12 @@ public class GameUIFrame extends JFrame {
         statusBar.setVisible(config.statusBar());
         add(statusBar, BorderLayout.SOUTH);
 
+        // On the window rather than on the picture, because the whole of it is what somebody aims a
+        // cartridge at: a drop that worked over the middle and not over the status bar or the menu
+        // bar would look broken rather than particular. Neither of those has a drop target of its
+        // own, so AWT walks up to this one.
+        setTransferHandler(new RomDrop(rom -> open(rom, null)));
+
         var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
         JMenuBar menuBar = new JMenuBar();
