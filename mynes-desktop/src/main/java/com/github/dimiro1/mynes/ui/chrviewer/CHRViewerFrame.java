@@ -3,6 +3,8 @@ package com.github.dimiro1.mynes.ui.chrviewer;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
+import com.github.dimiro1.mynes.ui.PauseBox;
+import com.github.dimiro1.mynes.ui.PauseControl;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
 
@@ -41,6 +43,7 @@ public class CHRViewerFrame extends JFrame {
     private final JLabel selectedLabel = new JLabel();
     private final TilesViewerPanel tilesViewer;
     private final TileComponent selectedTile;
+    private final PauseBox pause;
     private final Timer refreshTimer;
 
     private int baseAddress = 0;
@@ -64,7 +67,8 @@ public class CHRViewerFrame extends JFrame {
             final Component parent,
             final Cart cart,
             final PPU ppu,
-            final NESPalette palette) {
+            final NESPalette palette,
+            final PauseControl pauseControl) {
         super();
         this.parent = parent;
         this.cart = cart;
@@ -74,6 +78,7 @@ public class CHRViewerFrame extends JFrame {
         this.tilesViewer = new TilesViewerPanel(cart);
         this.selectedTile = new TileComponent(
                 selectedTileNumber, baseAddress, 272, 272, cart.mapper());
+        this.pause = new PauseBox(pauseControl);
         this.refreshTimer = new Timer(REFRESH_MILLIS, e -> refresh());
 
         init();
@@ -97,12 +102,19 @@ public class CHRViewerFrame extends JFrame {
         tiles.add(tilesViewer, "top");
         tiles.add(selectedTile, "top");
 
-        var controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
-        controls.add(new JLabel("Bank:"));
-        controls.add(getChrBankJComboBox());
-        controls.add(new JLabel("Palette:"));
-        controls.add(getPaletteJComboBox());
-        controls.add(getMode8x16JCheckBox());
+        var options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+        options.add(new JLabel("Bank:"));
+        options.add(getChrBankJComboBox());
+        options.add(new JLabel("Palette:"));
+        options.add(getPaletteJComboBox());
+        options.add(getMode8x16JCheckBox());
+
+        // Pause at the far end, away from the controls that only change what is drawn: this one
+        // changes the machine, which is a different kind of thing to be clicking.
+        var controls = new JPanel(new BorderLayout());
+        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
+        controls.add(options, BorderLayout.WEST);
+        controls.add(pause, BorderLayout.EAST);
 
         selectedLabel.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
         updateSelectedLabel();
@@ -111,6 +123,7 @@ public class CHRViewerFrame extends JFrame {
         add(tiles, BorderLayout.CENTER);
         add(controls, BorderLayout.SOUTH);
         pack();
+        pause.installIn(getRootPane());
         setLocationRelativeTo(parent);
     }
 
@@ -136,6 +149,7 @@ public class CHRViewerFrame extends JFrame {
         updatePaletteColours();
         tilesViewer.refreshTiles();
         selectedTile.refresh();
+        pause.refresh();
     }
 
     /**

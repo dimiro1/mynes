@@ -291,4 +291,49 @@ class PPURegisterTests extends PPUFixture {
             assertEquals(0x00, ppu.peek(PPUSTATUS) & 0x80, "still nothing, a whole frame's worth");
         }
     }
+
+    /**
+     * The two things $2001 does to a colour on its way out of the chip, read back the way a debug
+     * window over palette RAM has to read them: they recolour the whole picture without changing a
+     * byte anybody can see, so a viewer showing the bytes has to say so separately.
+     */
+    @Nested
+    @DisplayName("the mask register's colour bits")
+    class Colour {
+        @Test
+        void greyscaleIsBitZero() {
+            assertFalse(ppu.isGreyscale(), "off at power on");
+
+            ppu.write(PPUMASK, 0x01);
+            assertFalse(ppu.isGreyscale(), "a $2001 write has two dots to travel first");
+
+            run(MASK_UPDATE_DOTS);
+            assertTrue(ppu.isGreyscale());
+
+            setMask(0xFE);
+            assertFalse(ppu.isGreyscale(), "and every other bit leaves it alone");
+        }
+
+        @Test
+        void emphasisIsTheTopThreeBits() {
+            assertEquals(0, ppu.getEmphasis(), "none at power on");
+
+            setMask(0x20);
+            assertEquals(1, ppu.getEmphasis(), "bit 5 is red");
+
+            setMask(0x40);
+            assertEquals(2, ppu.getEmphasis(), "bit 6 is green");
+
+            setMask(0x80);
+            assertEquals(4, ppu.getEmphasis(), "bit 7 is blue");
+
+            setMask(0xFF);
+            assertEquals(7, ppu.getEmphasis(), "and all three at once");
+        }
+
+        private void setMask(final int value) {
+            ppu.write(PPUMASK, value);
+            run(MASK_UPDATE_DOTS);
+        }
+    }
 }

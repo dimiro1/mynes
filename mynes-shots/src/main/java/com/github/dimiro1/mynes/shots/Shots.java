@@ -12,20 +12,24 @@ import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.GameUIFrame;
+import com.github.dimiro1.mynes.ui.PauseControl;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
+import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
 import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
+import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.event.MenuEvent;
@@ -37,6 +41,7 @@ import java.awt.Image;
 import java.awt.Rectangle;
 import java.awt.Robot;
 import java.awt.Window;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -127,6 +132,14 @@ public final class Shots {
     private static final List<String> GENIE_CODES = List.of("SXIOPO", "AVPAZLGV", "GOSSIP");
 
     private static final int FRAMEBUFFER_SCALE = 2;
+
+    /**
+     * Which swatch the palette viewer's picture is taken with the pointer on, in its content pane's
+     * coordinates. A background palette rather than a sprite one, because the region a background
+     * palette lights up is the shape of the attribute bytes and so the more surprising picture.
+     */
+    private static final int PALETTE_CELL_X = 104;
+    private static final int PALETTE_CELL_Y = 196;
 
     /**
      * Where a window is put.
@@ -227,6 +240,7 @@ public final class Shots {
         pictures.put("filter-crt", () -> framebuffer(SMB, SMB_INPUT, SMB_FRAME, VideoFilter.CRT, true, "filter-crt"));
         pictures.put("nametable-viewer", this::nametableViewer);
         pictures.put("oam-viewer", this::oamViewer);
+        pictures.put("palette-viewer", this::paletteViewer);
         pictures.put("debugger", this::debugger);
 
         // The game window last, and Super Mario Bros. 3 last of those: the dialogs are photographed
@@ -321,7 +335,7 @@ public final class Shots {
         var frame = new JFrame[1];
 
         onEdt(() -> {
-            frame[0] = new NametableViewerFrame(null, nes, palette);
+            frame[0] = new NametableViewerFrame(null, nes, palette, PauseControl.NONE);
             show(frame[0]);
         });
 
@@ -329,17 +343,53 @@ public final class Shots {
         onEdt(frame[0]::dispose);
     }
 
+    /**
+     * With the sprites grouped and the topmost group picked, which is the half of this window that
+     * a screenshot of a table cannot show: the outline the field draws round the thing those
+     * sprites make up.
+     */
     private void oamViewer() throws Exception {
         var nes = play(SMB3, "", SMB3_FRAME).session().nes();
         var palette = Palettes.defaultPalette(nes.getRegion());
         var frame = new JFrame[1];
 
         onEdt(() -> {
-            frame[0] = new OAMViewerFrame(null, nes.getPPU(), palette);
+            frame[0] = new OAMViewerFrame(null, nes.getPPU(), palette, PauseControl.NONE);
+
+            // Before it goes up, so that the window comes to the front once and stays there: a
+            // window photographed while something else holds the focus draws its selected rows in
+            // grey, and the selection is what the picture is of.
+            var content = frame[0].getContentPane();
+
+            find(content, JCheckBox.class, "Group").doClick();
+            find(content, JTable.class, null).setRowSelectionInterval(0, 0);
+
             show(frame[0]);
         });
 
         capture(frame[0], "oam-viewer");
+        onEdt(frame[0]::dispose);
+    }
+
+    /**
+     * Super Mario Bros. in 1-1 rather than on a title screen, because a title screen is where a
+     * game uses the fewest of its eight palettes -- and the picture is meant to show eight of them
+     * in use, with the four mirrored cells agreeing across the rows. With the pointer put on a cell,
+     * since the overlay beside them is what the picture is for.
+     */
+    private void paletteViewer() throws Exception {
+        var nes = play(SMB, SMB_INPUT, SMB_FRAME).session().nes();
+        var palette = Palettes.defaultPalette(nes.getRegion());
+        var frame = new JFrame[1];
+
+        onEdt(() -> {
+            frame[0] = new PaletteViewerFrame(null, nes.getPPU(), palette, PauseControl.NONE);
+            show(frame[0]);
+        });
+
+        hover(frame[0], PALETTE_CELL_X, PALETTE_CELL_Y);
+
+        capture(frame[0], "palette-viewer");
         onEdt(frame[0]::dispose);
     }
 
@@ -533,6 +583,35 @@ public final class Shots {
 
         capture(dialog, "genie-dialog");
         onEdt(dialog::dispose);
+    }
+
+    /**
+     * Puts the pointer on a window without moving anybody's pointer.
+     * <p>
+     * A {@link Robot} would be the honest way and cannot be: synthesising input needs a permission
+     * a process Maven started does not have, which is the same wall the capture runs into. So the
+     * event is posted to whatever component is under the point, found the way Swing itself finds
+     * it. Nothing private is reached into and no window is told it is being photographed.
+     *
+     * @param x where, in the content pane's own coordinates, so the title bar's height is not part
+     *          of the arithmetic.
+     */
+    private void hover(final Window window, final int x, final int y) throws Exception {
+        onEdt(() -> {
+            var content = ((JFrame) window).getContentPane();
+            var target = SwingUtilities.getDeepestComponentAt(content, x, y);
+            var at = SwingUtilities.convertPoint(content, x, y, target);
+
+            target.dispatchEvent(new MouseEvent(
+                    target,
+                    MouseEvent.MOUSE_MOVED,
+                    System.currentTimeMillis(),
+                    0,
+                    at.x,
+                    at.y,
+                    0,
+                    false));
+        });
     }
 
     /**

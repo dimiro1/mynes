@@ -22,6 +22,7 @@ import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
+import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
@@ -270,9 +271,26 @@ public class GameUIFrame extends JFrame {
      */
     private List<GameGenieCode> genieCodes = List.of();
 
+    /**
+     * The handle the debug windows get on {@link #pause}, so that somebody watching the sprites can
+     * stop the machine without going and finding this window first.
+     */
+    private final PauseControl pauseControl = new PauseControl() {
+        @Override
+        public boolean isPaused() {
+            return runner != null && runner.isPaused();
+        }
+
+        @Override
+        public void setPaused(final boolean paused) {
+            pause(paused);
+        }
+    };
+
     private CHRViewerFrame chrViewerFrame;
     private NametableViewerFrame nametableViewerFrame;
     private OAMViewerFrame oamViewerFrame;
+    private PaletteViewerFrame paletteViewerFrame;
     private DebuggerFrame debuggerFrame;
 
     /**
@@ -520,6 +538,9 @@ public class GameUIFrame extends JFrame {
         JMenuItem debugMenuOAMViewer = new JMenuItem("OAM Viewer", KeyEvent.VK_O);
         debugMenu.add(debugMenuOAMViewer);
 
+        JMenuItem debugMenuPaletteViewer = new JMenuItem("Palette Viewer", KeyEvent.VK_P);
+        debugMenu.add(debugMenuPaletteViewer);
+
         debugMenu.addSeparator();
 
         // Its own item rather than a tick, because starting one asks where it should go and stopping
@@ -632,6 +653,10 @@ public class GameUIFrame extends JFrame {
                         oamViewerFrame.setPalette(chosen);
                     }
 
+                    if (paletteViewerFrame != null) {
+                        paletteViewerFrame.setPalette(chosen);
+                    }
+
                     saveConfig();
                 }).setVisible(true));
 
@@ -733,30 +758,7 @@ public class GameUIFrame extends JFrame {
             }
         });
 
-        machineMenuPause.addActionListener(e -> {
-            if (runner == null) {
-                return;
-            }
-
-            // Unticking is a resume rather than a plain unpause, because it also has to forget
-            // whatever the debugger was still waiting for. Without that, unticking Pause after a
-            // breakpoint would stop again one instruction later and look broken.
-            if (machineMenuPause.isSelected()) {
-                runner.setPaused(true);
-
-                // A button held down when the game froze would otherwise still be held on resume,
-                // minutes later, whether or not the key is.
-                keyboardInput.releaseAll();
-            } else {
-                runner.resume();
-
-                if (debuggerFrame != null) {
-                    debuggerFrame.running();
-                }
-            }
-
-            describeMachine();
-        });
+        machineMenuPause.addActionListener(e -> pause(machineMenuPause.isSelected()));
 
         machineMenuFastForward.addActionListener(e -> applySpeed());
 
@@ -840,7 +842,11 @@ public class GameUIFrame extends JFrame {
 
                     if (chrViewerFrame == null) {
                         chrViewerFrame = new CHRViewerFrame(
-                                this, cart, nes.getPPU(), config.palette(currentRegion()));
+                                this,
+                                cart,
+                                nes.getPPU(),
+                                config.palette(currentRegion()),
+                                pauseControl);
                     }
 
                     chrViewerFrame.setVisible(true);
@@ -854,7 +860,7 @@ public class GameUIFrame extends JFrame {
 
             if (nametableViewerFrame == null) {
                 nametableViewerFrame = new NametableViewerFrame(
-                        this, nes, config.palette(currentRegion()));
+                        this, nes, config.palette(currentRegion()), pauseControl);
             }
 
             nametableViewerFrame.setVisible(true);
@@ -867,10 +873,23 @@ public class GameUIFrame extends JFrame {
 
             if (oamViewerFrame == null) {
                 oamViewerFrame = new OAMViewerFrame(
-                        this, nes.getPPU(), config.palette(currentRegion()));
+                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
             }
 
             oamViewerFrame.setVisible(true);
+        });
+
+        debugMenuPaletteViewer.addActionListener(e -> {
+            if (noCartridge()) {
+                return;
+            }
+
+            if (paletteViewerFrame == null) {
+                paletteViewerFrame = new PaletteViewerFrame(
+                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
+            }
+
+            paletteViewerFrame.setVisible(true);
         });
 
         debugMenuTrace.addActionListener(e -> startTrace());
@@ -2606,6 +2625,39 @@ public class GameUIFrame extends JFrame {
         return gamePath().resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".log");
     }
 
+    /**
+     * Stops the machine where it is, or lets it go again.
+     * <p>
+     * The one place that knows how: unticking is a resume rather than a plain unpause, because it
+     * also has to forget whatever the debugger was still waiting for -- without that, unticking
+     * Pause after a breakpoint would stop again one instruction later and look broken. Which is
+     * also why the debug windows ask this rather than reaching the runner themselves; see
+     * {@link PauseControl}.
+     */
+    private void pause(final boolean paused) {
+        if (runner == null) {
+            return;
+        }
+
+        machineMenuPause.setSelected(paused);
+
+        if (paused) {
+            runner.setPaused(true);
+
+            // A button held down when the game froze would otherwise still be held on resume,
+            // minutes later, whether or not the key is.
+            keyboardInput.releaseAll();
+        } else {
+            runner.resume();
+
+            if (debuggerFrame != null) {
+                debuggerFrame.running();
+            }
+        }
+
+        describeMachine();
+    }
+
     private void destroyCHRViewerFrame() {
         if (chrViewerFrame != null) {
             logger.log(Level.DEBUG, "closing chrViewerFrame");
@@ -2625,6 +2677,12 @@ public class GameUIFrame extends JFrame {
             logger.log(Level.DEBUG, "closing oamViewerFrame");
             oamViewerFrame.dispose();
             oamViewerFrame = null;
+        }
+
+        if (paletteViewerFrame != null) {
+            logger.log(Level.DEBUG, "closing paletteViewerFrame");
+            paletteViewerFrame.dispose();
+            paletteViewerFrame = null;
         }
     }
 
