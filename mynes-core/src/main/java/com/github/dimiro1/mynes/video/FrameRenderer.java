@@ -39,6 +39,16 @@ public final class FrameRenderer {
     public static final int OVERSCAN_BOTTOM = 8;
 
     /**
+     * Columns hidden at the left of the picture, leaving 248 visible -- when anybody asks, which
+     * unlike the two above is not by default. {@link Crop} is where the reason is written down.
+     * <p>
+     * Eight because that is the width of the 2C02's own clipping window and there is no second
+     * number to choose: the stripe this hides is exactly the pixels $2001 stops the background
+     * being drawn in.
+     */
+    public static final int OVERSCAN_LEFT = 8;
+
+    /**
      * The first scanline below the picture, so that walking it is
      * {@code for (y = OVERSCAN_TOP; y < VISIBLE_BOTTOM; y++)} everywhere rather than three
      * separate spellings of the same subtraction.
@@ -46,6 +56,12 @@ public final class FrameRenderer {
     public static final int VISIBLE_BOTTOM = PPU.SCREEN_HEIGHT - OVERSCAN_BOTTOM;
 
     public static final int VISIBLE_HEIGHT = VISIBLE_BOTTOM - OVERSCAN_TOP;
+
+    /**
+     * How wide the picture is once {@link #OVERSCAN_LEFT} has been taken off it. Nothing comes off
+     * the right, so this is the whole of the horizontal crop.
+     */
+    public static final int VISIBLE_WIDTH = PPU.SCREEN_WIDTH - OVERSCAN_LEFT;
 
     /**
      * The largest magnification {@link #render} will do. Eight times is a 2048x1792 picture, which
@@ -63,19 +79,19 @@ public final class FrameRenderer {
      *                      kept.
      * @param palette       512 packed ARGB entries indexed {@code emphasis << 6 | entry}, which is
      *                      what {@code NESPalette.colours()} hands out.
-     * @param cropOverscan  whether to hide the scanlines a television would.
+     * @param crop          which rectangle of the frame is the picture.
      * @param scale         how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
     public static BufferedImage render(
             final int[] frame,
             final int[] palette,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
         checkScale(scale);
 
-        return magnify(through(frame, palette), cropOverscan, scale);
+        return magnify(through(frame, palette), crop, scale);
     }
 
     /**
@@ -97,7 +113,7 @@ public final class FrameRenderer {
      * @param palette      512 packed ARGB entries, as above.
      * @param strength     how dark the gaps between the lines go.
      * @param warp         whether the glass is curved.
-     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param crop         which rectangle of the frame is the picture.
      * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
@@ -106,21 +122,19 @@ public final class FrameRenderer {
             final int[] palette,
             final FilterStrength strength,
             final boolean warp,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
         checkScale(scale);
 
-        var top = cropOverscan ? OVERSCAN_TOP : 0;
-        var lines = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
-        var width = PPU.SCREEN_WIDTH * scale;
-        var height = lines * scale;
+        var width = crop.width() * scale;
+        var height = crop.height() * scale;
 
         var image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 
         CRTScreen.draw(
-                through(frame, palette), top, lines, pixels, width, height, strength, warp);
+                through(frame, palette), crop, pixels, width, height, strength, warp);
 
         return image;
     }
@@ -146,7 +160,7 @@ public final class FrameRenderer {
      * @param filter       the decoder. Stateful, so it must not be shared across threads.
      * @param framePhase   where the frame sits in the subcarrier's cycle,
      *                     {@link PPU#getFramePhase()}.
-     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param crop         which rectangle of the frame is the picture.
      * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
@@ -154,12 +168,12 @@ public final class FrameRenderer {
             final int[] frame,
             final NTSCFilter filter,
             final int framePhase,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
         checkScale(scale);
 
-        return magnify(filter.colourise(frame, framePhase), cropOverscan, scale);
+        return magnify(filter.colourise(frame, framePhase), crop, scale);
     }
 
     /**
@@ -170,24 +184,21 @@ public final class FrameRenderer {
      * is that it is blocky. There is no hint to get wrong here.
      */
     private static BufferedImage magnify(
-            final int[] colours, final boolean cropOverscan, final int scale) {
-        var top = cropOverscan ? OVERSCAN_TOP : 0;
-        var height = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
-
+            final int[] colours, final Crop crop, final int scale) {
         var image = new BufferedImage(
-                PPU.SCREEN_WIDTH * scale, height * scale, BufferedImage.TYPE_INT_RGB);
+                crop.width() * scale, crop.height() * scale, BufferedImage.TYPE_INT_RGB);
 
         // The image's own storage, written into directly. Reaching for the backing array costs the
         // image its hardware acceleration, which does not matter for a picture that is about to be
         // encoded as a PNG, and saves a call per pixel.
         var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        var width = PPU.SCREEN_WIDTH * scale;
+        var width = crop.width() * scale;
 
-        for (var y = 0; y < height; y++) {
-            var sourceRow = (top + y) * PPU.SCREEN_WIDTH;
+        for (var y = 0; y < crop.height(); y++) {
+            var sourceRow = (crop.top() + y) * PPU.SCREEN_WIDTH + crop.left();
             var targetRow = y * scale * width;
 
-            for (var x = 0; x < PPU.SCREEN_WIDTH; x++) {
+            for (var x = 0; x < crop.width(); x++) {
                 var colour = colours[sourceRow + x];
 
                 for (var i = 0; i < scale; i++) {

@@ -53,6 +53,7 @@ public final class Config {
     private static final String FILTER_STRENGTH_KEY = "video.filter.strength";
     private static final String FILTER_WARP_KEY = "video.filter.warp";
     private static final String OVERSCAN_KEY = "video.overscan";
+    private static final String LEFT_EDGE_KEY = "video.left.edge";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -146,6 +147,16 @@ public final class Config {
             # to see that -- true shows all 240 lines, and the window is sixteen of them taller.
             # Settings > Show Overscan is the same setting, and --full-frame is what the headless
             # mode calls it.
+            """;
+
+    private static final String LEFT_EDGE_HEADER = """
+            # Whether the eight columns down the left of the picture are drawn. A game that scrolls
+            # sideways tells the chip not to draw the background in them -- that is where the tile
+            # it is part way through would show -- and the chip fills the gap with the backdrop
+            # colour rather than with black, which is the stripe of sky down the left of Super
+            # Mario Bros. 3. So this is true, since on every other game those columns are the
+            # picture, and false is how to be rid of the stripe. Settings > Show Left Edge is the
+            # same setting, and --hide-left-edge is what the headless mode calls it.
             """;
 
     private static final String SCALE_HEADER = """
@@ -244,6 +255,7 @@ public final class Config {
     private FilterStrength filterStrength;
     private boolean warp;
     private boolean overscan;
+    private boolean leftEdge;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private boolean statusBar;
@@ -271,6 +283,7 @@ public final class Config {
             final FilterStrength filterStrength,
             final boolean warp,
             final boolean overscan,
+            final boolean leftEdge,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final boolean statusBar,
@@ -291,6 +304,7 @@ public final class Config {
         this.filterStrength = filterStrength;
         this.warp = warp;
         this.overscan = overscan;
+        this.leftEdge = leftEdge;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.statusBar = statusBar;
@@ -337,9 +351,10 @@ public final class Config {
                 filterStrengthFrom(properties),
                 flagFrom(properties, FILTER_WARP_KEY),
                 flagFrom(properties, OVERSCAN_KEY),
+                flagFrom(properties, LEFT_EDGE_KEY, true),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
-                statusBarFrom(properties),
+                flagFrom(properties, STATUS_BAR_KEY, true),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, MUTED_KEY),
@@ -510,15 +525,16 @@ public final class Config {
     }
 
     /**
-     * The one yes-or-no entry whose default is yes, which is why it cannot go through
-     * {@link #flagFrom}: everything else here is a thing the emulator does only when asked, and the
-     * status bar is a thing it does until told not to. A value that is not {@code true} still means
-     * no, the same as everywhere else -- it is only a missing entry the two disagree about.
+     * A yes-or-no entry whose default is yes: the status bar and the left edge, both of which are
+     * things the emulator does until it is told not to rather than things it does when asked. A
+     * value that is not {@code true} still means no, the same as everywhere else -- it is only a
+     * missing entry that the two spellings disagree about.
      */
-    private static boolean statusBarFrom(final Properties properties) {
-        var value = properties.getProperty(STATUS_BAR_KEY);
+    private static boolean flagFrom(
+            final Properties properties, final String key, final boolean byDefault) {
+        var value = properties.getProperty(key);
 
-        return value == null || Boolean.parseBoolean(value.trim());
+        return value == null ? byDefault : Boolean.parseBoolean(value.trim());
     }
 
     private static NESPalette paletteFrom(
@@ -692,6 +708,12 @@ public final class Config {
                 .append(OVERSCAN_KEY)
                 .append('=')
                 .append(overscan)
+                .append("\n\n");
+
+        text.append(LEFT_EDGE_HEADER)
+                .append(LEFT_EDGE_KEY)
+                .append('=')
+                .append(leftEdge)
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
@@ -884,6 +906,20 @@ public final class Config {
 
     public void setOverscan(final boolean overscan) {
         this.overscan = overscan;
+    }
+
+    /**
+     * Whether the eight columns the chip clips down the left edge are drawn. On, unlike the
+     * overscan above and for the reason beside {@link #LEFT_EDGE_HEADER}: those columns are the
+     * picture everywhere except on the games that told the chip to leave them out, and it is only
+     * there that anybody wants them gone. The headless mode's {@code --hide-left-edge}.
+     */
+    public boolean leftEdge() {
+        return leftEdge;
+    }
+
+    public void setLeftEdge(final boolean leftEdge) {
+        this.leftEdge = leftEdge;
     }
 
     /**

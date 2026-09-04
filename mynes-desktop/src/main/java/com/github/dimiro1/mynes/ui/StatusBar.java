@@ -94,6 +94,8 @@ final class StatusBar extends JPanel {
      * @param warp             whether the tube's glass is curved, which only the tube has.
      * @param overscan         whether the scanlines a television hid are being drawn, which every
      *                         way of drawing the picture has.
+     * @param leftEdge         whether the columns the chip clips down the left edge are being
+     *                         drawn, which every way of drawing the picture also has.
      * @param palette          the name of the table the picture is drawn through, which the
      *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -121,6 +123,7 @@ final class StatusBar extends JPanel {
             FilterStrength strength,
             boolean warp,
             boolean overscan,
+            boolean leftEdge,
             String palette,
             ScreenScale screenScale,
             ScreenScale screenshotScale,
@@ -338,7 +341,7 @@ final class StatusBar extends JPanel {
      * picture until something is wrong. Then the two that mean this is not the game as it shipped:
      * a frame with extra scanlines on it and a cartridge being answered with somebody else's bytes.
      * Then silence, which is not a change to the game at all but is the question a status bar is
-     * asked most often. Then the four that change what you see and nothing the game can observe.
+     * asked most often. Then the five that change what you see and nothing the game can observe.
      * <p>
      * Only what is not the ordinary case, apart from the console -- so the usual list is one long,
      * and the settings that always have a value, like the palette and the screen size, are left to
@@ -400,6 +403,13 @@ final class StatusBar extends JPanel {
             parts.add("Overscan");
         }
 
+        // Named for what has gone rather than for what is there, unlike the line above it, because
+        // that is the way round somebody switched it: the columns are drawn until they are in the
+        // way.
+        if (!machine.leftEdge()) {
+            parts.add("No left edge");
+        }
+
         // Last, because it changes nothing until a file is written -- which also makes it the one
         // somebody is most likely to have forgotten about.
         if (machine.screenshotScale() != ScreenScale.defaultScreenshotScale()) {
@@ -452,6 +462,7 @@ final class StatusBar extends JPanel {
         // irrelevant, since the eight lines at either end are the chip's rather than a way of
         // drawing what the chip sent.
         row(rows, "Overscan", machine.overscan() ? "Shown" : "Hidden");
+        row(rows, "Left edge", machine.leftEdge() ? "Shown" : "Hidden");
 
         row(rows, "Screen size", machine.screenScale().label());
         row(rows, "Screenshot size", machine.screenshotScale().label());

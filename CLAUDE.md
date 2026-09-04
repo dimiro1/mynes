@@ -227,6 +227,35 @@ the machine's own blanking interval or every sprite in the game vanishes once a 
 are `static` on purpose: `SaveStateCompletenessTests` vandalises every primitive array it can reach
 through the console, and an `int[]` field on `Region` would be one of them.
 
+### How much of the frame is a picture
+
+The chip draws 256 by 240 and nobody has ever looked at all of it. `--full-frame` writes all 240
+scanlines instead of the 224 a television showed; `--hide-left-edge` drops the leftmost 8 columns,
+leaving 248. Both are `Crop`, which is what every renderer takes and where the reasons are written
+down, and the two compose -- `--full-frame --hide-left-edge` is 248 by 240.
+
+**They are hidden and shown for opposite reasons, which is why one is on by default and the other
+is not.** What is at the top and the bottom is a mess the game did not mean to draw -- partial
+tiles, scroll seams, and the pixel or two of the following frame that the loop's three-dots-per-tick
+granularity lets into scanline 0 -- so it goes unless somebody asks for it. What is down the left
+edge is something the chip was *told* to do: $2001 has a bit that stops the background being drawn
+in the leftmost eight pixels, a game that scrolls sideways sets it because that is where the tile it
+is part way through would show, and the 2C02 fills the gap with the backdrop colour rather than with
+black. So a scrolling Super Mario Bros. 3 has an eight pixel stripe of sky down the side of
+everything, status bar included -- and on every game that does *not* set that bit those columns are
+the picture, so they stay unless somebody asks to be rid of them.
+
+Nothing comes off the right, and that is deliberate: the clipping window is at the left because that
+is the end a fine scroll shifts from, and eight columns off the other side to make the numbers
+symmetrical would be picture thrown away to no purpose.
+
+**Neither is on the comparability checklist**, for the reason the video filters are not:
+`FrameAnalysis` measures the frame the chip emitted -- the hash over the 224 lines and the full 256
+columns, whichever crop drew -- so two runs that disagree here are two measurements of one thing and
+only their PNGs differ. `video.overscan` and `video.leftEdge` in the report say which drew. The
+window has the same two under **Settings > Show Overscan** and **Settings > Show Left Edge**, and
+packs itself around them rather than fitting a differently shaped picture into the room it had.
+
 ### Drawing it the way a television did
 
 `--filter ntsc` colours the picture by rebuilding the composite waveform the chip drew and decoding

@@ -315,6 +315,7 @@ public final class Report {
         }
 
         video.put("overscan", options.fullFrame() ? "full" : "cropped");
+        video.put("leftEdge", options.hideLeftEdge() ? "hidden" : "shown");
         video.put("scale", options.scale());
 
         var finalFrame = video.putObject("finalFrame");

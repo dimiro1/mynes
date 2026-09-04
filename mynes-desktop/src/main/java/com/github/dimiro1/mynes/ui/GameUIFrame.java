@@ -189,6 +189,7 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
     private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
+    private final JCheckBoxMenuItem settingsMenuLeftEdge = new JCheckBoxMenuItem("Show Left Edge");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
     /**
@@ -401,6 +402,7 @@ public class GameUIFrame extends JFrame {
         // at the default and then jumping. Both of these, because how tall the picture is is the
         // magnification times however many scanlines are being shown.
         screen.setOverscan(config.overscan());
+        screen.setLeftEdge(config.leftEdge());
         screen.setScale(config.screenScale());
 
         init();
@@ -612,6 +614,14 @@ public class GameUIFrame extends JFrame {
         settingsMenuOverscan.setSelected(config.overscan());
         settingsMenu.add(settingsMenuOverscan);
 
+        // Beside it, because it is the other half of the same question -- how much of the frame is
+        // a picture -- even though it is asked the other way up. What the chip clips down the left
+        // edge it was told to clip, so those columns are drawn until somebody says otherwise,
+        // where the sixteen scanlines are hidden until somebody says otherwise.
+        settingsMenuLeftEdge.setMnemonic(KeyEvent.VK_L);
+        settingsMenuLeftEdge.setSelected(config.leftEdge());
+        settingsMenu.add(settingsMenuLeftEdge);
+
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
 
@@ -648,7 +658,13 @@ public class GameUIFrame extends JFrame {
         settingsMenuOverscan.addActionListener(e -> {
             config.setOverscan(settingsMenuOverscan.isSelected());
             saveConfig();
-            applyOverscan();
+            applyCrop();
+        });
+
+        settingsMenuLeftEdge.addActionListener(e -> {
+            config.setLeftEdge(settingsMenuLeftEdge.isSelected());
+            saveConfig();
+            applyCrop();
         });
 
         settingsMenuController.addActionListener(e ->
@@ -1355,18 +1371,20 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * Shows the scanlines a television hid behind its bezel, or stops, and gives the window the
-     * sixteen rows rather than taking them out of the picture.
+     * Shows the scanlines a television hid behind its bezel and the columns the chip clips down the
+     * left edge, or stops, and gives the window the rows and the columns rather than taking them
+     * out of the picture.
      * <p>
      * Packed the way a screen size is, and for the reason {@link ScreenComponent#setOverscan}
-     * gives: the picture really is taller, and a window that kept its height would answer a
-     * request to see two more strips of frame by making everything else smaller. Unlike
+     * gives: the picture really is a different size, and a window that kept its own would answer a
+     * request to see more of the frame by making everything else smaller. Unlike
      * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
      * against a size nobody is looking at, only a picture that lays itself out again inside
      * whatever room the window manager gave it.
      */
-    private void applyOverscan() {
+    private void applyCrop() {
         screen.setOverscan(config.overscan());
+        screen.setLeftEdge(config.leftEdge());
 
         pack();
         updateStatusBar();
@@ -1469,6 +1487,7 @@ public class GameUIFrame extends JFrame {
                 config.filterStrength(),
                 config.warp(),
                 config.overscan(),
+                config.leftEdge(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),
