@@ -58,7 +58,7 @@ class ConfigTests {
      * anybody wrote down.
      */
     private RecentRom game(final String name) {
-        return new RecentRom(directory.resolve(name), null);
+        return new RecentRom(directory.resolve(name), null, null);
     }
 
     @Nested
@@ -600,8 +600,8 @@ class ConfigTests {
                     """)).recentRoms();
 
             assertEquals(
-                    List.of(new RecentRom(Path.of("/roms/a.nes"), null),
-                            new RecentRom(Path.of("/roms/b.nes"), null)),
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), null, null),
+                            new RecentRom(Path.of("/roms/b.nes"), null, null)),
                     loaded);
         }
 
@@ -617,8 +617,8 @@ class ConfigTests {
                     """)).recentRoms();
 
             assertEquals(
-                    List.of(new RecentRom(Path.of("/roms/a.nes"), null),
-                            new RecentRom(Path.of("/roms/c.nes"), null)),
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), null, null),
+                            new RecentRom(Path.of("/roms/c.nes"), null, null)),
                     loaded);
         }
 
@@ -634,7 +634,7 @@ class ConfigTests {
                     recent.2=/roms/a.nes
                     """)).recentRoms();
 
-            assertEquals(List.of(new RecentRom(Path.of("/roms/a.nes"), null)), loaded);
+            assertEquals(List.of(new RecentRom(Path.of("/roms/a.nes"), null, null)), loaded);
         }
 
         @Test
@@ -645,8 +645,35 @@ class ConfigTests {
                     """)).recentRoms();
 
             assertEquals(
-                    List.of(new RecentRom(Path.of("/roms/a.nes"), Path.of("/hacks/a.ips"))),
+                    List.of(new RecentRom(Path.of("/roms/a.nes"), null, Path.of("/hacks/a.ips"))),
                     loaded);
+        }
+
+        @Test
+        void theNameInsideAZipIsRememberedWithIt() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/collection.zip
+                    recent.1.entry=roms/a.nes
+                    """)).recentRoms();
+
+            assertEquals(
+                    List.of(new RecentRom(Path.of("/roms/collection.zip"), "roms/a.nes", null)),
+                    loaded);
+        }
+
+        /**
+         * The name an archive stores, which uses a forward slash whatever the computer reading it
+         * does. Read as text rather than as a path for exactly that reason: turning it into one
+         * would rewrite it into the local shape and then fail to match what is in the zip.
+         */
+        @Test
+        void theNameInsideAZipIsNotReadAsAPath() throws IOException {
+            var loaded = Config.load(write("""
+                    recent.1=/roms/collection.zip
+                    recent.1.entry=roms/../a.nes
+                    """)).recentRoms();
+
+            assertEquals("roms/../a.nes", loaded.getFirst().entry());
         }
 
         /**
@@ -669,7 +696,7 @@ class ConfigTests {
                     recent.2=/roms/b.nes
                     """)).recentRoms();
 
-            assertEquals(List.of(new RecentRom(Path.of("/roms/b.nes"), null)), loaded);
+            assertEquals(List.of(new RecentRom(Path.of("/roms/b.nes"), null, null)), loaded);
         }
 
         @Test
@@ -716,7 +743,7 @@ class ConfigTests {
          */
         @Test
         void aPatchedGameIsNotTheSameGameUnpatched() {
-            var patched = new RecentRom(directory.resolve("a.nes"), directory.resolve("a.ips"));
+            var patched = new RecentRom(directory.resolve("a.nes"), null, directory.resolve("a.ips"));
 
             var config = Config.load(config());
             config.addRecentRom(game("a.nes"));
@@ -930,14 +957,17 @@ class ConfigTests {
 
         @Test
         void theRecentGamesSurviveTheRoundTrip() throws IOException {
-            var patched = new RecentRom(directory.resolve("a.nes"), directory.resolve("a.ips"));
+            var patched = new RecentRom(directory.resolve("a.nes"), null, directory.resolve("a.ips"));
+            var zipped = new RecentRom(directory.resolve("c.zip"), "roms/c.nes", null);
 
             var config = Config.load(config());
             config.addRecentRom(game("b.nes"));
             config.addRecentRom(patched);
+            config.addRecentRom(zipped);
             config.save(config());
 
-            assertEquals(List.of(patched, game("b.nes")), Config.load(config()).recentRoms());
+            assertEquals(
+                    List.of(zipped, patched, game("b.nes")), Config.load(config()).recentRoms());
         }
 
         /**
@@ -946,7 +976,7 @@ class ConfigTests {
          */
         @Test
         void aBackslashInAPathSurvivesTheRoundTrip() throws IOException {
-            var game = new RecentRom(directory.resolve("C:\\roms\\game.nes"), null);
+            var game = new RecentRom(directory.resolve("C:\\roms\\game.nes"), null, null);
 
             var config = Config.load(config());
             config.addRecentRom(game);

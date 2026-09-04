@@ -18,8 +18,8 @@ cd mynes-0.3.0
 The same zip works on macOS, Windows and Linux. You need Java 25 —
 [Adoptium](https://adoptium.net) has builds for everything.
 
-Then **File > Open...** and pick a `.nes` file, or drag one onto the window. No ROMs are
-included, so bring your own.
+Then **File > Open...** and pick a `.nes` file, or the `.zip` a collection ships it in — or drag
+either onto the window. No ROMs are included, so bring your own.
 
 ## Controls
 
@@ -107,6 +107,8 @@ file is where they live.
 - Fast forward at 2x, 4x, 8x or unlimited.
 - Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
   video, so it is a few kilobytes a minute and replays byte for byte.
+- Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip
+  holding more than one cartridge asks which.
 - IPS patches via **File > Open with Patch...**. The patch is applied in memory, the ROM on disk
   is never touched, and a patched game keeps its own saves.
 - The last ten games you opened, under **File > Open Recent**. One opened with a patch comes back
@@ -200,7 +202,8 @@ Each code is listed with what it actually does.
 
 ## Saving
 
-Three kinds of file, all kept beside the ROM:
+Three kinds of file, all kept beside the ROM — or beside the zip, named after the cartridge inside
+it:
 
 - **Save states** (`GAME.mn1`–`GAME.mn9`) freeze the whole console. They load in MyNES and
   nowhere else — no emulator's save states load anywhere else, there is no standard for them.

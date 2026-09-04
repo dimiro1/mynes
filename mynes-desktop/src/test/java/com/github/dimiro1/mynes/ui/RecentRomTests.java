@@ -25,7 +25,7 @@ class RecentRomTests {
 
     @Test
     void aCartridgeIsLabelledWithItsFileName() {
-        assertEquals("smb.nes", new RecentRom(directory.resolve("smb.nes"), null).label());
+        assertEquals("smb.nes", new RecentRom(directory.resolve("smb.nes"), null, null).label());
     }
 
     /**
@@ -34,14 +34,14 @@ class RecentRomTests {
      */
     @Test
     void aPatchedGameIsLabelledWithBoth() {
-        var game = new RecentRom(directory.resolve("smb.nes"), directory.resolve("hack.ips"));
+        var game = new RecentRom(directory.resolve("smb.nes"), null, directory.resolve("hack.ips"));
 
         assertEquals("smb.nes + hack.ips", game.label());
     }
 
     @Test
     void theTooltipIsTheWholeOfBothPaths() {
-        var game = new RecentRom(directory.resolve("smb.nes"), directory.resolve("hack.ips"));
+        var game = new RecentRom(directory.resolve("smb.nes"), null, directory.resolve("hack.ips"));
 
         assertEquals(directory.resolve("smb.nes") + " + " + directory.resolve("hack.ips"),
                 game.describe());
@@ -54,8 +54,8 @@ class RecentRomTests {
     @Test
     void theSameCartridgeReachedTwoWaysIsOneGame() {
         assertEquals(
-                new RecentRom(directory.resolve("smb.nes"), null),
-                new RecentRom(directory.resolve("roms/../smb.nes"), null));
+                new RecentRom(directory.resolve("smb.nes"), null, null),
+                new RecentRom(directory.resolve("roms/../smb.nes"), null, null));
     }
 
     /**
@@ -65,20 +65,57 @@ class RecentRomTests {
     @Test
     void aPatchedGameIsNotTheGameUnderneathIt() {
         assertNotEquals(
-                new RecentRom(directory.resolve("smb.nes"), null),
-                new RecentRom(directory.resolve("smb.nes"), directory.resolve("hack.ips")));
+                new RecentRom(directory.resolve("smb.nes"), null, null),
+                new RecentRom(directory.resolve("smb.nes"), null, directory.resolve("hack.ips")));
     }
 
     @Test
     void aCartridgeThatIsThereIsThere() throws IOException {
         Files.createFile(directory.resolve("smb.nes"));
 
-        assertTrue(new RecentRom(directory.resolve("smb.nes"), null).isThere());
+        assertTrue(new RecentRom(directory.resolve("smb.nes"), null, null).isThere());
     }
 
     @Test
     void aCartridgeThatHasBeenMovedIsNot() {
-        assertFalse(new RecentRom(directory.resolve("smb.nes"), null).isThere());
+        assertFalse(new RecentRom(directory.resolve("smb.nes"), null, null).isThere());
+    }
+
+    /**
+     * The cartridge rather than the archive, because that is the game. A collection whose zips are
+     * each named after the game inside reads the same either way, and one whose zips are not is what
+     * this is for.
+     */
+    @Test
+    void aCartridgeInsideAZipIsLabelledWithTheNameInside() {
+        var game = new RecentRom(directory.resolve("collection.zip"), "roms/smb.nes", null);
+
+        assertEquals("smb.nes", game.label());
+        assertEquals(directory.resolve("collection.zip") + " > roms/smb.nes", game.describe());
+    }
+
+    /**
+     * A zip holding two games is two entries on the menu, which is the whole reason the name inside
+     * is remembered at all.
+     */
+    @Test
+    void twoCartridgesInOneZipAreTwoGames() {
+        assertNotEquals(
+                new RecentRom(directory.resolve("many.zip"), "a.nes", null),
+                new RecentRom(directory.resolve("many.zip"), "b.nes", null));
+    }
+
+    /**
+     * Opening it is the only way to find out whether the archive still holds the entry, and reading
+     * every zip on the list to build a menu would cost a player with ten of them a disk full of work
+     * every time they pulled File down.
+     */
+    @Test
+    void aZipIsOnlyCheckedForBeingThere() throws IOException {
+        Files.createFile(directory.resolve("collection.zip"));
+
+        assertTrue(new RecentRom(
+                directory.resolve("collection.zip"), "not-in-there.nes", null).isThere());
     }
 
     /**
@@ -89,7 +126,7 @@ class RecentRomTests {
     void aPatchedGameNeedsItsPatchAsWell() throws IOException {
         Files.createFile(directory.resolve("smb.nes"));
 
-        var game = new RecentRom(directory.resolve("smb.nes"), directory.resolve("hack.ips"));
+        var game = new RecentRom(directory.resolve("smb.nes"), null, directory.resolve("hack.ips"));
 
         assertFalse(game.isThere());
 
