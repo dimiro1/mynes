@@ -26,6 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BatteryRAMTests {
     private static final String ROM = "src/test/resources/nestest/nestest.nes";
 
+    /**
+     * What nestest's NROM board carries, which is also what every board without bank switching at
+     * $6000 carries.
+     */
+    private static final int BYTES = 0x2000;
+
     @TempDir
     private Path directory;
 
@@ -36,13 +42,13 @@ class BatteryRAMTests {
 
         fill(nes, 0x11);
 
-        assertEquals(BatteryRAM.BYTES, BatteryRAM.write(nes, path));
-        assertEquals(BatteryRAM.BYTES, Files.size(path), "no header, no trailer");
+        assertEquals(BYTES, BatteryRAM.write(nes, path));
+        assertEquals(BYTES, Files.size(path), "no header, no trailer");
 
         var bytes = Files.readAllBytes(path);
 
         assertEquals(0x11, Byte.toUnsignedInt(bytes[0]), "the first byte of the file is $6000");
-        assertEquals(0x11, Byte.toUnsignedInt(bytes[BatteryRAM.BYTES - 1]), "and the last is $7FFF");
+        assertEquals(0x11, Byte.toUnsignedInt(bytes[BYTES - 1]), "and the last is $7FFF");
     }
 
     @Test
@@ -50,7 +56,7 @@ class BatteryRAMTests {
         var written = load();
         var path = directory.resolve("game.sav");
 
-        for (var i = 0; i < BatteryRAM.BYTES; i++) {
+        for (var i = 0; i < BYTES; i++) {
             written.getBus().getMapper().prgRAMWrite(0x6000 + i, i * 7 + 1);
         }
 
@@ -59,7 +65,7 @@ class BatteryRAMTests {
 
         var read = load();
 
-        assertEquals(BatteryRAM.BYTES, BatteryRAM.read(read, path));
+        assertEquals(BYTES, BatteryRAM.read(read, path));
         assertArrayEquals(before, read.getBus().getMapper().prgRAM());
     }
 
@@ -92,7 +98,7 @@ class BatteryRAMTests {
         Arrays.fill(big, (byte) 0x33);
         Files.write(path, big);
 
-        assertEquals(BatteryRAM.BYTES, BatteryRAM.read(nes, path));
+        assertEquals(BYTES, BatteryRAM.read(nes, path));
         assertEquals(0x33, Byte.toUnsignedInt(nes.getBus().getMapper().prgRAM()[0]));
     }
 
@@ -148,7 +154,7 @@ class BatteryRAMTests {
         fill(nes, 0x55);
         BatteryRAM.write(nes, path);
 
-        assertEquals(BatteryRAM.BYTES, Files.size(path));
+        assertEquals(BYTES, Files.size(path));
     }
 
     @Test
@@ -164,6 +170,47 @@ class BatteryRAMTests {
                     files.count(),
                     "the save is written through a temporary, which must not be left lying about");
         }
+    }
+
+    /**
+     * A board that banks the window writes the whole chip rather than the window, since the battery
+     * is soldered to all of it. This is what FCEUX writes for the same board, and the lenient reader
+     * above is what makes a file from an emulator that only kept one bank of it still load.
+     */
+    @Test
+    void aBoardWithMoreRAMWritesAllOfIt() throws IOException {
+        var nes = new NES(Cart.load(sxrom(), "sxrom.nes"));
+        var path = directory.resolve("sxrom.sav");
+
+        assertTrue(BatteryRAM.isWorthSaving(nes));
+        fill(nes, 0x66);
+
+        assertEquals(0x8000, BatteryRAM.write(nes, path));
+        assertEquals(0x8000, Files.size(path));
+
+        var read = new NES(Cart.load(sxrom(), "sxrom.nes"));
+
+        assertEquals(0x8000, BatteryRAM.read(read, path));
+        assertArrayEquals(nes.getBus().getMapper().prgRAM(), read.getBus().getMapper().prgRAM());
+    }
+
+    /**
+     * A NES 2.0 header for an MMC1 board with a battery and 32KB of PRG NVRAM behind it, and one
+     * bank of PRG ROM after it.
+     */
+    private static byte[] sxrom() {
+        var rom = new byte[16 + 0x4000];
+
+        rom[0] = 'N';
+        rom[1] = 'E';
+        rom[2] = 'S';
+        rom[3] = 0x1A;
+        rom[4] = 1;
+        rom[6] = 0x12;         // mapper 1, battery
+        rom[7] = 0x08;         // NES 2.0
+        rom[10] = (byte) 0x90; // 64 << 9 bytes of PRG NVRAM
+
+        return rom;
     }
 
     private NES load() throws IOException {

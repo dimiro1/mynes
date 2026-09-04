@@ -30,10 +30,16 @@ import java.security.NoSuchAlgorithmException;
  * @param prgROM program ROM data (CPU-addressable)
  * @param chrROM character ROM data (PPU-addressable pattern tables)
  * @param mapper the memory mapper implementation
- * @param mapperNumber the iNES mapper number the header asked for, kept alongside the mapper
- *                     itself because it is what a person names a cartridge's hardware by
+ * @param mapperNumber the mapper number the header asked for, kept alongside the mapper itself
+ *                     because it is what a person names a cartridge's hardware by. Twelve bits
+ *                     under NES 2.0, eight under iNES
+ * @param submapper the NES 2.0 submapper, which names a variant of the board the mapper number
+ *                  cannot tell apart on its own. Zero under iNES, and zero under NES 2.0 for the
+ *                  ordinary board
  * @param mirror the mirroring mode (horizontal, vertical, four-screen)
  * @param hasBattery whether this cart has battery-backed save RAM
+ * @param format which of the two header formats this was read as: see {@link Format}
+ * @param ram what the header says is fitted on the board besides ROM: see {@link RAM}
  * @param timing which console the header says the cartridge was made for, which is not always a
  *               region: see {@link Timing}
  * @param sha256 the digest of the whole file, header included, as lowercase hex. What names this
@@ -48,10 +54,85 @@ public record Cart(
         byte[] chrROM,
         Mapper mapper,
         int mapperNumber,
+        int submapper,
         int mirror,
         boolean hasBattery,
+        Format format,
+        RAM ram,
         Timing timing,
         String sha256) {
+
+    /**
+     * Which header was read.
+     * <p>
+     * The two formats share their first eight bytes and disagree about the rest, so which one a
+     * file is decides what bytes 8 to 15 <em>mean</em> rather than merely how much of them is
+     * filled in: byte 9 is the PAL flag under iNES and the top of the ROM sizes under NES 2.0.
+     * Worth writing into a report for that reason -- a header field that looks wrong is usually a
+     * header read as the other format.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/NES_2.0">NESdev: NES 2.0</a>
+     */
+    public enum Format {
+        /**
+         * Plain iNES: the mapper in two nibbles, the sizes in one byte each, and a tail that is
+         * padding when it is anything.
+         */
+        INES("ines"),
+
+        /**
+         * NES 2.0, announced by bits 2 and 3 of byte 7 reading 2. Twelve bits of mapper, a
+         * submapper, sizes for every memory on the board, and the console it was made for.
+         */
+        NES20("nes2.0");
+
+        private final String id;
+
+        Format(final String id) {
+            this.id = id;
+        }
+
+        /**
+         * How this is spelled in a report, which is the only place it is written down.
+         */
+        public String id() {
+            return id;
+        }
+    }
+
+    /**
+     * What the header says is fitted on the board besides ROM, in bytes.
+     * <p>
+     * NES 2.0 keeps four numbers: the RAM the CPU sees and the RAM the PPU sees, each split into the
+     * part a battery keeps and the part it does not. A board that puts one chip on a battery and
+     * another off it -- SOROM, with its two 8KB chips -- says so by filling both halves in. iNES
+     * only ever had the one number, byte 8's count of 8KB units of PRG RAM, and it goes into
+     * whichever half the battery bit says.
+     * <p>
+     * This is what the header <em>claims</em>. What a mapper fits is its own decision, and the
+     * two differ in one direction on purpose: every board here carries at least 8KB at $6000
+     * whether or not the header mentions it, because several of blargg's test ROMs report their
+     * results through that window from a header that says nothing.
+     *
+     * @param prgRAM PRG RAM without a battery behind it
+     * @param prgNVRAM PRG RAM a battery keeps
+     * @param chrRAM CHR RAM without a battery behind it
+     * @param chrNVRAM CHR RAM a battery keeps, which almost nothing has
+     */
+    public record RAM(int prgRAM, int prgNVRAM, int chrRAM, int chrNVRAM) {
+        /**
+         * Nothing at all, which is what a header that does not know says.
+         */
+        public static final RAM NONE = new RAM(0, 0, 0, 0);
+
+        /**
+         * Everything at $6000-$7FFF, battery or not. SOROM's two chips are one 16KB space to the
+         * bank bit that switches between them, so this is the number a mapper sizes its array by.
+         */
+        public int prg() {
+            return prgRAM + prgNVRAM;
+        }
+    }
 
     /**
      * What the header claims about the console the cartridge was made for.
@@ -147,92 +228,108 @@ public record Cart(
     private static final int TRAINER_SIZE = 512;
 
     /**
-     * Loads an iNES format ROM file.
+     * What iNES byte 8 counts PRG RAM in, and what a zero there means: the spec says a header that
+     * says nothing is to be read as one unit, for the sake of every ROM headered before the byte
+     * meant anything.
+     */
+    private static final int INES_PRG_RAM_UNIT = 0x2000;
+
+    /**
+     * The nibble that turns a NES 2.0 ROM size from a count into an exponent: see
+     * {@link #nes20ROMSize}.
+     */
+    private static final int NES20_EXPONENT_FORM = 0xF;
+
+    /**
+     * Loads a ROM file in either header format.
      * <p>
-     * The iNES format is the most common NES ROM format. For specification details, see:
-     * <a href="https://wiki.nesdev.org/w/index.php/INES">https://wiki.nesdev.org/w/index.php/INES</a>
+     * iNES is the format almost every dump is in, and NES 2.0 is the same first eight bytes with
+     * the other eight finally meaning something. Both are read here rather than in two loaders
+     * because the cartridge that comes out is the same kind of thing; the difference is in how much
+     * the header is believed, and that is {@link #Cart} field by field.
      *
-     * @param bytes the iNES file as an array of bytes
+     * @param bytes the file as an array of bytes
      * @param filename the filename (for error reporting)
      * @return a Cart instance containing the loaded ROM data
      * @throws InvalidNesFileException if the file format is invalid
      * @throws UnsupportedMapperException if the mapper is not supported
      * @throws BufferUnderflowException if the file is truncated
+     * @see <a href="https://www.nesdev.org/wiki/INES">NESdev: iNES</a>
+     * @see <a href="https://www.nesdev.org/wiki/NES_2.0">NESdev: NES 2.0</a>
      */
     public static Cart load(final byte[] bytes, final String filename) {
         var buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
 
-        // Read iNES header (16 bytes)
-        var magic = buffer.getInt();
-        var prgBankCount = Byte.toUnsignedInt(buffer.get());
-        var chrBankCount = Byte.toUnsignedInt(buffer.get());
-        var flags6 = Byte.toUnsignedInt(buffer.get());
-        var flags7 = Byte.toUnsignedInt(buffer.get());
-        buffer.get(); // PRG-RAM size in 8KB units (rarely used); read to advance past byte 8
-        var flags9 = Byte.toUnsignedInt(buffer.get());
-        var flags10 = Byte.toUnsignedInt(buffer.get());
-
-        // Bytes 11-15, which are the NES 2.0 fields and, in iNES, padding that is sometimes not
-        // padding: see timing().
-        var tail = new byte[INES_HEADER_SIZE - 11];
-        buffer.position(11);
-        buffer.get(tail);
+        var header = new byte[INES_HEADER_SIZE];
+        buffer.get(header);
 
         // Validate magic number ("NES\x1A")
-        if (magic != INES_MAGIC) {
+        if (ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN).getInt() != INES_MAGIC) {
             throw new InvalidNesFileException(filename);
         }
 
-        // Validate PRG-ROM exists
-        if (prgBankCount == 0) {
+        var flags6 = Byte.toUnsignedInt(header[6]);
+        var flags7 = Byte.toUnsignedInt(header[7]);
+        var format = ((flags7 >> 2) & 0b11) == 2 ? Format.NES20 : Format.INES;
+
+        // Bytes 9 to 15 under iNES are padding that is sometimes not padding -- dumps from the
+        // 1990s wrote the ripper's name across the end of the header -- so everything iNES keeps
+        // past byte 8 is only believed out of a header whose last four bytes are zero. NES 2.0
+        // announced itself, so its tail is read as written.
+        var tailIsClean = header[12] == 0 && header[13] == 0 && header[14] == 0 && header[15] == 0;
+
+        var prgROMSize = format == Format.NES20
+                ? nes20ROMSize(header[4], header[9] & 0x0F, PRG_BANK_SIZE)
+                : Byte.toUnsignedInt(header[4]) * (long) PRG_BANK_SIZE;
+        var chrROMSize = format == Format.NES20
+                ? nes20ROMSize(header[5], (header[9] >> 4) & 0x0F, CHR_BANK_SIZE)
+                : Byte.toUnsignedInt(header[5]) * (long) CHR_BANK_SIZE;
+
+        // Validate PRG-ROM exists, and that the file is long enough to hold what the header says
+        // is in it. Long arithmetic because the exponent form can name a size no array holds, and
+        // a header that does is a header the file cannot live up to rather than an overflow.
+        if (prgROMSize == 0 || prgROMSize + chrROMSize > buffer.remaining() - trainerSize(flags6)) {
             throw new InvalidNesFileException(filename);
         }
 
-        // Skip 512-byte trainer if present
-        boolean hasTrainer = ByteUtils.getBit(2, flags6) == 1;
-        if (hasTrainer) {
-            if (buffer.remaining() < TRAINER_SIZE) {
-                throw new InvalidNesFileException(filename);
-            }
-            buffer.position(buffer.position() + TRAINER_SIZE);
-        }
+        // Skip the trainer if there is one
+        buffer.position(buffer.position() + trainerSize(flags6));
 
         // Extract flags
         boolean hasBattery = ByteUtils.getBit(1, flags6) == 1;
-        int lowMapperNibble = ByteUtils.getHighNibble(flags6);
-        int highMapperNibble = ByteUtils.getHighNibble(flags7);
-        int mapperNumber = ByteUtils.joinNibbles(highMapperNibble, lowMapperNibble);
+        int mapperNumber = ByteUtils.joinNibbles(
+                ByteUtils.getHighNibble(flags7), ByteUtils.getHighNibble(flags6));
+        var submapper = 0;
+
+        if (format == Format.NES20) {
+            // Byte 8 carries four more bits of mapper number below a submapper, which is how the
+            // format got past 255 without touching the two nibbles every reader already knew.
+            mapperNumber |= ByteUtils.getLowNibble(header[8]) << 8;
+            submapper = ByteUtils.getHighNibble(header[8]);
+        }
+
         int lowMirrorBit = ByteUtils.getBit(0, flags6);
         int highMirrorBit = ByteUtils.getBit(3, flags6);
         int mirror = ByteUtils.joinBits(highMirrorBit, lowMirrorBit);
 
-        // Calculate expected data sizes
-        int prgROMSize = prgBankCount * PRG_BANK_SIZE;
-        int chrROMSize = chrBankCount * CHR_BANK_SIZE;
-
-        // Validate sufficient data remains
-        if (buffer.remaining() < prgROMSize + chrROMSize) {
-            throw new InvalidNesFileException(filename);
-        }
-
         // Read PRG-ROM
-        var prgROM = new byte[prgROMSize];
+        var prgROM = new byte[(int) prgROMSize];
         buffer.get(prgROM);
 
         // Read CHR-ROM (can be empty for CHR-RAM carts)
-        byte[] chrROM;
-        if (chrBankCount > 0) {
-            chrROM = new byte[chrROMSize];
-            buffer.get(chrROM);
-        } else {
-            // No CHR-ROM banks means the cart uses CHR-RAM
-            chrROM = new byte[0];
-        }
+        var chrROM = new byte[(int) chrROMSize];
+        buffer.get(chrROM);
+
+        var ram = format == Format.NES20
+                ? nes20RAM(header[10], header[11])
+                : inesRAM(header[8], hasBattery, chrROMSize == 0, tailIsClean);
 
         // Create mapper instance
         var mapper = switch (mapperNumber) {
             case 0 -> new Mapper0(prgROM, chrROM, Mirroring.fromINES(mirror));
-            case 1 -> new Mapper1(prgROM, chrROM, Mirroring.fromINES(mirror));
+            case 1, 155 -> new Mapper1(
+                    prgROM, chrROM, Mirroring.fromINES(mirror), ram.prg(),
+                    mapperNumber == 155 ? Mapper1.SUBMAPPER_MMC1A : submapper);
             case 2 -> new Mapper2(prgROM, chrROM, Mirroring.fromINES(mirror));
             case 3 -> new Mapper3(prgROM, chrROM, Mirroring.fromINES(mirror));
             case 4 -> new Mapper4(prgROM, chrROM, Mirroring.fromINES(mirror));
@@ -246,8 +343,72 @@ public record Cart(
         };
 
         return new Cart(
-                filename, prgROM, chrROM, mapper, mapperNumber, mirror, hasBattery,
-                timing(flags7, flags9, flags10, tail), sha256(bytes));
+                filename, prgROM, chrROM, mapper, mapperNumber, submapper, mirror, hasBattery,
+                format, ram, timing(format, header, tailIsClean), sha256(bytes));
+    }
+
+    /**
+     * A NES 2.0 ROM size, out of the low byte and the nibble byte 9 adds above it.
+     * <p>
+     * Twelve bits of 16KB banks is 64MB, which nothing needs, so a nibble of $F means the byte
+     * below it is not a count: its top six bits are an exponent and its bottom two a multiplier,
+     * for a size of 2^E * (MM*2+1). That is how a board whose ROM is not a whole number of banks
+     * -- a 24KB one, say -- gets a header at all. A size in that form is not checked against the
+     * bank, since not being a multiple of the bank is the reason for it.
+     */
+    private static long nes20ROMSize(final byte low, final int high, final int bankSize) {
+        var lowBits = Byte.toUnsignedInt(low);
+
+        if (high == NES20_EXPONENT_FORM) {
+            var exponent = lowBits >> 2;
+            var multiplier = (lowBits & 0b11) * 2 + 1;
+
+            return (1L << exponent) * multiplier;
+        }
+
+        return (high << 8 | lowBits) * (long) bankSize;
+    }
+
+    private static int trainerSize(final int flags6) {
+        return ByteUtils.getBit(2, flags6) == 1 ? TRAINER_SIZE : 0;
+    }
+
+    /**
+     * NES 2.0 bytes 10 and 11: four shift counts, one nibble each, each meaning 64 bytes shifted
+     * left that many places -- and zero meaning none, rather than 64.
+     */
+    private static RAM nes20RAM(final byte byte10, final byte byte11) {
+        return new RAM(
+                nes20RAMSize(byte10 & 0x0F),
+                nes20RAMSize((byte10 >> 4) & 0x0F),
+                nes20RAMSize(byte11 & 0x0F),
+                nes20RAMSize((byte11 >> 4) & 0x0F));
+    }
+
+    private static int nes20RAMSize(final int shift) {
+        return shift == 0 ? 0 : 64 << shift;
+    }
+
+    /**
+     * What iNES has to say about RAM, which is one byte, and that one only half meant.
+     * <p>
+     * Byte 8 counts PRG RAM in 8KB units and says zero means one unit, because the byte was added
+     * after most of the library had already been headered with it blank. It is read under the same
+     * guard as the PAL flag beside it: a signature across the tail lands a letter in byte 8 as
+     * readily as in byte 9, and a cartridge given nine hundred kilobytes of RAM by somebody's
+     * handle would be a strange thing to debug. A header that is not clean gets the one unit.
+     * <p>
+     * The battery bit decides which half the number goes in, since the format has no way to split
+     * it. CHR RAM is not in the format at all; a board with no CHR ROM has 8KB, which is what every
+     * such board carried.
+     */
+    private static RAM inesRAM(
+            final byte byte8, final boolean battery, final boolean chrIsRAM, final boolean clean) {
+        var units = clean ? Byte.toUnsignedInt(byte8) : 0;
+        var prg = Math.max(1, units) * INES_PRG_RAM_UNIT;
+        var chr = chrIsRAM ? CHR_BANK_SIZE : 0;
+
+        return battery ? new RAM(0, prg, chr, 0) : new RAM(prg, 0, chr, 0);
     }
 
     /**
@@ -256,22 +417,19 @@ public record Cart(
      * Three formats have had a go at this byte and they do not agree, so they are asked in order of
      * how much they can be trusted.
      * <p>
-     * NES 2.0 is the only one that is any good: it announces itself in the top half of byte 7 and
-     * puts the answer in the bottom two bits of byte 12, with four values rather than two. Failing
-     * that, iNES 1.0 has byte 9 bit 0 and, from a later revision nobody much implemented, byte 10
-     * bits 0 and 1 -- where 2 is PAL and 1 and 3 mean the game runs on either.
+     * NES 2.0 is the only one that is any good: it puts the answer in the bottom two bits of byte
+     * 12, with four values rather than two. Failing that, iNES 1.0 has byte 9 bit 0 and, from a
+     * later revision nobody much implemented, byte 10 bits 0 and 1 -- where 2 is PAL and 1 and 3
+     * mean the game runs on either.
      * <p>
-     * Those two are only read from a header whose last four bytes are zero, and that guard is the
-     * whole reason this is not two lines. Dumps from the 1990s wrote the ripper's name across the
-     * end of the header, and a byte of a signature lands in byte 9 as readily as anywhere else; a
-     * cartridge declared PAL by the letter "P" of somebody's handle would be a mystifying thing to
-     * debug. A header with anything in bytes 12 to 15 is not answering the question.
+     * Those two are only read from a header whose tail is clean, for the reason given where that
+     * is decided: a cartridge declared PAL by the letter "P" of somebody's handle would be a
+     * mystifying thing to debug. A header with anything in bytes 12 to 15 is not answering the
+     * question.
      */
-    private static Timing timing(
-            final int flags7, final int flags9, final int flags10, final byte[] tail) {
-        if (((flags7 >> 2) & 0b11) == 2) {
-            // Byte 12 of the file, which is the second byte of the tail read from 11.
-            return switch (tail[1] & 0b11) {
+    private static Timing timing(final Format format, final byte[] header, final boolean clean) {
+        if (format == Format.NES20) {
+            return switch (header[12] & 0b11) {
                 case 1 -> Timing.PAL;
                 case 2 -> Timing.MULTI_REGION;
                 case 3 -> Timing.DENDY;
@@ -279,17 +437,15 @@ public record Cart(
             };
         }
 
-        for (var i = 1; i < tail.length; i++) {
-            if (tail[i] != 0) {
-                return Timing.UNSTATED;
-            }
+        if (!clean) {
+            return Timing.UNSTATED;
         }
 
-        if ((flags9 & 1) == 1) {
+        if ((header[9] & 1) == 1) {
             return Timing.PAL;
         }
 
-        return switch (flags10 & 0b11) {
+        return switch (header[10] & 0b11) {
             case 2 -> Timing.PAL;
             case 1, 3 -> Timing.MULTI_REGION;
             default -> Timing.UNSTATED;
