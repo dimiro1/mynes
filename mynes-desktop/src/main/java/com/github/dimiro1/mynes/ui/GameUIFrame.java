@@ -6,6 +6,8 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.archive.Archive;
+import com.github.dimiro1.mynes.archive.InvalidArchiveException;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
@@ -52,6 +54,7 @@ import java.util.Map;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
 import java.util.function.IntConsumer;
+import java.util.stream.Collectors;
 
 public class GameUIFrame extends JFrame {
     private static final Logger logger = System.getLogger("UI");
@@ -61,6 +64,13 @@ public class GameUIFrame extends JFrame {
      * because a tenth would be the one nobody could remember what they put in.
      */
     private static final int SLOTS = 9;
+
+    /**
+     * What a cartridge inside a zip is called. The only one: this runs iNES and NES 2.0 images, and
+     * a zip full of names nobody recognises is better refused with a list of what was in it than
+     * opened on whichever file happened to be first.
+     */
+    private static final String ROM_EXTENSION = "nes";
 
     /**
      * How often the cartridge RAM is checked and written out while a game is running.
@@ -293,6 +303,17 @@ public class GameUIFrame extends JFrame {
     private Path romPath;
 
     /**
+     * The name of the file inside {@link #romPath} the cartridge came out of, when that was a zip,
+     * and null when it was the cartridge itself.
+     * <p>
+     * Kept because it is what {@link #gamePath} names this game's files after. A zip is a folder as
+     * far as the saves are concerned: two games in one archive that were both filed under the
+     * archive would share a {@code .sav} and nine save slots, and each would be reading the other's
+     * progress as its own.
+     */
+    private String romEntry;
+
+    /**
      * The patch applied to it on the way in, or null. Kept because it is half of what the machine
      * running is: {@link #gamePath} names this game's files after it, and the title says so.
      */
@@ -344,7 +365,10 @@ public class GameUIFrame extends JFrame {
     public GameUIFrame() {
         super("MyNES");
 
-        var filter = new SystemFileChooser.FileNameExtensionFilter("iNES", "nes");
+        // Both, in one filter rather than two: a collection is a folder of zips, and one that has
+        // been half unpacked is a folder of both. Picking between two filters to see the file that
+        // is right there is a question nobody wants asked of them.
+        var filter = new SystemFileChooser.FileNameExtensionFilter("NES cartridge", "nes", "zip");
         fileChooser = new SystemFileChooser();
         fileChooser.addChoosableFileFilter(filter);
         fileChooser.setFileFilter(filter);
@@ -646,7 +670,7 @@ public class GameUIFrame extends JFrame {
 
         fileMenuOpen.addActionListener(e -> {
             if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
-                open(fileChooser.getSelectedFile(), null);
+                open(fileChooser.getSelectedFile(), null, null);
             }
         });
 
@@ -661,7 +685,7 @@ public class GameUIFrame extends JFrame {
             var rom = fileChooser.getSelectedFile();
 
             if (patchChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
-                open(rom, patchChooser.getSelectedFile());
+                open(rom, null, patchChooser.getSelectedFile());
             }
         });
 
@@ -2020,6 +2044,7 @@ public class GameUIFrame extends JFrame {
             item.setEnabled(game.isThere());
             item.addActionListener(e -> open(
                     game.rom().toFile(),
+                    game.entry(),
                     game.patch() == null ? null : game.patch().toFile()));
 
             fileMenuOpenRecent.add(item);
@@ -2085,13 +2110,17 @@ public class GameUIFrame extends JFrame {
      * The menu's way in: load a cartridge, and tell the player if it will not load.
      * <p>
      * A dialog rather than a log line, because the player has just picked the file out of a chooser
-     * and is owed an answer about it. Everything {@link Cart#load} and
-     * {@link IPSPatch#read(byte[], String)} throw is unchecked, so the two are caught together and
-     * the machine already running is left alone.
+     * and is owed an answer about it. Everything {@link Cart#load},
+     * {@link IPSPatch#read(byte[], String)} and {@link Archive#open} throw is unchecked, so the
+     * three are caught together and the machine already running is left alone.
+     *
+     * @param entry which file inside {@code rom} is the cartridge, when Open Recent already knows.
+     *              Null for a file picked out of the chooser, which is where the archive is looked
+     *              in and, if it holds several, where the question is asked.
      */
-    private void open(final File rom, final File patch) {
+    private void open(final File rom, final String entry, final File patch) {
         try {
-            loadRom(rom, patch);
+            loadRom(rom, entry, patch);
         } catch (IOException | RuntimeException e) {
             report("Could not load " + rom.getName(), e);
         }
@@ -2105,15 +2134,29 @@ public class GameUIFrame extends JFrame {
      *
      * @param patchFile an IPS patch to apply to the ROM first, or null. It is applied to the bytes
      *                  on their way in and nowhere else: the file the player owns is never written
-     *                  to, and closing the emulator leaves no patched copy of it behind.
+     *                  to, and closing the emulator leaves no patched copy of it behind. Applied to
+     *                  what came out of the zip when the file was one, which is the only thing an
+     *                  offset in a patch could be counted from.
      */
-    private void loadRom(final File selectedFile, final File patchFile) throws IOException {
+    private void loadRom(final File selectedFile, final String wantedEntry, final File patchFile)
+            throws IOException {
         logger.log(Level.INFO, "loading rom " + selectedFile.getName());
 
-        byte[] image;
+        byte[] file;
         try (var rom = new FileInputStream(selectedFile)) {
-            image = rom.readAllBytes();
+            file = rom.readAllBytes();
         }
+
+        var unzipped = unzip(selectedFile, file, wantedEntry);
+
+        if (unzipped == null) {
+            // The player closed the dialog asking which cartridge in the archive they meant, which
+            // is an answer. The machine already running is left alone.
+            return;
+        }
+
+        var image = unzipped.bytes();
+        var name = unzipped.name();
 
         if (patchFile != null) {
             // Before Cart.load rather than after, since a patch is entitled to rewrite the header
@@ -2126,21 +2169,114 @@ public class GameUIFrame extends JFrame {
                     + patchFile.getName());
         }
 
-        var loaded = Cart.load(image, selectedFile.getName());
+        // The name inside the archive rather than the archive's, because the only thing the Cart is
+        // told its filename for is the title bar, and what belongs there is the game. Where the file
+        // came from is romPath, which is the zip.
+        var loaded = Cart.load(image, name == null
+                ? selectedFile.getName() : Archive.fileNameOf(name));
 
         startMachine(
                 loaded,
                 selectedFile.toPath().toAbsolutePath(),
+                name,
                 patchFile == null ? null : patchFile.toPath().toAbsolutePath());
 
         // After the cartridge has loaded rather than when the file was picked, so that a file which
         // turned out not to be one is not offered again from the menu. Written out at once, since
         // the alternative is a list that only survives a tidy exit.
         config.addRecentRom(new RecentRom(
-                selectedFile.toPath(), patchFile == null ? null : patchFile.toPath()));
+                selectedFile.toPath(), name,
+                patchFile == null ? null : patchFile.toPath()));
         saveConfig();
 
         logger.log(Level.INFO, "loaded rom " + selectedFile.getName());
+    }
+
+    /**
+     * A cartridge image, and the name it had inside the zip it came out of.
+     *
+     * @param name null when the file the player picked was the cartridge, which is what
+     *             {@link #romEntry} then holds too.
+     */
+    private record Unzipped(byte[] bytes, String name) {
+    }
+
+    /**
+     * Takes the cartridge out of the zip, when the file the player picked is one.
+     * <p>
+     * Decided by what is in the file rather than by what it is called, so a cartridge saved as
+     * {@code game.zip.nes} still opens and a zip renamed on the way through a mail server still
+     * does. Nothing is unpacked to disk: the bytes go straight on to the patcher and to
+     * {@link Cart#load}, so opening a game leaves nothing behind to tidy up -- which is the promise
+     * Open with Patch already makes about the ROM it does not write to.
+     *
+     * @param wanted the name Open Recent remembered, or null to work it out. A name the archive no
+     *               longer holds is not an error: the zip has been repacked since, and asking again
+     *               is a better answer than refusing to open a file that is plainly there.
+     * @return what to run, or null when the player closed the question about which cartridge they
+     *         meant.
+     * @throws InvalidArchiveException if the zip will not open, or holds no cartridge.
+     */
+    private Unzipped unzip(final File file, final byte[] bytes, final String wanted) {
+        if (!Archive.looksLikeOne(bytes)) {
+            return new Unzipped(bytes, null);
+        }
+
+        var archive = Archive.open(bytes, file.getName());
+
+        if (wanted != null) {
+            for (var candidate : archive.files()) {
+                if (candidate.name().equals(wanted)) {
+                    return new Unzipped(candidate.bytes(), candidate.name());
+                }
+            }
+
+            logger.log(Level.WARNING,
+                    file.getName() + " no longer holds " + wanted + ", asking again");
+        }
+
+        var cartridges = archive.endingIn(ROM_EXTENSION);
+
+        if (cartridges.isEmpty()) {
+            throw new InvalidArchiveException(file.getName(), "nothing in it is named like a"
+                    + " cartridge, only " + namesOf(archive.files()));
+        }
+
+        if (cartridges.size() == 1) {
+            return new Unzipped(cartridges.getFirst().bytes(), cartridges.getFirst().name());
+        }
+
+        // Asked rather than guessed at. The first entry in a zip is whichever the packer happened to
+        // write first, so opening it would be opening a different game from the one somebody meant
+        // -- and quietly, since a title bar naming the archive would look exactly the same.
+        var names = cartridges.stream().map(Archive.Entry::name).toArray(String[]::new);
+        var chosen = JOptionPane.showInputDialog(
+                this,
+                file.getName() + " holds " + names.length + " cartridges.",
+                "Open",
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                names,
+                names[0]);
+
+        for (var candidate : cartridges) {
+            if (candidate.name().equals(chosen)) {
+                return new Unzipped(candidate.bytes(), candidate.name());
+            }
+        }
+
+        // The dialog answers with one of the names it was given or with null, so getting here is
+        // the player having closed it -- which is an answer, and leaves the machine already running
+        // exactly where it was.
+        return null;
+    }
+
+    /**
+     * What was in an archive that turned out to hold no cartridge, for the dialog that says so.
+     */
+    private static String namesOf(final List<Archive.Entry> entries) {
+        return entries.isEmpty() ? "nothing at all"
+                : entries.stream().map(Archive.Entry::name).collect(Collectors.joining(", "));
     }
 
     /**
@@ -2153,7 +2289,16 @@ public class GameUIFrame extends JFrame {
      * that did wander across is refused rather than loaded.
      */
     private Path gamePath() {
-        return patchPath == null ? romPath : patchPath;
+        if (patchPath != null) {
+            return patchPath;
+        }
+
+        // Beside the zip, named after the cartridge inside it, which is where the saves would have
+        // landed had the player unpacked the archive themselves. Only the last segment of the name
+        // is used, so an archive that files its cartridge under a folder still saves beside itself
+        // rather than into a folder that is not there.
+        return romEntry == null
+                ? romPath : romPath.resolveSibling(Archive.fileNameOf(romEntry));
     }
 
     /**
@@ -2162,16 +2307,20 @@ public class GameUIFrame extends JFrame {
      * the cartridge is new.
      */
     private void startMachine(final Cart cart) {
-        startMachine(cart, romPath, patchPath);
+        startMachine(cart, romPath, romEntry, patchPath);
     }
 
     /**
      * The same, for a cartridge that has just been loaded from somewhere.
      *
-     * @param rom   where the .nes file was, which is what the Cart is not told.
+     * @param rom   where the file was, which is what the Cart is not told. The zip rather than the
+     *              cartridge when the player opened one.
+     * @param entry the name the cartridge had inside that zip, or null when the file was the
+     *              cartridge.
      * @param patch the IPS patch applied to it, or null.
      */
-    private void startMachine(final Cart cart, final Path rom, final Path patch) {
+    private void startMachine(
+            final Cart cart, final Path rom, final String entry, final Path patch) {
         // Before the outgoing machine is let go of, and while its runner is stopped so it is safe to
         // read from here. Both changing cartridges and cycling the power come through here, and a
         // power cycle that lost the last hour of a game would be a cruel way to find that out.
@@ -2201,6 +2350,7 @@ public class GameUIFrame extends JFrame {
         // its saves beside it -- and a hack keeps its own beside the patch, rather than writing over
         // the original's.
         romPath = rom;
+        romEntry = entry;
         patchPath = patch;
 
         if (runner != null) {

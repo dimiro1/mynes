@@ -27,9 +27,13 @@ import java.util.TreeSet;
 /**
  * What the command line asked for.
  *
- * @param rom              the cartridge to run.
+ * @param rom              the cartridge to run, or the zip a collection ships it in.
+ * @param entry            which file inside that zip is the cartridge, or null to let the one that
+ *                         is named like one be it. Meaningless, and refused, for a ROM that is not
+ *                         a zip.
  * @param patches          IPS patches to apply to it, in the order they were named, before it is
- *                         read as a cartridge at all.
+ *                         read as a cartridge at all. Applied to what came out of the zip, which
+ *                         is the only thing an offset in a patch could be counted from.
  * @param frames           how many frames to run, when nothing stops it sooner.
  * @param framesSet        whether {@code --frames} was actually given. {@code --play} runs the
  *                         movie's own length unless somebody named one, and how long a movie is
@@ -87,6 +91,7 @@ import java.util.TreeSet;
  */
 public record Options(
         Path rom,
+        String entry,
         List<Path> patches,
         long frames,
         boolean framesSet,
@@ -204,13 +209,22 @@ public record Options(
             a frame hash worth writing down and two reports worth diffing.
 
             Cartridge and length
-              --rom FILE            The .nes file to run. Required.
+              --rom FILE            The .nes file to run, or a .zip holding one -- which is how
+                                    nearly every collection ships them. Required. A zip is opened
+                                    in memory and nothing is unpacked to disk. Recognised by what
+                                    is in the file rather than by its name.
+              --entry NAME          Which file inside that zip is the cartridge. Only needed for a
+                                    zip holding more than one, which is refused without it rather
+                                    than guessed at. Either the whole name the zip stores or just
+                                    the file name at the end of it; whichever file ran is written
+                                    into the report as cart.entry either way.
               --patch FILE          Apply an IPS patch to it before running it, which is how a
                                     romhack is handed out. Repeatable, and applied in the order
-                                    given. Nothing is written back: the .nes file on disk is left
-                                    exactly as it was, and only the copy in memory is patched. The
-                                    cart.sha256 in the report is the digest of the patched image,
-                                    since that is what actually ran.
+                                    given, to whatever came out of the zip when there was one.
+                                    Nothing is written back: the file on disk is left exactly as it
+                                    was, and only the copy in memory is patched. The cart.sha256 in
+                                    the report is the digest of the patched image, since that is
+                                    what actually ran.
               --frames N            Stop after N completed frames. Default 600, which is ten
                                     seconds of emulated time and about a second of real time.
               --timeout SECONDS     Give up after this much real time and write what there is so
@@ -437,6 +451,7 @@ public record Options(
      */
     public static Options parse(final String[] args) {
         Path rom = null;
+        String entry = null;
         var patches = new ArrayList<Path>();
         var frames = DEFAULT_FRAMES;
         var framesSet = false;
@@ -485,6 +500,7 @@ public record Options(
                 case "--help", "-h" -> help = true;
                 case "--list-palettes" -> listPalettes = true;
                 case "--rom" -> rom = Path.of(value(args, ++i, flag));
+                case "--entry" -> entry = value(args, ++i, flag);
                 case "--patch" -> patches.add(Path.of(value(args, ++i, flag)));
                 case "--frames" -> {
                     frames = positive(value(args, ++i, flag), flag);
@@ -601,6 +617,7 @@ public record Options(
 
         return new Options(
                 rom,
+                entry,
                 List.copyOf(patches),
                 frames,
                 framesSet,

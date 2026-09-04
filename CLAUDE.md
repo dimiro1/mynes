@@ -1,8 +1,8 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. Five modules -- `mynes-core`, `mynes-patch`,
-`mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test` at the root still runs
-everything.
+A NES emulator in Java 25, built with Maven. Six modules -- `mynes-core`, `mynes-patch`,
+`mynes-archive`, `mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test` at the root
+still runs everything.
 
 ## Seeing what the emulator does
 
@@ -505,6 +505,45 @@ moves, and Power Cycle, Region, the Game Genie item and the Overclock submenu ar
 first two would build a new machine and take the recorder with it. Rewinding during playback stops it
 and hands the game back, and the menu's own overclock goes back on when it does.
 
+### Running a cartridge out of a zip
+
+`--rom` takes a `.zip` as readily as a `.nes`, which is how nearly every collection ships one. The
+archive is unpacked in memory and **nothing is written to disk**, so there is no unpacked copy of
+anybody's ROM to tidy up afterwards.
+
+```sh
+java -jar $JAR --headless --rom "Super Mario Bros. (World).zip" --frames 900 --input 60/40x3:start
+```
+
+**It is decided by what is in the file rather than by what it is called.** The first four bytes say
+whether it is a zip, so a cartridge saved as `game.zip.nes` still runs and a zip that lost its
+extension in transit still opens. The window's chooser takes both extensions in one filter for the
+same reason: a half-unpacked collection is a folder of both.
+
+Everything downstream is untouched, and that is the claim worth keeping. `--patch` applies to what
+came out of the archive, since an IPS offset is counted from the front of the cartridge either way;
+`cart.sha256` is the cartridge's, so a zipped run and a loose run of the same dump are the same
+digest, the same frame hash and the same save state; and a movie recorded from one replays
+byte-identically from the other. `ZippedRomTests` holds all of that.
+
+The one thing that moves is **`cart.entry`**, which names the file inside and is explicitly null
+otherwise. `cart.file` above it is still the archive, because that is what somebody named and what
+the saves are filed under.
+
+**A zip holding two cartridges is refused rather than guessed at.** The first entry in a zip is
+whichever the packer happened to write first, so opening it would run a different game from the one
+anybody meant with nothing in the report to say which. `--entry NAME` says which -- either the whole
+name the zip stores or just the file name at the end of it -- and the refusal lists what is in there.
+So does a zip holding no `.nes` at all. All of them are exit 5, along with `--entry` on a ROM that is
+not a zip, since they are one answer to a script: the file named by `--rom` did not produce a
+cartridge.
+
+The window asks instead of refusing, and remembers the answer: File > Open Recent holds the archive
+and the name inside it, so a zip holding several reopens the game rather than the question. A
+cartridge out of an archive is filed **beside the zip, under the name it had inside** -- so two games
+in one archive do not share a `.sav` and nine save slots, each reading the other's progress as its
+own.
+
 ### Running a romhack
 
 `--patch FILE` applies an IPS patch to the ROM before anything reads it as a cartridge. Repeatable,
@@ -618,8 +657,8 @@ build would notice one going missing. And `THIRD-PARTY.md` names the two librari
 carries, which is the file to write in if a third ever earns its place.
 
 Releasing is a tag and nothing else. `.github/workflows/release.yml` refuses one whose name disagrees
-with the pom, so the version moves first and `git tag v<version>` follows it. There are five poms to
-move it in now, which is a job for the tool rather than for five edits:
+with the pom, so the version moves first and `git tag v<version>` follows it. There are six poms to
+move it in now, which is a job for the tool rather than for six edits:
 
 ```sh
 mvn -B versions:set -DnewVersion=0.3.0 -DprocessAllModules -DgenerateBackupPoms=false
@@ -650,7 +689,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
-Five Maven modules, and the arrows between them only point one way.
+Six Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
@@ -669,10 +708,14 @@ mynes-core/           depends on nothing
 mynes-patch/          depends on nothing either, core included
   mynes/patch/        IPS patches, applied to a byte[] before anyone reads it as a cartridge
 
-mynes-headless/       depends on core and patch
+mynes-archive/        depends on nothing either
+  mynes/archive/      zip files, unpacked in memory for the one thing inside somebody wanted
+
+mynes-headless/       depends on core, patch and archive
   mynes/headless/     the command line mode
 
-mynes-desktop/        depends on core, patch and headless; FlatLaf and MigLayout live here
+mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and MigLayout live
+                      here
   mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger, and
                       the sound card: the line, the volume, and the half a percent of resampling
                       that holds its queue where it was put
@@ -688,6 +731,13 @@ patches -- a ROM, a save file, a disk image -- and a patcher that could see a `C
 later be handed one. It is the front ends that join the two together, both by reading the file,
 patching the bytes and handing the result to `Cart.load`. A patch is entitled to rewrite the iNES
 header, so it has to be applied *before* the cartridge is parsed rather than after.
+
+`mynes-archive` is beside it for exactly the same reason, and the two are read as a pair: zip is a
+container from 1989 that says nothing about what is in it, so a reader that could see a `Cart` would
+sooner or later be handed one. The front ends join them up in the order the files nest -- open the
+archive, patch what came out, hand that to `Cart.load` -- which is why the patch path needed no
+changes at all when zips arrived. It is the JDK's own `java.util.zip` and nothing else, so the fat
+jar carries no third library for it.
 
 `mynes/cheat/` is inside the console for the opposite reason. A Game Genie code says `$8000`, says
 "the NES CPU address map", and cannot be decoded without one -- so unlike IPS there is nothing
@@ -710,6 +760,7 @@ Which makes one check worth running when the dependencies change:
 ```sh
 mvn dependency:tree -pl mynes-core       # nothing but the two test artifacts
 mvn dependency:tree -pl mynes-patch      # nothing but JUnit
+mvn dependency:tree -pl mynes-archive    # nothing but JUnit
 mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
 ```
 
