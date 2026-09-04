@@ -3,6 +3,8 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.archive.Archive;
+import com.github.dimiro1.mynes.archive.InvalidArchiveException;
 import com.github.dimiro1.mynes.patch.IPSPatch;
 import com.github.dimiro1.mynes.patch.InvalidPatchException;
 import com.github.dimiro1.mynes.state.BatteryRAM;
@@ -24,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Runs a cartridge with nobody watching, and writes down what happened.
@@ -90,14 +93,22 @@ public final class Headless {
     }
 
     private static int runCartridge(final Options options) throws IOException {
-        final byte[] image;
+        final byte[] file;
 
         try {
-            image = Files.readAllBytes(options.rom());
+            file = Files.readAllBytes(options.rom());
         } catch (IOException e) {
             System.err.println(options.rom() + " could not be read: " + e.getMessage());
             return EXIT_ROM;
         }
+
+        var unzipped = unzip(options, file);
+
+        if (unzipped == null) {
+            return EXIT_ROM;
+        }
+
+        var image = unzipped.image();
 
         final Patched patched;
 
@@ -342,6 +353,7 @@ public final class Headless {
                             outcome.stoppedBecause(),
                             wallClockMillis,
                             startedAt,
+                            unzipped.entry(),
                             patched.applied(),
                             outcome.screenshots(),
                             dumps,
@@ -375,6 +387,105 @@ public final class Headless {
             List<Long> screenshots,
             Movie recorded,
             Path recordedTo) {
+    }
+
+    /**
+     * The extension a cartridge inside a zip goes by. The only one: this runs iNES and NES 2.0
+     * images, and a name it does not recognise is better refused with a list of what was in there
+     * than handed to {@link Cart#load} to fail as "not a cartridge".
+     */
+    private static final String ROM_EXTENSION = "nes";
+
+    /**
+     * The cartridge image, and the name it had inside the zip it came out of.
+     *
+     * @param entry null when the ROM was a plain file, which is what the report prints for it.
+     */
+    private record Unzipped(byte[] image, String entry) {
+    }
+
+    /**
+     * Takes the cartridge out of the zip, when the ROM is one.
+     * <p>
+     * Decided by what is in the file rather than by what it is called, so a cartridge saved as
+     * {@code game.zip.nes} still opens and a zip renamed on the way through a mail server still
+     * does. Nothing is unpacked to disk: the bytes go straight on to the patcher, which is why
+     * {@code --patch} needs to know nothing about any of this -- an offset in a patch is counted
+     * from the front of the cartridge either way.
+     *
+     * @return what to run, or null when it has already said on standard error why there is nothing
+     *         to run. Every one of those is the same answer to a script -- the file named by
+     *         {@code --rom} did not produce a cartridge -- so they all cost exit 5.
+     */
+    private static Unzipped unzip(final Options options, final byte[] file) {
+        if (!Archive.looksLikeOne(file)) {
+            if (options.entry() != null) {
+                System.err.println("--entry names a file inside a zip, and " + options.rom()
+                        + " is not one.");
+                return null;
+            }
+
+            return new Unzipped(file, null);
+        }
+
+        final Archive archive;
+
+        try {
+            archive = Archive.open(file, options.rom().toString());
+        } catch (InvalidArchiveException e) {
+            System.err.println(e.getMessage());
+            return null;
+        }
+
+        if (options.entry() != null) {
+            for (var candidate : archive.files()) {
+                if (candidate.name().equalsIgnoreCase(options.entry())
+                        || candidate.fileName().equalsIgnoreCase(options.entry())) {
+                    logger.log(Level.INFO, "running " + candidate.name() + " out of "
+                            + options.rom().getFileName());
+
+                    return new Unzipped(candidate.bytes(), candidate.name());
+                }
+            }
+
+            // Everything rather than only the cartridges, since somebody who named one by hand has
+            // most likely mistyped it and wants to see what is actually in there.
+            System.err.println(options.rom() + " holds nothing called " + options.entry()
+                    + ". It holds " + namesOf(archive.files()) + ".");
+            return null;
+        }
+
+        var cartridges = archive.endingIn(ROM_EXTENSION);
+
+        if (cartridges.isEmpty()) {
+            System.err.println(options.rom() + " holds nothing named like a cartridge. It holds "
+                    + namesOf(archive.files()) + ".");
+            return null;
+        }
+
+        if (cartridges.size() > 1) {
+            // Refused rather than guessed at. The first entry in a zip is whichever the packer
+            // happened to write first, so picking it would run a different game from the one
+            // somebody meant without anything in the report saying which -- and a run nobody can
+            // identify afterwards is worse than a run that did not start.
+            System.err.println(options.rom() + " holds " + cartridges.size()
+                    + " cartridges, so --entry has to say which: " + namesOf(cartridges) + ".");
+            return null;
+        }
+
+        var only = cartridges.getFirst();
+
+        logger.log(Level.INFO, "running " + only.name() + " out of " + options.rom().getFileName());
+
+        return new Unzipped(only.bytes(), only.name());
+    }
+
+    /**
+     * The names, for a message that is meant to be read rather than parsed.
+     */
+    private static String namesOf(final List<Archive.Entry> entries) {
+        return entries.isEmpty() ? "nothing at all"
+                : entries.stream().map(Archive.Entry::name).collect(Collectors.joining(", "));
     }
 
     /**

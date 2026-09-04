@@ -47,6 +47,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- The same, for File > Open: the chooser takes the zip a collection ships in. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-archive</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.formdev</groupId>
             <artifactId>flatlaf</artifactId>

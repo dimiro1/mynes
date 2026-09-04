@@ -16,14 +16,15 @@
          into either mode, and running without a window is a mode of it. That is also why the jar
          and the zip are built there: it is the module with a main class.
 
-         mynes-patch depends on nothing, mynes-core included: IPS says nothing about what it patches,
-         so the front ends are what join the two together.
+         mynes-patch and mynes-archive depend on nothing, mynes-core included: neither IPS nor zip
+         says anything about what it is holding, so the front ends are what join them to a cartridge.
 
          mynes-shots depends on mynes-desktop and nothing depends on it: it photographs the window
          for the README, and the jar would be carrying a camera. -->
     <modules>
         <module>mynes-core</module>
         <module>mynes-patch</module>
+        <module>mynes-archive</module>
         <module>mynes-headless</module>
         <module>mynes-desktop</module>
         <module>mynes-shots</module>

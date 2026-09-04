@@ -68,6 +68,7 @@ public final class Config {
     private static final String REWIND_KEY_KEY = "rewind.key";
     private static final String RECENT_KEY_PREFIX = "recent.";
     private static final String RECENT_PATCH_SUFFIX = ".patch";
+    private static final String RECENT_ENTRY_SUFFIX = ".entry";
 
     /**
      * How many games File &gt; Open Recent holds.
@@ -223,7 +224,9 @@ public final class Config {
             # The games File > Open Recent lists, most recently opened first. An entry that names
             # a patch as well is a romhack, which is a different game from the cartridge it was cut
             # against -- so the pair is remembered, and opening it from the menu applies the patch
-            # again. Numbering is only the order they are read back in: a line deleted by hand is
+            # again. An entry that names a file as well is a cartridge that came out of a zip, and
+            # it says which one, so that a zip holding several reopens the game rather than the
+            # question. Numbering is only the order they are read back in: a line deleted by hand is
             # stepped over rather than taken as the end of the list.
             #
             # These are the only values in this file that are paths rather than words out of a
@@ -374,7 +377,9 @@ public final class Config {
             }
 
             var game = new RecentRom(
-                    rom, pathFrom(properties, RECENT_KEY_PREFIX + n + RECENT_PATCH_SUFFIX));
+                    rom,
+                    entryFrom(properties, RECENT_KEY_PREFIX + n + RECENT_ENTRY_SUFFIX),
+                    pathFrom(properties, RECENT_KEY_PREFIX + n + RECENT_PATCH_SUFFIX));
 
             if (!recent.contains(game)) {
                 recent.add(game);
@@ -382,6 +387,19 @@ public final class Config {
         }
 
         return List.copyOf(recent);
+    }
+
+    /**
+     * The name of a file inside a zip, or null for a game that was opened from a plain cartridge.
+     * <p>
+     * Not a path, and deliberately not read as one: it is the name an archive stores, which uses a
+     * forward slash whatever the computer reading it does, and turning it into a {@link Path} here
+     * would rewrite it into the local shape and then fail to match what is in the zip.
+     */
+    private static @Nullable String entryFrom(final Properties properties, final String key) {
+        var value = properties.getProperty(key);
+
+        return value == null || value.isBlank() ? null : value;
     }
 
     /**
@@ -755,6 +773,15 @@ public final class Config {
                     .append('=')
                     .append(escape(game.rom().toString()))
                     .append('\n');
+
+            if (game.entry() != null) {
+                text.append(RECENT_KEY_PREFIX)
+                        .append(number)
+                        .append(RECENT_ENTRY_SUFFIX)
+                        .append('=')
+                        .append(escape(game.entry()))
+                        .append('\n');
+            }
 
             if (game.patch() != null) {
                 text.append(RECENT_KEY_PREFIX)

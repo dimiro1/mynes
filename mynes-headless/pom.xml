@@ -30,6 +30,14 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- The rom flag takes the zip a collection ships the cartridge in, which is opened before
+             the patch is applied to what came out of it. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-archive</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- The tests read back the reports Json writes, which is how they assert on one without
              growing a parser on the side that ships. -->
         <dependency>

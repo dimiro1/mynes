@@ -45,13 +45,28 @@ class RomDropTests {
         assertSame(rom, RomDrop.cartridgeIn(List.of(rom)));
     }
 
+    /**
+     * The two the Open dialog's filter takes, since the cursor has to say yes to exactly the files
+     * the menu would open. What is inside the zip is nobody's business here -- the drag is answered
+     * on the name, and the archive is not read until the window opens it.
+     */
+    @Test
+    void theZipACollectionShipsOneInIsACartridgeToo() {
+        var zip = new File("/roms/smb.zip");
+        var shouted = new File("/roms/SMB.ZIP");
+
+        assertSame(zip, RomDrop.cartridgeIn(List.of(zip)));
+        assertSame(shouted, RomDrop.cartridgeIn(List.of(shouted)));
+    }
+
     @Test
     void anythingElseIsNotACartridge() {
-        assertNull(RomDrop.cartridgeIn(List.of(new File("/roms/smb.zip"))));
         assertNull(RomDrop.cartridgeIn(List.of(new File("/roms/hack.ips"))));
+        assertNull(RomDrop.cartridgeIn(List.of(new File("/roms/readme.txt"))));
 
         // The extension rather than the name having it in the middle somewhere.
         assertNull(RomDrop.cartridgeIn(List.of(new File("/roms/smb.nes.txt"))));
+        assertNull(RomDrop.cartridgeIn(List.of(new File("/roms/smb.zip.txt"))));
     }
 
     /**
@@ -79,7 +94,7 @@ class RomDropTests {
     void theCursorSaysNoToAnythingElse() {
         var drop = new RomDrop(rom -> { });
 
-        assertFalse(drop.canImport(support(new File("/roms/smb.zip"))));
+        assertFalse(drop.canImport(support(new File("/roms/hack.ips"))));
 
         // Nothing dragged out of a file manager at all: a run of text, which is a flavour this
         // never asks the transferable for.
@@ -112,7 +127,7 @@ class RomDropTests {
     void aDropOfSomethingElseOpensNothing() throws Exception {
         var opened = new AtomicReference<File>();
 
-        assertFalse(new RomDrop(opened::set).importData(support(new File("/roms/smb.zip"))));
+        assertFalse(new RomDrop(opened::set).importData(support(new File("/roms/hack.ips"))));
 
         flush();
 

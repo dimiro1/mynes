@@ -75,6 +75,8 @@ public final class Report {
      * @param stoppedBecause  why it stopped.
      * @param wallClockMillis how long that took in real time.
      * @param startedAt       when it started.
+     * @param entry           the file inside the zip the cartridge came out of, or null when the
+     *                        ROM was a plain file.
      * @param patches         the patches applied to the ROM image before it was read as a cartridge.
      * @param screenshots     the frames photographed.
      * @param dumps           the memories written out.
@@ -89,6 +91,7 @@ public final class Report {
             StoppedBecause stoppedBecause,
             long wallClockMillis,
             Instant startedAt,
+            String entry,
             List<Patch> patches,
             List<Long> screenshots,
             List<Dump> dumps,
@@ -210,6 +213,16 @@ public final class Report {
         var cartridge = report.putObject("cart");
         cartridge.put("file", cart.filename());
         cartridge.put("name", Path.of(cart.filename()).getFileName().toString());
+
+        // The file above is the zip when the cartridge came out of one, since that is what somebody
+        // named and what everything else about the run is filed under. This is what was inside it,
+        // and it is explicitly null otherwise -- a zip holding two games runs one of them, and
+        // nothing else in the document would say which.
+        if (outcome.entry() == null) {
+            cartridge.putNull("entry");
+        } else {
+            cartridge.put("entry", outcome.entry());
+        }
 
         // Of the image the machine actually ran, which is the patched one when anything below this
         // is non-empty. It names what ran rather than what is on disk, which is what a digest in
