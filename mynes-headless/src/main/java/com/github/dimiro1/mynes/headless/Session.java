@@ -8,6 +8,7 @@ import com.github.dimiro1.mynes.state.MovieRecorder;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.video.FrameAnalysis;
+import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.NTSCFilter;
@@ -455,19 +456,19 @@ public final class Session {
     /**
      * Writes the picture as it stands to a PNG.
      *
-     * @param path         where to write it. Its directory is created if it is not there.
-     * @param cropOverscan whether to hide the scanlines a television would.
-     * @param scale        how many times to magnify.
+     * @param path  where to write it. Its directory is created if it is not there.
+     * @param crop  which rectangle of the frame the picture is.
+     * @param scale how many times to magnify.
      */
-    public void screenshot(final Path path, final boolean cropOverscan, final int scale)
+    public void screenshot(final Path path, final Crop crop, final int scale)
             throws IOException {
         var ppu = nes.getPPU();
         var image = switch (filter) {
             case NTSC -> FrameRenderer.render(
-                    ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), cropOverscan, scale);
+                    ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), crop, scale);
             case CRT -> FrameRenderer.render(
-                    ppu.getFrameBuffer(), palette, strength, warp, cropOverscan, scale);
-            case NONE -> FrameRenderer.render(ppu.getFrameBuffer(), palette, cropOverscan, scale);
+                    ppu.getFrameBuffer(), palette, strength, warp, crop, scale);
+            case NONE -> FrameRenderer.render(ppu.getFrameBuffer(), palette, crop, scale);
         };
 
         var parent = path.getParent();

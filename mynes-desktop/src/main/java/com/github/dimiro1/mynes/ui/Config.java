@@ -53,6 +53,7 @@ public final class Config {
     private static final String FILTER_STRENGTH_KEY = "video.filter.strength";
     private static final String FILTER_WARP_KEY = "video.filter.warp";
     private static final String OVERSCAN_KEY = "video.overscan";
+    private static final String LEFT_EDGE_KEY = "video.left.edge";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -147,6 +148,16 @@ public final class Config {
             # to see that -- true shows all 240 lines, and the window is sixteen of them taller.
             # Settings > Show Overscan is the same setting, and --full-frame is what the headless
             # mode calls it.
+            """;
+
+    private static final String LEFT_EDGE_HEADER = """
+            # Whether the eight columns down the left of the picture are drawn. A game that scrolls
+            # sideways tells the chip not to draw the background in them -- that is where the tile
+            # it is part way through would show -- and the chip fills the gap with the backdrop
+            # colour rather than with black, which is the stripe of sky down the left of Super
+            # Mario Bros. 3. So this is true, since on every other game those columns are the
+            # picture, and false is how to be rid of the stripe. Settings > Show Left Edge is the
+            # same setting, and --hide-left-edge is what the headless mode calls it.
             """;
 
     private static final String SCALE_HEADER = """
@@ -253,6 +264,7 @@ public final class Config {
     private FilterStrength filterStrength;
     private boolean warp;
     private boolean overscan;
+    private boolean leftEdge;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private boolean statusBar;
@@ -281,6 +293,7 @@ public final class Config {
             final FilterStrength filterStrength,
             final boolean warp,
             final boolean overscan,
+            final boolean leftEdge,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final boolean statusBar,
@@ -302,6 +315,7 @@ public final class Config {
         this.filterStrength = filterStrength;
         this.warp = warp;
         this.overscan = overscan;
+        this.leftEdge = leftEdge;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.statusBar = statusBar;
@@ -349,6 +363,7 @@ public final class Config {
                 filterStrengthFrom(properties),
                 flagFrom(properties, FILTER_WARP_KEY),
                 flagFrom(properties, OVERSCAN_KEY),
+                flagFrom(properties, LEFT_EDGE_KEY, true),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 flagFrom(properties, STATUS_BAR_KEY, true),
@@ -523,12 +538,12 @@ public final class Config {
     }
 
     /**
-     * The same, for the two entries whose ordinary behaviour is yes: the status bar and the pause a
-     * window takes when it goes behind another application. Everything else in this file is a thing
-     * the emulator does when it is asked to, and those two are things it does until it is told not
-     * to -- so a missing entry has to mean the opposite of what a missing entry means everywhere
-     * else. A value that is not {@code true} still means no: it is only the missing one they
-     * disagree about.
+     * The same, for the three entries whose ordinary behaviour is yes: the status bar, the pause a
+     * window takes when it goes behind another application, and the eight columns the chip can clip
+     * down the left edge. Everything else in this file is a thing the emulator does when it is
+     * asked to, and those three are things it does until it is told not to -- so a missing entry
+     * has to mean the opposite of what a missing entry means everywhere else. A value that is not
+     * {@code true} still means no: it is only the missing one they disagree about.
      */
     private static boolean flagFrom(
             final Properties properties, final String key, final boolean fallback) {
@@ -708,6 +723,12 @@ public final class Config {
                 .append(OVERSCAN_KEY)
                 .append('=')
                 .append(overscan)
+                .append("\n\n");
+
+        text.append(LEFT_EDGE_HEADER)
+                .append(LEFT_EDGE_KEY)
+                .append('=')
+                .append(leftEdge)
                 .append("\n\n");
 
         text.append(SCALE_HEADER)
@@ -906,6 +927,20 @@ public final class Config {
 
     public void setOverscan(final boolean overscan) {
         this.overscan = overscan;
+    }
+
+    /**
+     * Whether the eight columns the chip clips down the left edge are drawn. On, unlike the
+     * overscan above and for the reason beside {@link #LEFT_EDGE_HEADER}: those columns are the
+     * picture everywhere except on the games that told the chip to leave them out, and it is only
+     * there that anybody wants them gone. The headless mode's {@code --hide-left-edge}.
+     */
+    public boolean leftEdge() {
+        return leftEdge;
+    }
+
+    public void setLeftEdge(final boolean leftEdge) {
+        this.leftEdge = leftEdge;
     }
 
     /**

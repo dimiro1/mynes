@@ -17,6 +17,7 @@ import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
+import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
@@ -304,7 +305,7 @@ public final class Shots {
 
         session.setFilter(filter);
         session.setWarp(warp);
-        session.screenshot(out.resolve(name + ".png"), true, FRAMEBUFFER_SCALE);
+        session.screenshot(out.resolve(name + ".png"), Crop.TELEVISION, FRAMEBUFFER_SCALE);
     }
 
     // =================================================================================== viewers

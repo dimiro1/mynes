@@ -163,6 +163,46 @@ class HeadlessRunTests {
     }
 
     /**
+     * And the other crop, which is the one a game asks for rather than the one a television made: a
+     * game that scrolls sideways tells the chip not to draw the background in the leftmost eight
+     * pixels, and the chip fills them with the backdrop colour instead of leaving them alone.
+     * Nothing comes off the right, so this is 248 rather than 240.
+     */
+    @Test
+    void hideLeftEdgeDropsTheColumnsTheChipCanClip() throws Exception {
+        run("--screenshot", "60", "--hide-left-edge");
+
+        var image = ImageIO.read(out.resolve("frame-000060.png").toFile());
+
+        assertEquals(248, image.getWidth());
+        assertEquals(224, image.getHeight());
+        assertEquals("hidden", report().at("/video/leftEdge").asText());
+    }
+
+    /**
+     * And it is not on the comparability checklist, for the reason the video filters are not:
+     * everything measured is taken over the frame the chip emitted, so only the PNG moves.
+     */
+    @Test
+    void hidingTheLeftEdgeChangesNothingThatIsMeasured() throws Exception {
+        run("--screenshot", "60");
+
+        var plain = report();
+
+        run("--screenshot", "60", "--hide-left-edge");
+
+        var cropped = report();
+
+        assertEquals(
+                plain.at("/video/finalFrame/hash").asText(),
+                cropped.at("/video/finalFrame/hash").asText());
+        assertEquals(
+                plain.at("/video/finalFrame/uniqueColours").asInt(),
+                cropped.at("/video/finalFrame/uniqueColours").asInt());
+        assertEquals("shown", plain.at("/video/leftEdge").asText());
+    }
+
+    /**
      * The whole of what the filter is and is not.
      * <p>
      * It changes the picture and nothing that is measured, because everything measured is taken

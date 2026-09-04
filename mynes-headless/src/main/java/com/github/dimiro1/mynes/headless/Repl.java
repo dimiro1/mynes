@@ -657,7 +657,7 @@ public final class Repl {
         }
 
         var path = Path.of(words[1]);
-        session.screenshot(path, !options.fullFrame(), options.scale());
+        session.screenshot(path, options.crop(), options.scale());
 
         reply("screenshot", node -> node.put("path", path.toString()));
     }

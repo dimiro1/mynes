@@ -72,7 +72,12 @@ public final class CRTScreen {
      */
     private static final int PHASES = 1024;
 
-    private static final int WIDTH = PPU.SCREEN_WIDTH;
+    /**
+     * How far apart two rows of the frame are in {@code colours}. A whole frame's width rather than
+     * the picture's, since a {@link Crop} narrower than the frame reads a window out of the middle
+     * of each row rather than a shorter row.
+     */
+    private static final int STRIDE = PPU.SCREEN_WIDTH;
 
     private static final double TWO_PI = 2 * Math.PI;
 
@@ -88,20 +93,18 @@ public final class CRTScreen {
      *
      * @param colours  the frame already in colour, {@code PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT}
      *                 packed RGB. Read, never kept.
-     * @param top      the first source line to show, which is the overscan crop if there is one.
-     * @param lines    how many source lines to show.
+     * @param crop     which rectangle of the frame to show.
      * @param out      {@code width * height} packed RGB, written. The caller's, so that sixty
      *                 frames a second cost no allocation.
      * @param width    how wide the picture is being drawn.
-     * @param height   how tall, which together with {@code lines} is what says how many rows a line
-     *                 gets and so how deep the mask can go.
+     * @param height   how tall, which together with the crop's own height is what says how many
+     *                 rows a line gets and so how deep the mask can go.
      * @param strength how dark the gaps between the lines go.
      * @param warp     whether the glass is curved.
      */
     public static void draw(
             final int[] colours,
-            final int top,
-            final int lines,
+            final Crop crop,
             final int[] out,
             final int width,
             final int height,
@@ -113,11 +116,6 @@ public final class CRTScreen {
                     "a picture is at least one pixel each way, not " + width + "x" + height);
         }
 
-        if (lines <= 0 || top < 0 || top + lines > PPU.SCREEN_HEIGHT) {
-            throw new IllegalArgumentException(
-                    "lines " + top + " to " + (top + lines) + " are not on a frame");
-        }
-
         // Said here rather than left to the first row that runs off the end, because the caller
         // that gets this wrong is a window that has been resized and has not rebuilt its buffer --
         // and the picture it would draw before the throw is half of the last size.
@@ -127,12 +125,12 @@ public final class CRTScreen {
                             + " pixels to go in, and there are " + out.length);
         }
 
-        var table = table(height / (double) lines, strength);
+        var table = table(height / (double) crop.height(), strength);
 
         if (warp) {
-            bent(colours, top, lines, out, width, height, table);
+            bent(colours, crop, out, width, height, table);
         } else {
-            flat(colours, top, lines, out, width, height, table);
+            flat(colours, crop, out, width, height, table);
         }
     }
 
@@ -147,24 +145,25 @@ public final class CRTScreen {
      */
     private static void flat(
             final int[] colours,
-            final int top,
-            final int lines,
+            final Crop crop,
             final int[] out,
             final int width,
             final int height,
             final int[] table) {
 
+        var lines = crop.height();
+        var visible = crop.width();
         var columns = new int[width];
 
         for (var x = 0; x < width; x++) {
-            columns[x] = Math.min((int) ((x + 0.5) * WIDTH / width), WIDTH - 1);
+            columns[x] = crop.left() + Math.min((int) ((x + 0.5) * visible / width), visible - 1);
         }
 
         for (var y = 0; y < height; y++) {
             // Fractional: the whole number finds the line and what is left over says where between
             // two of them this row of the picture sits.
             var v = (y + 0.5) * lines / height;
-            var source = (top + Math.min((int) v, lines - 1)) * WIDTH;
+            var source = (crop.top() + Math.min((int) v, lines - 1)) * STRIDE;
             var alpha = table[phase(v)];
             var row = y * width;
 
@@ -180,12 +179,14 @@ public final class CRTScreen {
      */
     private static void bent(
             final int[] colours,
-            final int top,
-            final int lines,
+            final Crop crop,
             final int[] out,
             final int width,
             final int height,
             final int[] table) {
+
+        var lines = crop.height();
+        var visible = crop.width();
 
         // How far each axis is bowed at each column. Only the horizontal one varies with the row,
         // so the vertical one is worked out once for the whole picture rather than per pixel.
@@ -216,8 +217,9 @@ public final class CRTScreen {
                 }
 
                 var v = (sy + 1) * 0.5 * lines;
-                var source = (top + Math.min((int) v, lines - 1)) * WIDTH;
-                var column = Math.min((int) ((sx + 1) * 0.5 * WIDTH), WIDTH - 1);
+                var source = (crop.top() + Math.min((int) v, lines - 1)) * STRIDE;
+                var column =
+                        crop.left() + Math.min((int) ((sx + 1) * 0.5 * visible), visible - 1);
 
                 out[row + x] = darken(colours[source + column], table[phase(v)]);
             }

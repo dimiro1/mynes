@@ -193,6 +193,7 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
     private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
+    private final JCheckBoxMenuItem settingsMenuLeftEdge = new JCheckBoxMenuItem("Show Left Edge");
     private final JCheckBoxMenuItem settingsMenuFullScreen = new JCheckBoxMenuItem("Full Screen");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
@@ -431,6 +432,7 @@ public class GameUIFrame extends JFrame {
         // at the default and then jumping. Both of these, because how tall the picture is is the
         // magnification times however many scanlines are being shown.
         screen.setOverscan(config.overscan());
+        screen.setLeftEdge(config.leftEdge());
         screen.setScale(config.screenScale());
 
         init();
@@ -649,6 +651,14 @@ public class GameUIFrame extends JFrame {
         settingsMenuOverscan.setSelected(config.overscan());
         settingsMenu.add(settingsMenuOverscan);
 
+        // Beside it, because it is the other half of the same question -- how much of the frame is
+        // a picture -- even though it is asked the other way up. What the chip clips down the left
+        // edge it was told to clip, so those columns are drawn until somebody says otherwise,
+        // where the sixteen scanlines are hidden until somebody says otherwise.
+        settingsMenuLeftEdge.setMnemonic(KeyEvent.VK_L);
+        settingsMenuLeftEdge.setSelected(config.leftEdge());
+        settingsMenu.add(settingsMenuLeftEdge);
+
         settingsMenuScreenSize = screenSizeMenu();
         settingsMenu.add(settingsMenuScreenSize);
         settingsMenu.add(screenshotSizeMenu());
@@ -695,7 +705,13 @@ public class GameUIFrame extends JFrame {
         settingsMenuOverscan.addActionListener(e -> {
             config.setOverscan(settingsMenuOverscan.isSelected());
             saveConfig();
-            applyOverscan();
+            applyCrop();
+        });
+
+        settingsMenuLeftEdge.addActionListener(e -> {
+            config.setLeftEdge(settingsMenuLeftEdge.isSelected());
+            saveConfig();
+            applyCrop();
         });
 
         settingsMenuController.addActionListener(e ->
@@ -1432,35 +1448,38 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * Shows the scanlines a television hid behind its bezel, or stops, and gives the window the
-     * sixteen rows rather than taking them out of the picture.
+     * Shows the scanlines a television hid behind its bezel and the columns the chip clips down the
+     * left edge, or stops, and gives the window the rows and the columns rather than taking them
+     * out of the picture.
      * <p>
      * Packed the way a screen size is, and for the reason {@link ScreenComponent#setOverscan}
-     * gives: the picture really is taller, and a window that kept its height would answer a
-     * request to see two more strips of frame by making everything else smaller. Unlike
+     * gives: the picture really is a different size, and a window that kept its own would answer a
+     * request to see more of the frame by making everything else smaller. Unlike
      * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
      * against a size nobody is looking at, only a picture that lays itself out again inside
      * whatever room the window manager gave it.
      * <p>
      * A full screen window is that case and one step further: packing one would hand it back a
-     * size while the display still held it, so the rows come out of the picture there instead.
-     * Unlike Screen Size this is not greyed out for it -- how much of the frame is a picture is a
-     * question worth asking at any size, and it is only the packing that a full screen window has
-     * no use for. What takes the sixteen rows there is the size the window will be given back, so
-     * that leaving full screen does not land on a height decided before they were asked for.
+     * size while the display still held it, so the rows and the columns come out of the picture
+     * there instead. Unlike Screen Size neither of these is greyed out for it -- how much of the
+     * frame is a picture is a question worth asking at any size, and it is only the packing that a
+     * full screen window has no use for. What takes them there is the size the window will be given
+     * back, so that leaving full screen does not land on a shape decided before they were asked
+     * for.
      */
-    private void applyOverscan() {
+    private void applyCrop() {
         // Asked of the content pane on either side of the change, the way applyStatusBar asks it
-        // and for the same reason: the difference is the rows, however tall the magnification
-        // makes them.
-        var before = getContentPane().getPreferredSize().height;
+        // and for the same reason: the difference is the rows and the columns, however big the
+        // magnification makes them.
+        var before = getContentPane().getPreferredSize();
 
         screen.setOverscan(config.overscan());
+        screen.setLeftEdge(config.leftEdge());
 
-        var after = getContentPane().getPreferredSize().height;
+        var after = getContentPane().getPreferredSize();
 
         if (settingsMenuFullScreen.isSelected()) {
-            growWindowedBounds(after - before);
+            growWindowedBounds(after.width - before.width, after.height - before.height);
         } else {
             pack();
         }
@@ -1512,7 +1531,7 @@ public class GameUIFrame extends JFrame {
         // out of the picture there the way it does for a maximized one -- and the size waiting for
         // it takes the row instead.
         if (settingsMenuFullScreen.isSelected()) {
-            growWindowedBounds(after - before);
+            growWindowedBounds(0, after - before);
         } else if (getExtendedState() == Frame.NORMAL) {
             setSize(getWidth(), getHeight() + after - before);
         }
@@ -1571,6 +1590,7 @@ public class GameUIFrame extends JFrame {
                 config.filterStrength(),
                 config.warp(),
                 config.overscan(),
+                config.leftEdge(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),
@@ -1813,18 +1833,20 @@ public class GameUIFrame extends JFrame {
      * Gives the size waiting for the end of full screen the change the live window would have
      * taken.
      * <p>
-     * The two ticks that move the window's height -- the status bar and the overscan -- cannot move
-     * a full screen window's, because the display decides that one. Without this the window would
-     * come back at the height it had before whichever of them was moved, and the row or the sixteen
-     * lines would come out of the picture rather than out of the window.
+     * The three ticks that move the window's size -- the status bar, the overscan and the left
+     * edge -- cannot move a full screen window's, because the display decides that one. Without
+     * this the window would come back at the size it had before whichever of them was moved, and
+     * the row, the sixteen lines or the eight columns would come out of the picture rather than
+     * out of the window.
      * <p>
-     * The height alone, and by the difference rather than to the packed size, which is the choice
-     * {@link #applyStatusBar} makes for the same reason: a window that has been dragged wider
-     * should still be that wide when it comes back.
+     * By the difference rather than to the packed size, which is the choice {@link #applyStatusBar}
+     * makes for the same reason: a window that has been dragged wider should still be that much
+     * wider than its picture when it comes back.
      */
-    private void growWindowedBounds(final int by) {
+    private void growWindowedBounds(final int wider, final int taller) {
         if (windowedBounds != null) {
-            windowedBounds.height += by;
+            windowedBounds.width += wider;
+            windowedBounds.height += taller;
         }
     }
 

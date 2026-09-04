@@ -305,6 +305,34 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the left edge")
+    class LoadingLeftEdge {
+        /**
+         * Shown, unlike the overscan above: those eight columns are the picture on every game that
+         * does not tell the chip to clip them, so hiding them by default would be throwing picture
+         * away everywhere to tidy the few that do.
+         */
+        @Test
+        void aMissingEntryDrawsTheColumnsTheChipCanClip() throws IOException {
+            assertTrue(Config.load(write("video.palette=nesdev\n")).leftEdge());
+        }
+
+        @Test
+        void falseHidesThem() throws IOException {
+            assertFalse(Config.load(write("video.left.edge=false\n")).leftEdge());
+        }
+
+        /**
+         * Which is the one place this differs from the entries whose default is no: there, anything
+         * that is not {@code true} means no, and here anything that is not {@code true} still does.
+         */
+        @Test
+        void anythingThatIsNotTrueHidesThemToo() throws IOException {
+            assertFalse(Config.load(write("video.left.edge=both\n")).leftEdge());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the screen size")
     class LoadingScreenScale {
         @Test
@@ -878,6 +906,15 @@ class ConfigTests {
             config.save(config());
 
             assertTrue(Config.load(config()).overscan());
+        }
+
+        @Test
+        void theLeftEdgeSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setLeftEdge(false);
+            config.save(config());
+
+            assertFalse(Config.load(config()).leftEdge());
         }
 
         @Test

@@ -82,6 +82,9 @@ file is where they live.
   optional curved glass. Works on either region; needs at least 2x scale.
 - **Settings > Show Overscan** draws all 240 scanlines instead of the 224 a television showed —
   the scroll seams and partial tiles games hide behind the bezel. `--full-frame` in headless mode.
+- Turning **Settings > Show Left Edge** off drops the leftmost 8 columns — the stripe of backdrop
+  colour the chip leaves where a scrolling game tells it not to draw the background there, as in
+  Super Mario Bros. 3. `--hide-left-edge` in headless mode.
 - Whole-number scaling from 1x to 4x, with free window resizing on top, and full screen on `F11`.
 - Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
 - A status bar showing the real frame rate and any setting that isn't the default one.
