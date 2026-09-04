@@ -92,6 +92,8 @@ final class StatusBar extends JPanel {
      * @param strength         how hard that filter is applied, which the filter can make
      *                         irrelevant by being none at all.
      * @param warp             whether the tube's glass is curved, which only the tube has.
+     * @param overscan         whether the scanlines a television hid are being drawn, which every
+     *                         way of drawing the picture has.
      * @param palette          the name of the table the picture is drawn through, which the
      *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -118,6 +120,7 @@ final class StatusBar extends JPanel {
             VideoFilter filter,
             FilterStrength strength,
             boolean warp,
+            boolean overscan,
             String palette,
             ScreenScale screenScale,
             ScreenScale screenshotScale,
@@ -335,7 +338,7 @@ final class StatusBar extends JPanel {
      * picture until something is wrong. Then the two that mean this is not the game as it shipped:
      * a frame with extra scanlines on it and a cartridge being answered with somebody else's bytes.
      * Then silence, which is not a change to the game at all but is the question a status bar is
-     * asked most often. Then the three that change what you see and nothing the game can observe.
+     * asked most often. Then the four that change what you see and nothing the game can observe.
      * <p>
      * Only what is not the ordinary case, apart from the console -- so the usual list is one long,
      * and the settings that always have a value, like the palette and the screen size, are left to
@@ -390,6 +393,13 @@ final class StatusBar extends JPanel {
                             + String.join(", ", qualifiers) + ")");
         }
 
+        // Its own part rather than a qualifier on the filter's, because it is not one: it is the
+        // same sixteen scanlines whichever of the three is drawing, and there is nothing for it to
+        // qualify when none of them is.
+        if (machine.overscan()) {
+            parts.add("Overscan");
+        }
+
         // Last, because it changes nothing until a file is written -- which also makes it the one
         // somebody is most likely to have forgotten about.
         if (machine.screenshotScale() != ScreenScale.defaultScreenshotScale()) {
@@ -437,6 +447,11 @@ final class StatusBar extends JPanel {
         row(rows, "Curved glass", machine.filter() != VideoFilter.CRT
                 ? "No tube"
                 : machine.warp() ? "On" : "Off");
+
+        // Unqualified, unlike the three rows above it: no filter and no console makes this one
+        // irrelevant, since the eight lines at either end are the chip's rather than a way of
+        // drawing what the chip sent.
+        row(rows, "Overscan", machine.overscan() ? "Shown" : "Hidden");
 
         row(rows, "Screen size", machine.screenScale().label());
         row(rows, "Screenshot size", machine.screenshotScale().label());

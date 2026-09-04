@@ -948,7 +948,9 @@ public class EmulatorRunner {
      * up to one instruction late rather than up to two dots late: seven cycles usually, and around
      * five hundred when the step swallows an OAM DMA transfer. That is under five scanlines of the
      * next frame drawn into the buffer before it is shown, and all of them are inside the eight
-     * {@link com.github.dimiro1.mynes.video.FrameRenderer#OVERSCAN_TOP} takes off the top.
+     * {@link com.github.dimiro1.mynes.video.FrameRenderer#OVERSCAN_TOP} takes off the top -- so
+     * they are only ever seen by somebody who has asked, under Settings &gt; Show Overscan, to see
+     * the lines that margin is spent out of.
      *
      * @return why it stopped, or null if the frame simply finished.
      */

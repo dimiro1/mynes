@@ -518,7 +518,10 @@ java -jar $JAR --headless --rom "Super Mario Bros. (World).zip" --frames 900 --i
 **It is decided by what is in the file rather than by what it is called.** The first four bytes say
 whether it is a zip, so a cartridge saved as `game.zip.nes` still runs and a zip that lost its
 extension in transit still opens. The window's chooser takes both extensions in one filter for the
-same reason: a half-unpacked collection is a folder of both.
+same reason -- a half-unpacked collection is a folder of both -- and so does `RomDrop`, which has to
+say yes to exactly the files the menu would open or one of the two ways in is quietly the narrower.
+That one is answered on the name alone: it runs on every drag-over event, and the archive is not read
+until the window opens it.
 
 Everything downstream is untouched, and that is the claim worth keeping. `--patch` applies to what
 came out of the archive, since an IPS offset is counted from the front of the cartridge either way;
