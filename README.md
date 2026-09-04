@@ -35,6 +35,7 @@ either onto the window. No ROMs are included, so bring your own.
 | Rewind (hold) | Backspace |
 | Screenshot | F12 |
 | Copy Screenshot | Cmd/Ctrl+F12 |
+| Full Screen | F11 (Esc leaves) |
 | Louder / Quieter | Cmd/Ctrl+= and Cmd/Ctrl+- |
 
 Remap anything under **Settings > Controller...** — click a button, press a key, done. Everything
@@ -84,7 +85,7 @@ file is where they live.
 - Turning **Settings > Show Left Edge** off drops the leftmost 8 columns — the stripe of backdrop
   colour the chip leaves where a scrolling game tells it not to draw the background there, as in
   Super Mario Bros. 3. `--hide-left-edge` in headless mode.
-- Whole-number scaling from 1x to 4x, with free window resizing on top.
+- Whole-number scaling from 1x to 4x, with free window resizing on top, and full screen on `F11`.
 - Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
 - A status bar showing the real frame rate and any setting that isn't the default one.
 
@@ -105,6 +106,8 @@ file is where they live.
 - Rewind — hold Backspace and the game runs backwards, sound and all, up to thirty seconds. Let go
   and it plays on from there.
 - Fast forward at 2x, 4x, 8x or unlimited.
+- Pause when the window goes behind another application, under **Machine > Pause in Background**.
+  The emulator's own windows don't count, so the debugger and the viewers keep the game running.
 - Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
   video, so it is a few kilobytes a minute and replays byte for byte.
 - Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip

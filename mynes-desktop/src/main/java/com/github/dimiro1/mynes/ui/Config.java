@@ -60,6 +60,7 @@ public final class Config {
     private static final String STATUS_BAR_KEY = "ui.status-bar";
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
+    private static final String PAUSE_IN_BACKGROUND_KEY = "emulation.pause-in-background";
     private static final String MUTED_KEY = "audio.muted";
     private static final String VOLUME_KEY = "audio.volume";
     private static final String LATENCY_KEY = "audio.latency-ms";
@@ -192,6 +193,14 @@ public final class Config {
             # runs at whatever it does manage.
             """;
 
+    private static final String PAUSE_IN_BACKGROUND_HEADER = """
+            # Whether the game stops when the window goes behind another application, and starts
+            # again when it comes back. Machine > Pause in Background is the same setting. Only
+            # another application counts: this emulator's own windows -- the debugger, the
+            # viewers, the palette dialog that previews over a running game -- leave it running.
+            # Like the status bar and unlike everything else here, a missing entry means true.
+            """;
+
     private static final String AUDIO_HEADER = """
             # Whether Machine > Mute is on. true or false; anything else is taken as false, which
             # is sound switched on. audio.volume is how loud it is otherwise: 100, 75, 50, 25 or
@@ -261,6 +270,7 @@ public final class Config {
     private boolean statusBar;
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
+    private boolean pauseInBackground;
     private boolean muted;
     private Volume volume;
     private final int audioLatencyMs;
@@ -289,6 +299,7 @@ public final class Config {
             final boolean statusBar,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
+            final boolean pauseInBackground,
             final boolean muted,
             final Volume volume,
             final int audioLatencyMs,
@@ -310,6 +321,7 @@ public final class Config {
         this.statusBar = statusBar;
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
+        this.pauseInBackground = pauseInBackground;
         this.muted = muted;
         this.volume = volume;
         this.audioLatencyMs = audioLatencyMs;
@@ -357,6 +369,7 @@ public final class Config {
                 flagFrom(properties, STATUS_BAR_KEY, true),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
+                flagFrom(properties, PAUSE_IN_BACKGROUND_KEY, true),
                 flagFrom(properties, MUTED_KEY),
                 Volume.byId(
                         properties.getProperty(VOLUME_KEY, Volume.defaultVolume().id()).trim()),
@@ -516,25 +529,27 @@ public final class Config {
     }
 
     /**
-     * One of the plain yes-or-no entries. Unlike the others there is nothing to fall back to and
-     * nothing to warn about: anything that is not {@code true} is somebody who wants the ordinary
-     * behaviour, which is also what a missing entry means.
+     * One of the plain yes-or-no entries. Unlike the others there is nothing to warn about:
+     * anything that is not {@code true} is somebody who wants the ordinary behaviour, which is also
+     * what a missing entry means.
      */
     private static boolean flagFrom(final Properties properties, final String key) {
-        return Boolean.parseBoolean(properties.getProperty(key, "").trim());
+        return flagFrom(properties, key, false);
     }
 
     /**
-     * A yes-or-no entry whose default is yes: the status bar and the left edge, both of which are
-     * things the emulator does until it is told not to rather than things it does when asked. A
-     * value that is not {@code true} still means no, the same as everywhere else -- it is only a
-     * missing entry that the two spellings disagree about.
+     * The same, for the three entries whose ordinary behaviour is yes: the status bar, the pause a
+     * window takes when it goes behind another application, and the eight columns the chip can clip
+     * down the left edge. Everything else in this file is a thing the emulator does when it is
+     * asked to, and those three are things it does until it is told not to -- so a missing entry
+     * has to mean the opposite of what a missing entry means everywhere else. A value that is not
+     * {@code true} still means no: it is only the missing one they disagree about.
      */
     private static boolean flagFrom(
-            final Properties properties, final String key, final boolean byDefault) {
+            final Properties properties, final String key, final boolean fallback) {
         var value = properties.getProperty(key);
 
-        return value == null ? byDefault : Boolean.parseBoolean(value.trim());
+        return value == null ? fallback : Boolean.parseBoolean(value.trim());
     }
 
     private static NESPalette paletteFrom(
@@ -744,6 +759,12 @@ public final class Config {
                 .append(FAST_FORWARD_KEY)
                 .append('=')
                 .append(fastForwardSpeed.id())
+                .append("\n\n");
+
+        text.append(PAUSE_IN_BACKGROUND_HEADER)
+                .append(PAUSE_IN_BACKGROUND_KEY)
+                .append('=')
+                .append(pauseInBackground)
                 .append("\n\n");
 
         text.append(AUDIO_HEADER)
@@ -982,6 +1003,20 @@ public final class Config {
 
     public void setFastForwardSpeed(final EmulationSpeed fastForwardSpeed) {
         this.fastForwardSpeed = fastForwardSpeed;
+    }
+
+    /**
+     * Whether the game stops when the window goes behind another application. Remembered, unlike
+     * whether the machine is paused right now: this is a habit rather than a state, and the two
+     * habits are both defensible -- a player wants the game where they left it and somebody
+     * watching a long run wants it to carry on without them.
+     */
+    public boolean pauseInBackground() {
+        return pauseInBackground;
+    }
+
+    public void setPauseInBackground(final boolean pauseInBackground) {
+        this.pauseInBackground = pauseInBackground;
     }
 
     /**
