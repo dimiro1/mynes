@@ -178,6 +178,7 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
+    private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
     /**
@@ -373,7 +374,9 @@ public class GameUIFrame extends JFrame {
         screen.setPalette(config.palette(currentRegion()));
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
-        // at the default and then jumping.
+        // at the default and then jumping. Both of these, because how tall the picture is is the
+        // magnification times however many scanlines are being shown.
+        screen.setOverscan(config.overscan());
         screen.setScale(config.screenScale());
 
         init();
@@ -568,6 +571,14 @@ public class GameUIFrame extends JFrame {
 
         settingsMenu.add(videoFilterMenu());
 
+        // Beside the filters rather than in with them, and above the sizes: what it changes is how
+        // much of the frame is a picture, which is the same question they answer differently and
+        // not the same question as how big that picture is drawn. It takes the window's height
+        // with it, which is why it is not in the group below either.
+        settingsMenuOverscan.setMnemonic(KeyEvent.VK_O);
+        settingsMenuOverscan.setSelected(config.overscan());
+        settingsMenu.add(settingsMenuOverscan);
+
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
 
@@ -600,6 +611,12 @@ public class GameUIFrame extends JFrame {
         // Every key event in the application comes past here before anything else sees it, which
         // is how the game gets the arrow keys without taking them off the menu bar.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
+
+        settingsMenuOverscan.addActionListener(e -> {
+            config.setOverscan(settingsMenuOverscan.isSelected());
+            saveConfig();
+            applyOverscan();
+        });
 
         settingsMenuController.addActionListener(e ->
                 new ControllerSettingsDialog(this, config.keyBindings(), updated -> {
@@ -1305,6 +1322,24 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Shows the scanlines a television hid behind its bezel, or stops, and gives the window the
+     * sixteen rows rather than taking them out of the picture.
+     * <p>
+     * Packed the way a screen size is, and for the reason {@link ScreenComponent#setOverscan}
+     * gives: the picture really is taller, and a window that kept its height would answer a
+     * request to see two more strips of frame by making everything else smaller. Unlike
+     * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
+     * against a size nobody is looking at, only a picture that lays itself out again inside
+     * whatever room the window manager gave it.
+     */
+    private void applyOverscan() {
+        screen.setOverscan(config.overscan());
+
+        pack();
+        updateStatusBar();
+    }
+
+    /**
      * Which filter the picture is actually being drawn with, which is not always the one the menu
      * has ticked: a PAL machine draws a signal this decoder is not for, so <em>that</em> choice
      * falls back to the palette while the tick stays where it was. Nothing else falls back, the
@@ -1400,6 +1435,7 @@ public class GameUIFrame extends JFrame {
                 currentVideoFilter(),
                 config.filterStrength(),
                 config.warp(),
+                config.overscan(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),

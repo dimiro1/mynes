@@ -43,6 +43,7 @@ class StatusBarTests {
         private VideoFilter filter = VideoFilter.NONE;
         private FilterStrength strength = FilterStrength.defaultStrength();
         private boolean warp;
+        private boolean overscan;
         private String palette = "NESdev";
         private final ScreenScale screenScale = ScreenScale.TWO_TIMES;
         private ScreenScale screenshotScale = ScreenScale.ONE_TIMES;
@@ -88,6 +89,11 @@ class StatusBarTests {
             return this;
         }
 
+        Setup showingOverscan() {
+            this.overscan = true;
+            return this;
+        }
+
         Setup colouredBy(final String palette) {
             this.palette = palette;
             return this;
@@ -115,7 +121,7 @@ class StatusBarTests {
 
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
-                    unlimitedSprites, filter, strength, warp, palette, screenScale,
+                    unlimitedSprites, filter, strength, warp, overscan, palette, screenScale,
                     screenshotScale, fastForward, rewindSeconds, muted, volume, audioLatencyMs);
         }
     }
@@ -217,6 +223,25 @@ class StatusBarTests {
         }
 
         /**
+         * Its own part rather than a qualifier on a filter's, because the sixteen lines are the
+         * same sixteen lines whichever of the three is drawing -- so it says so with none of them
+         * on, which is where a qualifier would have had nothing to hang from.
+         */
+        @Test
+        void theOverscanTakesAPartOfItsOwnWhateverIsDrawing() {
+            assertEquals(
+                    List.of("NTSC", "Overscan"),
+                    StatusBar.parts(setup().showingOverscan().machine()));
+
+            assertEquals(
+                    List.of("NTSC", "CRT filter", "Overscan"),
+                    StatusBar.parts(setup()
+                            .through(VideoFilter.CRT)
+                            .showingOverscan()
+                            .machine()));
+        }
+
+        /**
          * The order is the whole of the design, because the window decides where to stop reading
          * it: the console, then what makes this not the game as it shipped, then silence, then
          * what changes only what you see.
@@ -225,13 +250,14 @@ class StatusBarTests {
         void everythingAtOnceComesOutInTheOrderItWantsSaying() {
             assertEquals(
                     List.of("NTSC", "Overclock +100%", "2 Genie codes", "Muted",
-                            "Unlimited sprites", "NTSC filter", "Screenshot 3x"),
+                            "Unlimited sprites", "NTSC filter", "Overscan", "Screenshot 3x"),
                     StatusBar.parts(setup()
                             .overclocked(Overclock.percentOf(Region.NTSC, 100))
                             .cheating(2)
                             .silent()
                             .withEverySpriteDrawn()
                             .through(VideoFilter.NTSC)
+                            .showingOverscan()
                             .shotAt(ScreenScale.THREE_TIMES)
                             .machine()));
         }
@@ -405,7 +431,7 @@ class StatusBarTests {
 
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
                     "Unlimited sprites", "Video filter", "Filter strength", "Palette",
-                    "Curved glass", "Screen size",
+                    "Curved glass", "Overscan", "Screen size",
                     "Screenshot size", "Fast forward speed", "Rewind history", "Sound", "Volume",
                     "Audio latency"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
@@ -494,6 +520,22 @@ class StatusBarTests {
             assertTrue(StatusBar
                     .detail(setup().through(VideoFilter.CRT).behindCurvedGlass().machine())
                     .contains("Curved glass&nbsp;&nbsp;&nbsp;</td><td>On"));
+        }
+
+        /**
+         * And this row is never qualified the way the three above it are: the eight lines at either
+         * end of the frame are the chip's, so no filter and no console makes the question moot.
+         */
+        @Test
+        void theOverscanIsShownOrHiddenWhateverIsDrawing() {
+            assertTrue(StatusBar.detail(setup().machine())
+                    .contains("Overscan&nbsp;&nbsp;&nbsp;</td><td>Hidden"));
+
+            assertTrue(StatusBar.detail(setup().showingOverscan().machine())
+                    .contains("Overscan&nbsp;&nbsp;&nbsp;</td><td>Shown"));
+
+            assertTrue(StatusBar.detail(setup().through(VideoFilter.NTSC).showingOverscan().machine())
+                    .contains("Overscan&nbsp;&nbsp;&nbsp;</td><td>Shown"));
         }
 
         /**
