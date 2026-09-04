@@ -1,8 +1,14 @@
 name: Java CI
 
+# A pull request from a branch of this repository is both a push and a pull_request, and a bare
+# `on: [push, pull_request]` runs the whole thing twice for it. Pushes are narrowed to master so
+# that a branch is tested once as a pull request and once again where it lands -- which also keeps
+# a tag push out of here, since that is release.yml's job.
 on:
-  - push
-  - pull_request
+  push:
+    branches:
+      - master
+  pull_request:
 
 jobs:
   test:
