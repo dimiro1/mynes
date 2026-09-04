@@ -28,12 +28,14 @@ import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
+import org.jetbrains.annotations.Nullable;
 
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
@@ -153,6 +155,8 @@ public class GameUIFrame extends JFrame {
     private final JMenu machineMenu = new JMenu("Machine");
     private final JMenu debugMenu = new JMenu("Debug");
     private final JCheckBoxMenuItem machineMenuPause = new JCheckBoxMenuItem("Pause");
+    private final JCheckBoxMenuItem machineMenuPauseInBackground =
+            new JCheckBoxMenuItem("Pause in Background");
     private final JCheckBoxMenuItem machineMenuFastForward = new JCheckBoxMenuItem("Fast Forward");
     private final JCheckBoxMenuItem machineMenuMute = new JCheckBoxMenuItem("Mute");
     private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
@@ -192,6 +196,7 @@ public class GameUIFrame extends JFrame {
     private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
     private final JCheckBoxMenuItem settingsMenuTvAspect =
             new JCheckBoxMenuItem("TV Aspect Ratio");
+    private final JCheckBoxMenuItem settingsMenuFullScreen = new JCheckBoxMenuItem("Full Screen");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
     /**
@@ -239,6 +244,14 @@ public class GameUIFrame extends JFrame {
      */
     private JMenu hacksMenuOverclock;
     private JMenu settingsMenuFilterStrength;
+
+    /**
+     * The Screen Size submenu, kept because full screen greys it out: the four sizes pack the
+     * window around a whole multiple of the picture, and a window filling the display is at none
+     * of them. A tick against a size nobody is looking at is the thing {@link #applyScreenScale}
+     * already steps around for a maximized window, and this is the same step taken earlier.
+     */
+    private JMenu settingsMenuScreenSize;
 
     /**
      * The games somebody has opened before. Built afresh each time the File menu is pulled down
@@ -365,6 +378,23 @@ public class GameUIFrame extends JFrame {
      * rather than the menu. Written wherever the PPU's is.
      */
     private Overclock overclock = Overclock.NONE;
+
+    /**
+     * Where the window was before it filled the display, so that leaving full screen puts it back
+     * where it was rather than wherever the graphics device chooses to drop it.
+     */
+    private @Nullable Rectangle windowedBounds;
+
+    /**
+     * Whether the pause in force is one this window took on its way into the background, rather
+     * than one somebody asked for.
+     * <p>
+     * The difference is what may be undone. Coming back to the front lets go of this one and of
+     * nothing else: a Pause somebody ticked, and a breakpoint -- which ticks the same box, see
+     * {@link #stopped} -- both survive a trip to another application, because neither of them is
+     * over.
+     */
+    private boolean pausedInBackground;
 
     public GameUIFrame() {
         super("MyNES");
@@ -529,6 +559,13 @@ public class GameUIFrame extends JFrame {
         machineMenuPause.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, command));
         machineMenu.add(machineMenuPause);
 
+        // Under the item it is a setting on, which is the shape Fast Forward and Fast Forward
+        // Speed have below it. No accelerator: it is a habit somebody picks once, not something
+        // reached for mid-game.
+        machineMenuPauseInBackground.setMnemonic(KeyEvent.VK_B);
+        machineMenuPauseInBackground.setSelected(config.pauseInBackground());
+        machineMenu.add(machineMenuPauseInBackground);
+
         machineMenuFastForward.setMnemonic(KeyEvent.VK_F);
         machineMenuFastForward.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, command));
         machineMenu.add(machineMenuFastForward);
@@ -627,18 +664,22 @@ public class GameUIFrame extends JFrame {
         settingsMenuTvAspect.addActionListener(e -> {
             config.setTvAspect(settingsMenuTvAspect.isSelected());
             saveConfig();
-            applyPixelAspect();
-
-            // Packed here and only here, for the reason applyPixelAspect does not pack itself:
-            // this is somebody asking for a differently shaped picture, and leaving it letterboxed
-            // inside a window still the old shape would be answering half of it.
-            pack();
-            updateStatusBar();
+            applyTvAspect();
         });
         settingsMenu.add(settingsMenuTvAspect);
 
-        settingsMenu.add(screenSizeMenu());
+        settingsMenuScreenSize = screenSizeMenu();
+        settingsMenu.add(settingsMenuScreenSize);
         settingsMenu.add(screenshotSizeMenu());
+
+        // Beside the status bar rather than among the sizes above, for the reason given there:
+        // both of these change the shape of the window and neither changes the picture in it.
+        // A function key, and the one every browser and every emulator since ZSNES has used --
+        // which also means it needs no modifier, and Shift being Select, a shortcut carrying one
+        // is a hazard here.
+        settingsMenuFullScreen.setMnemonic(KeyEvent.VK_F);
+        settingsMenuFullScreen.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0));
+        settingsMenu.add(settingsMenuFullScreen);
 
         // Under the sizes rather than beside the palette: what this changes is the shape of the
         // window, not the picture in it.
@@ -709,6 +750,30 @@ public class GameUIFrame extends JFrame {
 
                     saveConfig();
                 }).setVisible(true));
+
+        settingsMenuFullScreen.addActionListener(
+                e -> applyFullScreen(settingsMenuFullScreen.isSelected()));
+
+        // The way out for somebody who reached full screen with the mouse and does not know which
+        // key put them there. On the root pane rather than as a second accelerator, which a menu
+        // item has no room for.
+        //
+        // KeyboardInput sees it first and will keep it if somebody has put a controller button on
+        // Escape, the same way the game wins over rewind. That is the right way round: a key bound
+        // to a button is a button.
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "leave-full-screen");
+        getRootPane().getActionMap().put("leave-full-screen", new AbstractAction() {
+            @Override
+            public void actionPerformed(final ActionEvent e) {
+                leaveFullScreen();
+            }
+        });
+
+        machineMenuPauseInBackground.addActionListener(e -> {
+            config.setPauseInBackground(machineMenuPauseInBackground.isSelected());
+            saveConfig();
+        });
 
         settingsMenuStatusBar.addActionListener(e -> {
             config.setStatusBar(settingsMenuStatusBar.isSelected());
@@ -1006,6 +1071,12 @@ public class GameUIFrame extends JFrame {
             @Override
             public void windowDeactivated(final WindowEvent e) {
                 keyboardInput.releaseAll();
+                pauseForBackground(e.getOppositeWindow());
+            }
+
+            @Override
+            public void windowActivated(final WindowEvent e) {
+                resumeFromBackground();
             }
         });
 
@@ -1389,11 +1460,30 @@ public class GameUIFrame extends JFrame {
      * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
      * against a size nobody is looking at, only a picture that lays itself out again inside
      * whatever room the window manager gave it.
+     * <p>
+     * A full screen window is that case and one step further: packing one would hand it back a
+     * size while the display still held it, so the rows come out of the picture there instead.
+     * Unlike Screen Size this is not greyed out for it -- how much of the frame is a picture is a
+     * question worth asking at any size, and it is only the packing that a full screen window has
+     * no use for. What takes the sixteen rows there is the size the window will be given back, so
+     * that leaving full screen does not land on a height decided before they were asked for.
      */
     private void applyOverscan() {
+        // Asked of the content pane on either side of the change, the way applyStatusBar asks it
+        // and for the same reason: the difference is the rows, however tall the magnification
+        // makes them.
+        var before = getContentPane().getPreferredSize().height;
+
         screen.setOverscan(config.overscan());
 
-        pack();
+        var after = getContentPane().getPreferredSize().height;
+
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(0, after - before);
+        } else {
+            pack();
+        }
+
         updateStatusBar();
     }
 
@@ -1407,16 +1497,42 @@ public class GameUIFrame extends JFrame {
      * it does: {@link #startMachine} calls it beside the palette and the filter, for the same
      * reason both of those are called there.
      * <p>
-     * <strong>It does not pack, which is where it parts company with
-     * {@link #applyOverscan}.</strong> The picture really is wider and the component says so, but
+     * <strong>It does not resize the window, which is where it parts company with
+     * {@link #applyTvAspect}.</strong> The picture really is wider and the component says so, but
      * the two callers are asking different questions: the menu item is somebody asking for a
-     * differently shaped picture and packs the window itself, where a European cartridge arriving
-     * has merely moved the number and is no reason to resize a window somebody had put somewhere.
+     * differently shaped picture, where a European cartridge arriving has merely moved the number
+     * and is no reason to resize a window somebody had put somewhere.
      */
     private void applyPixelAspect() {
         screen.setPixelAspect(config.tvAspect()
                 ? currentRegion().pixelAspect()
                 : FrameRenderer.SQUARE_PIXELS);
+    }
+
+    /**
+     * The same, for the tick rather than for the cartridge: the shape changes and the window is
+     * given the columns rather than having them taken out of the picture.
+     * <p>
+     * {@link #applyOverscan} turned on its side, down to the arithmetic -- it measures the content
+     * pane on either side of the change and hands a full screen window's share to the size waiting
+     * for it, because a display decides how wide a full screen window is and the four screen sizes
+     * are greyed out there for the same reason. What differs is only the axis: sixteen scanlines
+     * are rows and 8:7 is columns.
+     */
+    private void applyTvAspect() {
+        var before = getContentPane().getPreferredSize().width;
+
+        applyPixelAspect();
+
+        var after = getContentPane().getPreferredSize().width;
+
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(after - before, 0);
+        } else {
+            pack();
+        }
+
+        updateStatusBar();
     }
 
     /**
@@ -1441,7 +1557,8 @@ public class GameUIFrame extends JFrame {
      * The height is added to the window instead of the whole thing being packed, which is the
      * difference between a window that keeps whatever size it has been dragged to and one that
      * snaps back to a whole multiple of the picture every time this is ticked. A maximized window
-     * cannot be resized at all and simply lays itself out again, which costs it the row.
+     * cannot be resized at all and simply lays itself out again, which costs it the row, and a
+     * full screen one is the same case.
      */
     private void applyStatusBar(final boolean show) {
         if (statusBar.isVisible() == show) {
@@ -1458,7 +1575,12 @@ public class GameUIFrame extends JFrame {
 
         var after = getContentPane().getPreferredSize().height;
 
-        if (getExtendedState() == Frame.NORMAL) {
+        // A full screen window is as big as the display and nothing else, so the row has to come
+        // out of the picture there the way it does for a maximized one -- and the size waiting for
+        // it takes the row instead.
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(0, after - before);
+        } else if (getExtendedState() == Frame.NORMAL) {
             setSize(getWidth(), getHeight() + after - before);
         }
 
@@ -1689,10 +1811,149 @@ public class GameUIFrame extends JFrame {
         screen.setScale(scale);
 
         // A maximized window would keep the size the window manager gave it and quietly ignore the
-        // one just asked for, leaving a tick in the menu against a size nobody is looking at.
+        // one just asked for, leaving a tick in the menu against a size nobody is looking at. Full
+        // screen is the same problem and is stopped earlier, by the greyed-out submenu.
         setExtendedState(Frame.NORMAL);
 
         pack();
+    }
+
+    /**
+     * Gives the window the whole display, or gives the display back.
+     * <p>
+     * There is nothing here about the picture, which is the point: {@link ScreenComponent} has
+     * always fitted the frame to whatever size it is given, centred and letterboxed, so a window
+     * the size of a display is a window somebody has dragged very large. What full screen adds is
+     * the part a corner cannot be dragged to -- the display's own edges, with the desktop behind
+     * it gone.
+     * <p>
+     * The menu bar goes with it rather than being hidden. It is the only way back for somebody who
+     * arrived here with the mouse, and hiding it would take the accelerators down with it: an
+     * accelerator belongs to the menu bar that carries it, so a hidden menu would cost F11 the key
+     * that leaves.
+     * <p>
+     * Not remembered between runs, unlike the four sizes and unlike every other tick in this menu.
+     * Those are answers to "how should the emulator look"; this is where the window is at the
+     * moment, which is the same kind of thing as where it has been dragged to and how large it has
+     * been made -- and neither of those is written down either.
+     */
+    private void applyFullScreen(final boolean full) {
+        var device = getGraphicsConfiguration().getDevice();
+
+        // The four sizes pack the window around a whole multiple of the picture, which is not a
+        // thing a window filling the display can be at. Greyed out rather than left to fight it.
+        settingsMenuScreenSize.setEnabled(!full);
+
+        if (full) {
+            windowedBounds = getBounds();
+            device.setFullScreenWindow(this);
+            return;
+        }
+
+        device.setFullScreenWindow(null);
+
+        // Where it was, rather than where coming out of full screen happens to leave it. The
+        // platforms disagree about that -- some restore the bounds and some do not -- and a window
+        // that came back somewhere else every time would be the emulator's doing either way.
+        if (windowedBounds != null) {
+            setBounds(windowedBounds);
+        }
+    }
+
+    /**
+     * What Escape does, and it does nothing at all the rest of the time -- a key that left full
+     * screen and also acted somewhere else would be a key nobody could press safely.
+     * <p>
+     * The tick is moved rather than clicked: {@link AbstractButton#doClick()} holds the event
+     * dispatch thread for the length of a keypress it is pretending to make, which is the frame
+     * and a bit the window would spend not drawing the game.
+     */
+    private void leaveFullScreen() {
+        if (!settingsMenuFullScreen.isSelected()) {
+            return;
+        }
+
+        settingsMenuFullScreen.setSelected(false);
+        applyFullScreen(false);
+    }
+
+    /**
+     * Gives the size waiting for the end of full screen the change the live window would have
+     * taken.
+     * <p>
+     * The ticks that move the window cannot move a full screen window's, because the display
+     * decides that one: the status bar and the overscan move its height, and the TV aspect ratio
+     * moves its width. Without this the window would come back at the size it had before whichever
+     * of them was moved, and the row, the sixteen lines or the thirty-seven columns would come out
+     * of the picture rather than out of the window.
+     * <p>
+     * By the difference rather than to the packed size, which is the choice {@link #applyStatusBar}
+     * makes for the same reason: a window that has been dragged wider should still be that wide
+     * when it comes back, so only the axis that moved is touched and only by how much it moved.
+     */
+    private void growWindowedBounds(final int wider, final int taller) {
+        if (windowedBounds != null) {
+            windowedBounds.width += wider;
+            windowedBounds.height += taller;
+        }
+    }
+
+    /**
+     * Stops the game when the window goes behind another application, if that is what somebody
+     * asked for.
+     * <p>
+     * <strong>Only another application counts.</strong> {@code gained} is the window that took the
+     * focus, and it is null exactly when that window is not one of this program's -- so the
+     * debugger, the two PPU viewers, the CHR viewer and every dialog leave the machine running.
+     * That is not politeness: <b>Settings &gt; Palette...</b> previews a palette over the running
+     * game and the CHR viewer refreshes from a machine that is being clocked, and both would show
+     * a still picture instead if reaching for them stopped it.
+     * <p>
+     * A machine that is already stopped is left alone, which is what keeps this from being a second
+     * answer to a question somebody else has answered: a ticked Pause and a breakpoint both mean
+     * the machine is meant to be standing still, and neither is over because the window went away.
+     */
+    private void pauseForBackground(final @Nullable Window gained) {
+        if (gained != null
+                || runner == null
+                || !machineMenuPauseInBackground.isSelected()
+                || machineMenuPause.isSelected()) {
+            return;
+        }
+
+        pausedInBackground = true;
+
+        // Not through the Pause item, which is somebody's own answer and has to still be there
+        // when they come back. The title bar and the status bar read the machine rather than the
+        // tick, so both say Paused either way.
+        runner.setPaused(true);
+        describeMachine();
+    }
+
+    /**
+     * Starts it again on the way back, and only if this is what stopped it.
+     * <p>
+     * {@link EmulatorRunner#setPaused} rather than {@link EmulatorRunner#resume}, which is the
+     * whole of the difference between coming back from another application and unticking Pause:
+     * resuming also forgets whatever the debugger was waiting for, and a window going into the
+     * background never told it to wait for anything.
+     */
+    private void resumeFromBackground() {
+        if (!pausedInBackground) {
+            return;
+        }
+
+        pausedInBackground = false;
+
+        // Something else may have stopped the machine while nobody was looking -- a breakpoint the
+        // debugger window ran into, most likely, since that window is reachable while this one is
+        // in the background. Whatever it was, it is still true.
+        if (runner == null || machineMenuPause.isSelected()) {
+            return;
+        }
+
+        runner.setPaused(false);
+        describeMachine();
     }
 
     /**

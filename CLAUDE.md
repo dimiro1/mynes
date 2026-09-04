@@ -366,9 +366,14 @@ much of the frame is a picture and the other what shape its pixels are, neither 
 filter, and each takes one of the window's dimensions with it where a size takes both.
 `ScreenComponent.askForRoom` reads both -- how wide it asks to be is the magnification times
 however wide a pixel makes a line, the way how tall it asks to be is the magnification times
-however many lines there are. Ticking the item packs the window; a PAL cartridge arriving merely
-moves the number, and resizing a window somebody had put somewhere is not what loading a game
-should do, so `applyPixelAspect` does not pack and the menu item does.
+however many lines there are.
+
+**Two callers and only one of them resizes the window.** `applyTvAspect` is the menu item and is
+`applyOverscan` turned on its side down to the arithmetic: it measures the content pane either
+side of the change and packs, or hands a full screen window's share of the difference to the size
+waiting for it. `applyPixelAspect` is the number alone, and `startMachine` calls it -- a PAL
+cartridge arriving moves the shape of a pixel, but resizing a window somebody had put somewhere is
+not what loading a game should do.
 
 ### Taking a voice out of the mixer
 
@@ -445,6 +450,46 @@ at sixty hertz in anyway, which is what `ResamplerTests` holds it to.
 **Machine > Volume** is the other half of the same class: five steps, squared on their way to the
 amplitude, because a fader that moved it linearly would do all of its audible work in the top tenth
 of its travel. There is no zero -- Mute already is one, and it remembers the volume to come back to.
+
+### The window fills the screen, and stops when you look away
+
+Two more things nothing headless has, since neither is about a machine.
+
+`F11` gives the window the display and `Esc` gives it back, both through **Settings > Full Screen**.
+There is nothing in it about the picture: `ScreenComponent` has always fitted the frame to whatever
+size it is given, centred and letterboxed, so this is a window somebody dragged very large plus the
+edges a corner cannot be dragged to. Three things about it are decisions rather than arithmetic.
+**Screen Size greys out**, because the four sizes pack the window around a whole multiple of the
+picture and a window the size of a display is at none of them -- the same step `applyScreenScale`
+already takes for a maximized one, taken earlier. **Show Overscan and TV Aspect Ratio are not
+greyed out** beside it, which is the distinction worth keeping: how much of the frame is a picture
+and what shape its pixels are are questions worth asking at any size, and it is only the `pack()`
+in `applyOverscan` and `applyTvAspect` that a full screen window has no use for, since packing one
+would hand it back a size while the display still held it. `growWindowedBounds` is what they reach
+for instead, one axis each. **The menu bar
+stays**, because it is the way back for somebody who arrived with the mouse and because an
+accelerator belongs to the menu bar carrying it, so hiding the menu would take `F11` down with it.
+And **it is not remembered between runs**, unlike every other tick in that menu: those are answers
+to how the emulator should look, and this is where the window is, which is the same kind of thing
+as where it has been dragged to.
+
+**Machine > Pause in Background** stops the game when the window goes behind another application.
+It is remembered, and it is the second of the two entries in `config.properties` whose *missing*
+value means yes -- `Config.flagFrom` takes a fallback for exactly those two, the status bar being
+the other.
+
+**Only another application counts, and that is the whole of the design.** `WindowEvent`'s opposite
+window is null exactly when whatever took the focus is not this program's, so the debugger, the two
+PPU viewers, the CHR viewer, every dialog and `mynes-shots` all leave the machine running. Not
+politeness: **Settings > Palette...** previews a palette over the running game and the CHR viewer
+refreshes off a machine being clocked, and both would show a still picture instead.
+
+Two more rules keep it from being a second answer to a question somebody else has answered. A
+machine that is already stopped is left alone -- a ticked Pause and a breakpoint, which ticks the
+same box, both survive a trip away, because neither is over. And coming back calls
+`EmulatorRunner.setPaused` rather than `resume`, which is the difference between this and unticking
+Pause by hand: resuming also forgets whatever the debugger was waiting for, and a window going into
+the background never told it to wait for anything.
 
 ### It is deterministic
 
