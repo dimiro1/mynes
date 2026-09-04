@@ -731,6 +731,17 @@ mapper, and MMC1 and MMC3 read back zero when the game has switched the chip off
 what a battery board does around anything risky. Use `Mapper.prgRAM()`, which is the chip rather than
 the bus.
 
+`Cart.load` reads both header formats, and `cart.format` in the report says which it was, because
+which one decides what bytes 8 to 15 *mean*: byte 9 is the PAL flag under iNES and the top of the
+ROM sizes under NES 2.0. Everything iNES keeps past byte 8 is only believed out of a header whose
+bytes 12 to 15 are zero, since 1990s dumps wrote the ripper's name across the tail. The RAM sizes
+are what the header **claims** -- `cart.prgRAMBytes`, `prgNVRAMBytes`, `chrRAMBytes`,
+`chrNVRAMBytes` -- and `cart.sram.bytes` is what the mapper fitted; they differ where a header says
+nothing and the board gets the 8KB every board here has. Only MMC1 consumes the size, being the only
+supported chip that banks the window: it reads SNROM, SOROM, SUROM and SXROM out of how much ROM and
+RAM there is, not out of a submapper, because NES 2.0 retired the submappers that named them. The
+`.sav` file is the whole chip, so a 32KB board writes a 32KB file, as FCEUX does.
+
 Adding a field to any of the chips means adding it to that class's `serialize`, or adding it to
 `NOT_IN_THE_STATE` in `SaveStateCompletenessTests` with a reason. That test walks the console
 reflectively and will fail otherwise, which is the point of it -- one list of fields, used for both

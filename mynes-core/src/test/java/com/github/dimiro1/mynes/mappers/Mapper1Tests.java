@@ -259,6 +259,149 @@ class Mapper1Tests {
     }
 
     /**
+     * The CHR outputs the big boards borrowed. Which board it is comes out of the sizes handed to
+     * the constructor, the way it comes out of a header, and the same bit of the same register
+     * means three different things on three of them.
+     */
+    @Nested
+    @DisplayName("the borrowed CHR outputs")
+    class BorrowedOutputs {
+        @Test
+        void bitFourOfChrBankZeroPicksTheUpperHalfOfA512KBROM() {
+            // SUROM: Dragon Warrior III and IV.
+            var mapper = board(32, 0x2000, 0);
+            load(mapper, CONTROL, PRG_MODE_FIXED_LAST);
+            load(mapper, PRG_BANK, 2);
+
+            assertEquals(2, mapper.prgRead(0x8000));
+            assertEquals(15, mapper.prgRead(0xC000), "the last bank of the lower half");
+
+            load(mapper, CHR_BANK_0, 0x10);
+
+            assertEquals(18, mapper.prgRead(0x8000), "the same bank, in the upper half");
+            assertEquals(31, mapper.prgRead(0xC000), "and the fixed bank moved with it");
+        }
+
+        @Test
+        void andDoesNotTouchTheRAMThere() {
+            var mapper = board(32, 0x2000, 0);
+            mapper.prgRAMWrite(0x6000, 0x42);
+
+            load(mapper, CHR_BANK_0, 0x10);
+
+            assertEquals(0x42, mapper.prgRAMRead(0x6000), "an address line, not an enable");
+        }
+
+        @Test
+        void onASmallerBoardWithChrRamTheSameBitTurnsTheRAMOff() {
+            // SNROM: 8KB of each kind of RAM and no more than 256KB of ROM.
+            var mapper = board(16, 0x2000, 0);
+            mapper.prgRAMWrite(0x6000, 0x42);
+
+            load(mapper, CHR_BANK_0, 0x10);
+
+            assertEquals(0, mapper.prgRAMRead(0x6000), "the chip's enable pin");
+            assertEquals(15, mapper.prgRead(0xC000), "and nothing happened to the ROM");
+
+            load(mapper, CHR_BANK_0, 0x00);
+
+            assertEquals(0x42, mapper.prgRAMRead(0x6000));
+        }
+
+        @Test
+        void butNotOnABoardWithChrRom() {
+            var mapper = mmc1(2, 8);
+            mapper.prgRAMWrite(0x6000, 0x42);
+
+            load(mapper, CHR_BANK_0, 0x10);
+
+            assertEquals(0x42, mapper.prgRAMRead(0x6000), "SNROM is a CHR RAM board");
+        }
+
+        @Test
+        void sixteenKilobytesOfRAMIsSwitchedByBitThree() {
+            // SOROM: two 8KB chips, one line between them, and it is the upper of the two bits.
+            var mapper = board(8, 0x4000, 0);
+
+            assertEquals(0x4000, mapper.prgRAM().length);
+
+            mapper.prgRAMWrite(0x6000, 0x11);
+            load(mapper, CHR_BANK_0, 0x08);
+
+            assertEquals(0, mapper.prgRAMRead(0x6000), "the other chip");
+
+            mapper.prgRAMWrite(0x6000, 0x22);
+            load(mapper, CHR_BANK_0, 0x04);
+
+            assertEquals(0x11, mapper.prgRAMRead(0x6000), "bit 2 is not wired on this board");
+
+            load(mapper, CHR_BANK_0, 0x08);
+
+            assertEquals(0x22, mapper.prgRAMRead(0x6000));
+        }
+
+        @Test
+        void thirtyTwoKilobytesUsesBothBits() {
+            // SXROM: Final Fantasy I & II.
+            var mapper = board(32, 0x8000, 0);
+
+            assertEquals(0x8000, mapper.prgRAM().length);
+
+            for (var bank = 0; bank < 4; bank++) {
+                load(mapper, CHR_BANK_0, bank << 2);
+                mapper.prgRAMWrite(0x6000, 0x10 + bank);
+            }
+
+            for (var bank = 0; bank < 4; bank++) {
+                load(mapper, CHR_BANK_0, bank << 2);
+                assertEquals(0x10 + bank, mapper.prgRAMRead(0x6000), "bank " + bank);
+            }
+
+            load(mapper, CHR_BANK_0, 0x10);
+
+            assertEquals(0x10, mapper.prgRAMRead(0x6000), "bit 4 is the ROM's, so the RAM stays on");
+        }
+
+        @Test
+        void aHeaderThatSaysNoRAMStillGetsTheEightKilobytesEveryBoardHereHas() {
+            var mapper = board(2, 0, 0);
+
+            assertEquals(0x2000, mapper.prgRAM().length);
+        }
+
+        @Test
+        void anMMC1AHasNoDisableBit() {
+            var mapper = board(2, 0x2000, Mapper1.SUBMAPPER_MMC1A);
+            mapper.prgRAMWrite(0x6000, 0x42);
+
+            load(mapper, PRG_BANK, 0x10);
+
+            assertEquals(0x42, mapper.prgRAMRead(0x6000));
+        }
+
+        @Test
+        void aFixedPRGBoardDoesNotListenToTheBankRegister() {
+            // SEROM: 32KB of ROM wired straight through.
+            var mapper = board(2, 0x2000, Mapper1.SUBMAPPER_FIXED_PRG);
+            load(mapper, CONTROL, PRG_MODE_FIXED_LAST);
+            load(mapper, PRG_BANK, 1);
+
+            assertEquals(0, mapper.prgRead(0x8000), "which the ordinary board would have switched");
+            assertEquals(1, mapper.prgRead(0xC000));
+        }
+
+        /**
+         * An MMC1 with bank-stamped PRG ROM, 8KB of CHR RAM, and whatever the header said about
+         * PRG RAM and the submapper.
+         */
+        private Mapper1 board(final int prgBanks, final int prgRAMSize, final int submapper) {
+            return new Mapper1(
+                    StampedROM.of(prgBanks, 0x4000), new byte[0], Mirroring.HORIZONTAL,
+                    prgRAMSize, submapper);
+        }
+    }
+
+    /**
      * Writes one register the way a game has to: five writes of one bit each, least significant
      * bit first, with the fifth landing on the address that names the register.
      */

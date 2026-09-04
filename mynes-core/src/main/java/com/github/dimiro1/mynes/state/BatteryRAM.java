@@ -8,12 +8,15 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * The eight kilobytes a coin cell kept alive, as a {@code .sav} file.
+ * The RAM a coin cell kept alive, as a {@code .sav} file.
  * <p>
  * This is the one part of saving a game that <strong>is</strong> standard, and it is standard by
- * being as close to nothing as a format can be: the raw contents of $6000-$7FFF, no magic number, no
+ * being as close to nothing as a format can be: the raw contents of the chip, no magic number, no
  * version, no checksum, no header of any kind. FCEUX, Nestopia and Mesen all read and write exactly
  * this, which is why a save from any of them can be dropped next to the ROM here and simply work.
+ * Eight kilobytes on almost every board, being what fits at $6000-$7FFF; sixteen or thirty-two on
+ * the MMC1 boards that bank the window, since the whole chip is on the battery and the file is the
+ * chip rather than the window.
  * <p>
  * <strong>Nothing may be added to it.</strong> A magic number would be useful, a checksum would be
  * more useful still, and either one would break the only property the format has. Anything that needs
@@ -24,11 +27,6 @@ import java.nio.file.StandardCopyOption;
  * temporary and a move, and why a file that is the wrong length is worked with rather than refused.
  */
 public final class BatteryRAM {
-
-    /**
-     * What a board carries at $6000-$7FFF, and so how long the file is.
-     */
-    public static final int BYTES = 0x2000;
 
     private static final String EXTENSION = ".sav";
 
@@ -54,8 +52,10 @@ public final class BatteryRAM {
      * <p>
      * A file of the wrong length is used anyway, for the reason in the class comment: this is
      * somebody's progress, and refusing it outright to be tidy would be the wrong trade. A short one
-     * fills what it can and leaves the rest as it was; a long one -- which is what an emulator
-     * modelling a bigger board writes -- gives up its first eight kilobytes.
+     * fills what it can and leaves the rest as it was -- which is also what happens to a 16KB SOROM
+     * save from an emulator that only kept the battery-backed half; a long one, which is what an
+     * emulator modelling a bigger board than this one thinks it is writes, gives up its first
+     * however many.
      *
      * @return how many bytes were taken from the file, or -1 if there was no file or the cartridge
      *         has no RAM to put it in.

@@ -162,6 +162,7 @@ public final class Headless {
 
         logger.log(Level.INFO, "running " + options.rom().getFileName()
                 + ", mapper " + cart.mapperNumber()
+                + (cart.submapper() == 0 ? "" : "." + cart.submapper())
                 + ", " + region.label()
                 + ", " + frames + " frames");
 

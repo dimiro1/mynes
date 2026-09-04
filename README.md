@@ -63,8 +63,11 @@ file is where they live.
 - NTSC and PAL, as the genuinely different machines they are. Most ROM headers don't say which
   region they want, so **Machine > Region** lets you insist. A game running 17% fast with the
   music too high is a game that wants PAL.
-- Eleven mappers: NROM, MMC1, UxROM, CNROM, MMC3 (0–4), AxROM (7), MMC2 and MMC4 (9, 10),
-  Color Dreams (11), GxROM (66) and Camerica (71).
+- Twelve mappers: NROM, MMC1, UxROM, CNROM, MMC3 (0–4), AxROM (7), MMC2 and MMC4 (9, 10),
+  Color Dreams (11), GxROM (66), Camerica (71) and MMC1A (155). The MMC1 covers the big boards
+  too: 512KB SUROM, and the 16KB and 32KB save RAM of SOROM and SXROM.
+- iNES and NES 2.0 headers, including the ROM and RAM sizes, the submapper and the region the
+  latter carries.
 
 **Video**
 
