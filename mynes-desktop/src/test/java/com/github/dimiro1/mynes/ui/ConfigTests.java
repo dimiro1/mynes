@@ -65,7 +65,7 @@ class ConfigTests {
     @DisplayName("loading the status bar")
     class LoadingStatusBar {
         /**
-         * The one entry here whose default is yes. Everything else in this file is something the
+         * One of the two entries here whose default is yes. Most of this file is something the
          * emulator does when asked, and the bar is something it does until told not to.
          */
         @Test
@@ -90,6 +90,44 @@ class ConfigTests {
         @Test
         void anythingThatIsNotTrueIsNo() throws IOException {
             assertFalse(Config.load(write("ui.status-bar=maybe\n")).statusBar());
+        }
+    }
+
+    /**
+     * The other entry whose missing value means yes, and it is worth its own case rather than
+     * riding on the bar's: the two share one reader, so a fallback wired to the wrong one of them
+     * would leave a player's game running while they answered an email.
+     */
+    @Nested
+    @DisplayName("loading the background pause")
+    class LoadingPauseInBackground {
+        @Test
+        void aMissingEntryPausesInTheBackground() {
+            assertTrue(Config.load(directory.resolve("not-there.properties")).pauseInBackground());
+        }
+
+        @Test
+        void falseLeavesTheGameRunning() throws IOException {
+            assertFalse(Config.load(write("emulation.pause-in-background=false\n"))
+                    .pauseInBackground());
+        }
+
+        @Test
+        void anythingThatIsNotTrueIsNo() throws IOException {
+            assertFalse(Config.load(write("emulation.pause-in-background=maybe\n"))
+                    .pauseInBackground());
+        }
+
+        /**
+         * The bar is the entry this one shares a reader with, so the case worth having is the one
+         * where a file answers for one of them and not the other.
+         */
+        @Test
+        void theBarIsADifferentQuestion() throws IOException {
+            var config = Config.load(write("emulation.pause-in-background=false\n"));
+
+            assertFalse(config.pauseInBackground());
+            assertTrue(config.statusBar());
         }
     }
 
@@ -978,6 +1016,7 @@ class ConfigTests {
             config.setStatusBar(false);
             config.setRegion(RegionSetting.PAL);
             config.setFastForwardSpeed(EmulationSpeed.TWO_TIMES);
+            config.setPauseInBackground(false);
             config.setMuted(true);
             config.setVolume(Volume.TENTH);
             config.setUnlimitedSprites(true);
@@ -996,6 +1035,7 @@ class ConfigTests {
             assertTrue(text.contains("ui.status-bar=false"), text);
             assertTrue(text.contains("emulation.region=pal"), text);
             assertTrue(text.contains("emulation.fast-forward=2x"), text);
+            assertTrue(text.contains("emulation.pause-in-background=false"), text);
             assertTrue(text.contains("audio.muted=true"), text);
             assertTrue(text.contains("audio.volume=10"), text);
             assertTrue(text.contains("audio.latency-ms=" + AudioOutput.DEFAULT_LATENCY_MS), text);
