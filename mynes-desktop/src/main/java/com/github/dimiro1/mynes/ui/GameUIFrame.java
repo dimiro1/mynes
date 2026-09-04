@@ -1407,11 +1407,11 @@ public class GameUIFrame extends JFrame {
      * it does: {@link #startMachine} calls it beside the palette and the filter, for the same
      * reason both of those are called there.
      * <p>
-     * <strong>It does not pack, which is where it parts company with {@link #applyOverscan}.</strong>
-     * The picture really is wider and the component says so, but the two callers are asking
-     * different questions: the menu item is somebody asking for a differently shaped picture and
-     * packs the window itself, where a European cartridge arriving has merely moved the number and
-     * is no reason to resize a window somebody had put somewhere.
+     * <strong>It does not pack, which is where it parts company with
+     * {@link #applyOverscan}.</strong> The picture really is wider and the component says so, but
+     * the two callers are asking different questions: the menu item is somebody asking for a
+     * differently shaped picture and packs the window itself, where a European cartridge arriving
+     * has merely moved the number and is no reason to resize a window somebody had put somewhere.
      */
     private void applyPixelAspect() {
         screen.setPixelAspect(config.tvAspect()
