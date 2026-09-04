@@ -6,7 +6,7 @@
 
     <groupId>com.github.dimiro1</groupId>
     <artifactId>mynes</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
     <packaging>pom</packaging>
 
     <name>mynes</name>
@@ -42,7 +42,7 @@
 
              Moved by hand at each release. A stale one costs nothing but an old date on the entries,
              so it is better forgotten than replaced with something that varies. -->
-        <project.build.outputTimestamp>2026-09-03T00:00:00Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2026-09-04T00:00:00Z</project.build.outputTimestamp>
 
         <flatlaf.version>3.7.2</flatlaf.version>
         <miglayout.version>11.4.3</miglayout.version>

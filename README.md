@@ -10,8 +10,8 @@ Grab the zip from the [releases page](https://github.com/dimiro1/mynes/releases)
 run the launcher:
 
 ```sh
-unzip mynes-0.3.0.zip
-cd mynes-0.3.0
+unzip mynes-0.4.0.zip
+cd mynes-0.4.0
 ./mynes            # or mynes.bat on Windows, or: java -jar mynes.jar
 ```
 
