@@ -746,7 +746,7 @@ mvn -q compile exec:exec@shots -Dshots.args="--roms DIR"
 `DIR` holds the three cartridges named at the top of `Shots`, as No-Intro names them, and nothing
 in the repository does: the pictures are of real games, which is why the module can only run on a
 machine that has them. `--out` puts the pictures somewhere other than `shots/`, and
-`--only name,name` takes a few rather than all twelve -- the names are the file names without
+`--only name,name` takes a few rather than all thirteen -- the names are the file names without
 `.png`, and an unknown one is refused with the list.
 
 Two kinds of picture come out of it, and they are taken two ways. A picture of the *game* -- the
@@ -844,8 +844,10 @@ mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and 
   mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger, and
                       the sound card: the line, the volume, and the half a percent of resampling
                       that holds its queue where it was put
-  mynes/ui/ppuviewer/ the two windows over what the PPU is drawing from: the four nametables with
-                      the scroll window over them, and the sixty four sprites with their attributes
+  mynes/ui/ppuviewer/ the three windows over what the PPU is drawing from: the four nametables
+                      with the scroll window over them, the sixty four sprites with their
+                      attributes, and the thirty two bytes of palette RAM everything is coloured
+                      through
 
 mynes-shots/          depends on desktop, and nothing depends on it
   mynes/shots/        the camera that takes the README's pictures off the real window
@@ -893,10 +895,76 @@ The palettes are in the core rather than beside the window because both front en
 and neither owns them. `NESPalette` is 512 packed integers and `Palettes` reads files; the one piece
 of Swing in that story, `PaletteDialog`, stayed behind in `mynes/ui/`.
 
-The two PPU viewers are their own package rather than beside the CHR viewer because that one is
-about the tiles a game *has* and these are about where it has *put* them -- and they share a tile
-decoder with each other rather than with it, since that one reads the mapper directly and these read
-the PPU's own bus so that a bank switch moves them.
+The three PPU viewers are their own package rather than beside the CHR viewer because that one is
+about the tiles a game *has* and these are about what the chip is *doing* with them -- and the two
+that decode tiles share a decoder with each other rather than with it, since that one reads the
+mapper directly and these read the PPU's own bus so that a bank switch moves them.
+
+The palette viewer is the third, and the two things it refuses to do are the point of it. **It shows
+the bytes and not the picture**: $2001's greyscale bit and its three emphasis bits recolour the whole
+screen without changing a byte of palette RAM, so a viewer that quietly applied them could not tell a
+colour a game got wrong from a bit it set on purpose -- `PPU.isGreyscale()` and `PPU.getEmphasis()`
+exist so the header can say what $2001 is doing instead. And **it draws all thirty two cells
+including the seven that are not what they look like**: $3F10, $3F14, $3F18 and $3F1C are not memory
+at all but the matching background cells, which is why setting a sprite palette's first colour sets
+the screen's background, and $3F04, $3F08 and $3F0C are memory the chip never draws. `PaletteCells`
+is that arithmetic, kept free of Swing so it can be tested where there is no display.
+
+**All four debug windows carry the Machine menu's Pause tick**, and the shortcut with it. A viewer
+is watching something that will not hold still, and stopping it used to mean finding the game
+window, pausing there and coming back -- by which time whatever was worth looking at had been drawn
+over. `PauseBox` is the tick and `PauseControl` is the handle it holds. It is a handle rather than
+the `EmulatorRunner` itself because pausing properly means three more things than setting a flag:
+releasing whatever buttons were held when the game froze, bringing the Machine menu's own tick into
+line, and telling the debugger that what it was waiting for is off. All of that lives in
+`GameUIFrame.pause`, so a viewer asks rather than does. The tick **follows the machine rather than
+remembering what it was last told** -- Pause is reachable from six places now -- which each window's
+refresh timer does for it once a quarter second. `PauseControl.NONE` is how a test and the camera
+say nobody is clocking the machine, and a window handed it draws the tick greyed out.
+
+**Two of the three answer "where" by dimming the frame rather than by drawing on it.** Both draw
+**all 240 lines**, where `ScreenComponent` draws the 224 in front of a television's bezel -- so the
+sixteen a set hid are shaded rather than cropped away. Cropping them would hide a sprite pushed into
+the overscan, which is the same question as a sprite parked at Y=$F0 and wants the same answer;
+leaving them unmarked made the debug picture seven per cent taller than the game window's for no
+visible reason. Everything is square-pixel throughout the front end, here and there both. `Screen` is
+the shared half a page that does it, and the palette viewer's own half is `PaletteUse`: which pixels
+a palette is drawing, rebuilt out of the attribute bytes and out of OAM. It has to be rebuilt,
+because a frame holds colour indices and two palettes holding the same byte are the same pixel there
+-- which is exactly the case where somebody wants to know which of the two it was. The background
+half is **as good as the scroll it is asked at**, being taken from `t`, so a game that splits the
+screen mid-frame gets whichever half of the split had been written when the timer looked: the same
+caveat the nametable viewer's scroll rectangle carries. `PaletteUseTests` holds it to a machine with
+one known attribute byte in it, at three different scrolls, and needs no display.
+
+The OAM viewer's field grew the same picture, and the table beside it grew a guess. **A thing on the
+screen is several sprites and which several is a fact about the game's code**, so `SpriteGroups`
+joins up the ones whose boxes touch *and* that OAM connects some other way -- either the same
+palette or the slot next door. Touching alone is not enough, because things overlap: Castlevania
+draws a candle straight through Simon and shuffles its slots every frame to move the flicker around,
+so there only the palette separates them. And the palette alone is not enough either, because Mega
+Man's face is not the colour of his armour -- so there the run of slots is what holds him together.
+Either, not both. It is still wrong in both directions -- two enemies in the same colours shoulder
+to shoulder come out as one -- and it is still worth far more than sixty four rows in the order the
+game happened to write them. The Group
+column says what it decided, **Group** puts the rows in that order and makes one click take the whole
+thing, and shift and the command key still do what they do in any table, which is how to disagree
+with it.
+
+**On screen only** is the other tick, and it drops the sprites the game has parked below the
+picture -- fifty of the sixty four on a quiet frame, all of them identical. It is the same test as
+the header's "N on screen", so the number and the rows can never disagree, and the header's group
+count is taken over the rows on show rather than over OAM for the same reason: a figure nobody could
+arrive at by counting the table would be worse than no figure.
+
+Three things about that are load-bearing. Every column reads through `order[]` rather than through
+the row, since the rows move and the sixty four sprites do not -- and `rows` says how many of it the
+table is showing, so a filtered table is a shorter prefix of the same array rather than a second one. **The guess is made again on every
+sweep unless something is selected**, because groups that re-formed four times a second under a
+moving game would shuffle rows out from under a click on its way down -- so selecting freezes them
+and clearing the selection lets them follow the screen again. And the field outlines a group as the
+*union* of its rectangles rather than as a box each: a box each puts a line down every seam of
+whatever the sprites make up, which hides the shape the selection was made to see.
 
 `peek` means "read without side effects", and it is load-bearing. `VRAM.read` tells the mapper what
 address is on the bus, and MMC3 counts those to drive its scanline interrupt -- so a debugger that

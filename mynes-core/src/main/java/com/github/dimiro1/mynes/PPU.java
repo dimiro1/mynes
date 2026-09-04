@@ -2922,6 +2922,31 @@ public class PPU {
     }
 
     /**
+     * Whether $2001 bit 0 is forcing every colour down onto the grey column on its way out of the
+     * chip.
+     * <p>
+     * Asked separately from palette RAM because it is not in palette RAM: the bytes a game wrote
+     * are still there, untouched, and a debug window over them would show colours the screen is not
+     * showing without something to say why.
+     */
+    public boolean isGreyscale() {
+        return (mask & MASK_GREYSCALE) != 0;
+    }
+
+    /**
+     * The three colour emphasis bits of $2001, bit 0 red, bit 1 green and bit 2 blue -- the same
+     * three that ride in the top of every framebuffer entry as {@code emphasis << 6 | entry}.
+     * <p>
+     * Here for the reason above: like the greyscale bit, this recolours the whole picture without
+     * changing a byte anybody can read back.
+     *
+     * @return 0 to 7.
+     */
+    public int getEmphasis() {
+        return (mask & 0xE0) >> 5;
+    }
+
+    /**
      * Shows or hides the background layer in the picture. A debug switch for a front end; the
      * game cannot tell it has been thrown, because it changes nothing but the pixels drawn.
      */

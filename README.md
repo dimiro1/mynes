@@ -135,8 +135,14 @@ file is where they live.
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
-- A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, and an OAM
-  viewer showing all sixty-four sprites.
+- A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, an OAM
+  viewer showing all sixty-four sprites, and a palette viewer over the thirty-two bytes the whole
+  picture is coloured through.
+- Both of the last two answer *where*: point at a palette and the screen dims everywhere it is not
+  drawing, and the OAM viewer guesses which sprites are one character so a click outlines all of
+  them.
+- Every one of those windows has Pause in it, so stopping the machine to look at something does not
+  mean going back to the game window first.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels
   out of the mixer (`--mute pulse1,dmc` headless).
 
@@ -180,9 +186,20 @@ between.
 
 ### The OAM viewer
 
-All sixty-four sprites with their attributes, and where each one lands on the screen.
+All sixty-four sprites with their attributes, over the screen they are on. **Group** works out which
+of them are one thing — the ones that touch and that OAM connects, by palette or by neighbouring
+slot — so a click takes the whole character and the screen outlines it, and **On screen only** drops
+the ones the game has parked out of sight.
 
 ![The OAM viewer](shots/oam-viewer.png)
+
+### The palette viewer
+
+All eight palettes, with the byte on top of the colour it names. Hovering a cell says what it is --
+including the four that are not memory at all, but the background palette's own first colour -- and
+takes the light off everywhere on the screen that palette is not drawing.
+
+![The palette viewer](shots/palette-viewer.png)
 
 ### The CHR viewer
 

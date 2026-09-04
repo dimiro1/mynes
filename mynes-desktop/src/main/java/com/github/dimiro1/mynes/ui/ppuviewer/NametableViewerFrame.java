@@ -2,6 +2,8 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.palette.NESPalette;
+import com.github.dimiro1.mynes.ui.PauseBox;
+import com.github.dimiro1.mynes.ui.PauseControl;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -40,16 +42,21 @@ public final class NametableViewerFrame extends JFrame {
 
     private final NES nes;
     private final NametablePanel nametables;
+    private final PauseBox pause;
     private final Timer refreshTimer;
 
     private final JLabel machine = new JLabel();
     private final JLabel pointer = new JLabel();
 
     public NametableViewerFrame(
-            final Component parent, final NES nes, final NESPalette palette) {
+            final Component parent,
+            final NES nes,
+            final NESPalette palette,
+            final PauseControl pauseControl) {
 
         this.nes = nes;
         this.nametables = new NametablePanel(nes.getPPU(), palette);
+        this.pause = new PauseBox(pauseControl);
         this.refreshTimer = new Timer(REFRESH_MILLIS, e -> tick());
 
         init(parent);
@@ -91,9 +98,16 @@ public final class NametableViewerFrame extends JFrame {
         header.add(machine, BorderLayout.NORTH);
         header.add(pointer, BorderLayout.SOUTH);
 
-        var controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
-        controls.add(grid);
-        controls.add(scroll);
+        var options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+        options.add(grid);
+        options.add(scroll);
+
+        // Pause at the far end, away from the ticks that only change what is drawn: this one
+        // changes the machine, which is a different kind of thing to be clicking.
+        var controls = new JPanel(new BorderLayout());
+        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
+        controls.add(options, BorderLayout.WEST);
+        controls.add(pause, BorderLayout.EAST);
 
         add(header, BorderLayout.NORTH);
         add(nametables, BorderLayout.CENTER);
@@ -103,6 +117,7 @@ public final class NametableViewerFrame extends JFrame {
         pointer.setText(" ");
 
         pack();
+        pause.installIn(getRootPane());
         setLocationRelativeTo(parent);
     }
 
@@ -139,6 +154,7 @@ public final class NametableViewerFrame extends JFrame {
 
     private void refresh() {
         nametables.refresh();
+        pause.refresh();
         describeMachine();
     }
 

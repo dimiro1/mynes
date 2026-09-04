@@ -36,6 +36,13 @@ abstract class PPUFixture {
     static final int ADDRESS_UPDATE_DOTS = 2;
 
     /**
+     * How many dots a $2001 write takes to reach the mask the chip is rendering with. Switching
+     * rendering on or off does not happen on the dot of the write; the signal has to get through
+     * the pipeline first.
+     */
+    static final int MASK_UPDATE_DOTS = 2;
+
+    /**
      * How many dots a $2007 read takes to become the fetch that fills the read buffer.
      * <p>
      * A real program cannot see the wait -- the soonest it can read $2007 again is four CPU cycles
