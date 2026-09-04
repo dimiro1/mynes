@@ -179,6 +179,7 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
+    private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
     private final JCheckBoxMenuItem settingsMenuTvAspect =
             new JCheckBoxMenuItem("TV Aspect Ratio");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
@@ -375,13 +376,12 @@ public class GameUIFrame extends JFrame {
 
         screen.setPalette(config.palette(currentRegion()));
 
-        // Before the scale rather than after, because the scale is what turns the shape of a pixel
-        // into a width: a window told these the other way round would ask for the square picture's
-        // size and letterbox a television's inside it from the moment it opened.
-        applyPixelAspect();
-
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
-        // at the default and then jumping.
+        // at the default and then jumping. All three of these, because how big the picture is is
+        // the magnification times however many scanlines are being shown by however wide the shape
+        // of a pixel makes a line.
+        applyPixelAspect();
+        screen.setOverscan(config.overscan());
         screen.setScale(config.screenScale());
 
         init();
@@ -395,6 +395,12 @@ public class GameUIFrame extends JFrame {
         // account or not according to exactly this.
         statusBar.setVisible(config.statusBar());
         add(statusBar, BorderLayout.SOUTH);
+
+        // On the window rather than on the picture, because the whole of it is what somebody aims a
+        // cartridge at: a drop that worked over the middle and not over the status bar or the menu
+        // bar would look broken rather than particular. Neither of those has a drop target of its
+        // own, so AWT walks up to this one.
+        setTransferHandler(new RomDrop(rom -> open(rom, null)));
 
         var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
@@ -576,13 +582,19 @@ public class GameUIFrame extends JFrame {
 
         settingsMenu.add(videoFilterMenu());
 
-        settingsMenu.add(screenSizeMenu());
-        settingsMenu.add(screenshotSizeMenu());
+        // Beside the filters rather than in with them, and above the sizes: what it changes is how
+        // much of the frame is a picture, which is the same question they answer differently and
+        // not the same question as how big that picture is drawn. It takes the window's height
+        // with it, which is why it is not in the group below either.
+        settingsMenuOverscan.setMnemonic(KeyEvent.VK_O);
+        settingsMenuOverscan.setSelected(config.overscan());
+        settingsMenu.add(settingsMenuOverscan);
 
-        // Under both sizes rather than inside either, and not in Video Filter with the strength and
-        // the curve: the shape of a pixel is not a setting on a filter -- all three draw them
-        // whatever shape this says -- and it governs the window and the screenshots alike, which is
-        // one question rather than two.
+        // Directly beneath it, because it is the same kind of thing turned on its side: that one
+        // decides how much of the frame is a picture and this one what shape its pixels are, and
+        // neither is a setting on a filter -- all three draw whatever these two say. It takes the
+        // window's width with it the way that one takes its height, which is the other reason both
+        // sit above the sizes rather than among them.
         settingsMenuTvAspect.setMnemonic(KeyEvent.VK_T);
         settingsMenuTvAspect.setSelected(config.tvAspect());
         settingsMenuTvAspect.addActionListener(e -> {
@@ -590,13 +602,16 @@ public class GameUIFrame extends JFrame {
             saveConfig();
             applyPixelAspect();
 
-            // And the window follows the picture, unlike a region change, which also moves the
-            // number: this is somebody asking for a differently shaped picture, and leaving it
-            // letterboxed inside a window still the old shape would be answering half of it.
-            applyScreenScale(config.screenScale());
+            // Packed here and only here, for the reason applyPixelAspect does not pack itself:
+            // this is somebody asking for a differently shaped picture, and leaving it letterboxed
+            // inside a window still the old shape would be answering half of it.
+            pack();
             updateStatusBar();
         });
         settingsMenu.add(settingsMenuTvAspect);
+
+        settingsMenu.add(screenSizeMenu());
+        settingsMenu.add(screenshotSizeMenu());
 
         // Under the sizes rather than beside the palette: what this changes is the shape of the
         // window, not the picture in it.
@@ -627,6 +642,12 @@ public class GameUIFrame extends JFrame {
         // Every key event in the application comes past here before anything else sees it, which
         // is how the game gets the arrow keys without taking them off the menu bar.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
+
+        settingsMenuOverscan.addActionListener(e -> {
+            config.setOverscan(settingsMenuOverscan.isSelected());
+            saveConfig();
+            applyOverscan();
+        });
 
         settingsMenuController.addActionListener(e ->
                 new ControllerSettingsDialog(this, config.keyBindings(), updated -> {
@@ -1332,6 +1353,24 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Shows the scanlines a television hid behind its bezel, or stops, and gives the window the
+     * sixteen rows rather than taking them out of the picture.
+     * <p>
+     * Packed the way a screen size is, and for the reason {@link ScreenComponent#setOverscan}
+     * gives: the picture really is taller, and a window that kept its height would answer a
+     * request to see two more strips of frame by making everything else smaller. Unlike
+     * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
+     * against a size nobody is looking at, only a picture that lays itself out again inside
+     * whatever room the window manager gave it.
+     */
+    private void applyOverscan() {
+        screen.setOverscan(config.overscan());
+
+        pack();
+        updateStatusBar();
+    }
+
+    /**
      * Tells the screen how wide to draw a pixel: the television's shape, or the square one the
      * framebuffer holds.
      * <p>
@@ -1341,9 +1380,11 @@ public class GameUIFrame extends JFrame {
      * it does: {@link #startMachine} calls it beside the palette and the filter, for the same
      * reason both of those are called there.
      * <p>
-     * The window is not resized. A cartridge that is European does not mean somebody asked for a
-     * differently shaped window, so the picture is fitted into whatever size the window has; only
-     * the menu item, which is somebody asking, packs it as well.
+     * <strong>It does not pack, which is where it parts company with {@link #applyOverscan}.</strong>
+     * The picture really is wider and the component says so, but the two callers are asking
+     * different questions: the menu item is somebody asking for a differently shaped picture and
+     * packs the window itself, where a European cartridge arriving has merely moved the number and
+     * is no reason to resize a window somebody had put somewhere.
      */
     private void applyPixelAspect() {
         screen.setPixelAspect(config.tvAspect()
@@ -1447,6 +1488,7 @@ public class GameUIFrame extends JFrame {
                 currentVideoFilter(),
                 config.filterStrength(),
                 config.warp(),
+                config.overscan(),
                 config.tvAspect(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),

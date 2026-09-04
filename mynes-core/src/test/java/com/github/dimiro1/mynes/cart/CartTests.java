@@ -204,6 +204,146 @@ public class CartTests {
         assertEquals(Region.NTSC, cart.region());
     }
 
+    @Test
+    void whichHeaderWasReadIsRecorded() {
+        assertEquals(Cart.Format.INES, Cart.load(synthesizeRom(0x00, 0x00), "old.nes").format());
+        assertEquals(Cart.Format.NES20, Cart.load(synthesizeRom(0x00, 0x08), "new.nes").format());
+        // Bits 2-3 reading 1 or 3 is not NES 2.0, whatever else is in the byte.
+        assertEquals(Cart.Format.INES, Cart.load(synthesizeRom(0x00, 0x04), "odd.nes").format());
+    }
+
+    /**
+     * Byte 8 of a NES 2.0 header carries four more bits of mapper number, which is how the format
+     * got past 255. None of those mappers is supported, so the proof that the bits were read is
+     * the number in the refusal.
+     */
+    @Test
+    void nes20HasFourMoreBitsOfMapperNumberInByte8() {
+        var rom = synthesizeRom(0x10, 0x08);
+        rom[8] = 0x01;
+
+        var thrown = assertThrowsExactly(
+                UnsupportedMapperException.class, () -> Cart.load(rom, "mapper257.nes"));
+
+        assertTrue(thrown.getMessage().contains("257"), thrown.getMessage());
+    }
+
+    @Test
+    void theSubmapperIsTheTopOfByte8UnderNES20AndNothingUnderINES() {
+        var nes20 = synthesizeRom(0x10, 0x08);
+        nes20[8] = 0x50;
+
+        assertEquals(5, Cart.load(nes20, "serom.nes").submapper());
+
+        // The same byte under iNES counts PRG RAM, and there is no submapper to read.
+        var ines = synthesizeRom(0x10, 0x00);
+        ines[8] = 0x50;
+
+        assertEquals(0, Cart.load(ines, "ines.nes").submapper());
+    }
+
+    @Test
+    void byte9AddsFourBitsToTheROMSizeUnderNES20() {
+        var rom = new byte[16 + 257 * 0x4000];
+        System.arraycopy(synthesizeRom(0x00, 0x08), 0, rom, 0, 16);
+        rom[9] = 0x01;
+
+        assertEquals(257 * 0x4000, Cart.load(rom, "big.nes").prgROM().length);
+    }
+
+    @Test
+    void anFInByte9MakesByte4AnExponentAndAMultiplier() {
+        // 2^14 * 3: a 48KB ROM, which no whole number of 16KB banks says.
+        var rom = new byte[16 + 0xC000];
+        System.arraycopy(synthesizeRom(0x00, 0x08), 0, rom, 0, 16);
+        rom[4] = (byte) (14 << 2 | 1);
+        rom[9] = 0x0F;
+
+        assertEquals(0xC000, Cart.load(rom, "odd-size.nes").prgROM().length);
+    }
+
+    @Test
+    void aHeaderNamingMoreROMThanAnyFileHoldsIsRefusedRatherThanAllocated() {
+        var rom = synthesizeRom(0x00, 0x08);
+        rom[4] = (byte) (40 << 2);
+        rom[9] = 0x0F;
+
+        assertThrowsExactly(InvalidNesFileException.class, () -> Cart.load(rom, "vast.nes"));
+    }
+
+    @Test
+    void theRAMSizesComeOutOfBytes10And11AsShiftCounts() {
+        var rom = synthesizeRom(0x02, 0x08);
+        rom[10] = 0x71;  // 128 bytes of PRG RAM below 8KB of PRG NVRAM
+        rom[11] = 0x07;  // 8KB of CHR RAM
+
+        var ram = Cart.load(rom, "sizes.nes").ram();
+
+        assertEquals(new Cart.RAM(128, 8192, 8192, 0), ram);
+        assertEquals(8320, ram.prg(), "the two PRG halves are one space to the mapper");
+    }
+
+    @Test
+    void aZeroShiftCountIsNoRAMRatherThanSixtyFourBytes() {
+        assertEquals(Cart.RAM.NONE, Cart.load(synthesizeRom(0x00, 0x08), "none.nes").ram());
+    }
+
+    /**
+     * iNES has one number for all of this, in units of 8KB, and a zero there was defined to mean
+     * one unit because the byte arrived after most of the library had been headered without it.
+     */
+    @Test
+    void plainINESCountsPRGRAMInByte8() {
+        var battery = synthesizeRom(0x02, 0x00);
+        battery[8] = 4;
+
+        assertEquals(new Cart.RAM(0, 0x8000, 0x2000, 0), Cart.load(battery, "sxrom.nes").ram(),
+                "on the battery side, because the header says there is one");
+
+        var scratch = synthesizeRom(0x00, 0x00);
+        scratch[8] = 2;
+
+        assertEquals(new Cart.RAM(0x4000, 0, 0x2000, 0), Cart.load(scratch, "work.nes").ram());
+
+        assertEquals(0x2000, Cart.load(synthesizeRom(0x00, 0x00), "blank.nes").ram().prg(),
+                "zero means one unit");
+    }
+
+    @Test
+    void butNotOutOfASignedHeader() {
+        var rom = synthesizeRom(0x00, 0x00);
+        rom[8] = 's';
+        rom[13] = 'D';
+        rom[14] = 'i';
+        rom[15] = 'z';
+
+        assertEquals(0x2000, Cart.load(rom, "signed.nes").ram().prg(),
+                "a letter of somebody's handle is not nine hundred kilobytes of RAM");
+    }
+
+    @Test
+    void anMMC1BoardIsGivenTheRAMTheHeaderSays() {
+        var sxrom = synthesizeRom(0x12, 0x08);
+        sxrom[10] = (byte) 0x90;  // 32KB of PRG NVRAM
+
+        assertEquals(0x8000, Cart.load(sxrom, "sxrom.nes").mapper().prgRAM().length);
+
+        var quiet = synthesizeRom(0x10, 0x08);
+
+        assertEquals(0x2000, Cart.load(quiet, "slrom.nes").mapper().prgRAM().length,
+                "and the 8KB every board here has when it says nothing");
+    }
+
+    @Test
+    void mapper155IsAnMMC1() {
+        var rom = synthesizeRom((155 & 0x0F) << 4, 155 & 0xF0);
+
+        var cart = Cart.load(rom, "mmc1a.nes");
+
+        assertEquals(155, cart.mapperNumber());
+        assertInstanceOf(Mapper1.class, cart.mapper());
+    }
+
     /**
      * Builds a minimal but valid iNES image: a header, one 16KB PRG bank and no CHR banks.
      */

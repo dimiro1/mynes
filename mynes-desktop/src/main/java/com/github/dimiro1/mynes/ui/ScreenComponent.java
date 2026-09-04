@@ -31,7 +31,8 @@ import java.awt.image.DataBufferInt;
  * waits for long.
  * <p>
  * The picture is cropped, by {@link FrameRenderer#OVERSCAN_TOP} and its neighbours, which is also
- * where the reason for it is written down.
+ * where the reason for it is written down -- unless {@link #setOverscan} has been told to show
+ * those lines, which is the headless mode's {@code --full-frame} asked of the window.
  */
 public class ScreenComponent extends JComponent {
 
@@ -78,6 +79,22 @@ public class ScreenComponent extends JComponent {
     private int[] palette = Palettes.defaultPalette().colours();
 
     /**
+     * The magnification the component asks the window for. Kept because it is half of the answer:
+     * how tall it asks to be is that number of screen pixels per line times however many lines
+     * {@link #overscan} says there are, so either setting moving has to work the sum again.
+     */
+    private ScreenScale scale = ScreenScale.defaultScale();
+
+    /**
+     * Whether the scanlines a television hid are drawn. Written and read on the event dispatch
+     * thread and nowhere else -- unlike the palette and the filter, which the emulation thread
+     * reads inside {@link #colourise}. This one reaches no further than where the picture is put:
+     * {@link #image} is all 240 lines whatever this says, and it is the painting and the snapshot
+     * that decide how much of it to take.
+     */
+    private boolean overscan;
+
+    /**
      * How the frame is drawn: through {@link #palette}, by decoding the signal, or through the
      * palette and onto a tube.
      */
@@ -104,8 +121,10 @@ public class ScreenComponent extends JComponent {
      * this component draws whatever machine is running and has never been told which one that is.
      * <p>
      * Not inside {@link #setVideoFilter} with the other three, because it is not a setting on a
-     * filter -- all three draw the pixels whatever shape this says. And it is the one video setting
-     * that changes how big the component wants to be, which is why {@link #setScale} reads it.
+     * filter -- all three draw the pixels whatever shape this says. It is the other half of what
+     * {@link #overscan} is, and {@link #askForRoom} reads both: how wide the component asks to be
+     * is the magnification times however wide this makes a line, the way how tall it asks to be is
+     * the magnification times however many lines there are.
      */
     private double pixelAspect = FrameRenderer.SQUARE_PIXELS;
 
@@ -167,9 +186,39 @@ public class ScreenComponent extends JComponent {
      * window dragged to some size in between keeps working exactly as it did.
      */
     public void setScale(final ScreenScale scale) {
+        this.scale = scale;
+
+        askForRoom();
+    }
+
+    /**
+     * Draws the scanlines a television hid behind its bezel, or stops.
+     * <p>
+     * The same question the headless mode's {@code --full-frame} answers, and answered the same
+     * way: nothing about the machine or the framebuffer changes, only how much of the frame is
+     * looked at. So it reaches the picture on screen, the screenshots and the clipboard alike,
+     * and it works with the emulator paused -- the frame is already here and nothing has to be
+     * colourised again for it, since {@link #image} was never the cropped one.
+     * <p>
+     * The component asks for sixteen more rows, or sixteen fewer, because the alternative is
+     * fitting a taller picture into the height the window already had: the lines somebody just
+     * asked to see would arrive by shrinking everything else, which is not what was asked.
+     */
+    public void setOverscan(final boolean overscan) {
+        if (this.overscan == overscan) {
+            return;
+        }
+
+        this.overscan = overscan;
+
+        askForRoom();
+        repaint();
+    }
+
+    private void askForRoom() {
         setPreferredSize(new Dimension(
                 FrameRenderer.widthFor(scale.factor(), pixelAspect),
-                FrameRenderer.VISIBLE_HEIGHT * scale.factor()));
+                lines() * scale.factor()));
 
         revalidate();
     }
@@ -183,11 +232,11 @@ public class ScreenComponent extends JComponent {
      * one sold in Europe. {@link GameUIFrame} is where the machine running is known, so that is
      * where the question is turned into a number.
      * <p>
-     * The size the component <em>wants</em> does not change here, which is on purpose and is why
-     * this is not a call to {@link #setScale}: the window is packed around that size, and a picture
-     * that repacked the window every time a PAL cartridge was loaded would move a window somebody
-     * had put somewhere. The picture is fitted to whatever size the window has, which it already
-     * was; the caller that has a reason to resize as well says so by asking for the scale again.
+     * The other half of what {@link #setOverscan} does, turned on its side: that one asks for
+     * sixteen more rows and this one for thirty-seven more columns, and neither will fit a taller
+     * or a wider picture into the room the window already had. So it asks, and the window decides
+     * -- {@link GameUIFrame} packs when somebody ticked the menu item and leaves the window alone
+     * when a European cartridge merely moved the number.
      */
     public void setPixelAspect(final double aspect) {
         if (this.pixelAspect == aspect) {
@@ -196,7 +245,19 @@ public class ScreenComponent extends JComponent {
 
         this.pixelAspect = aspect;
 
+        askForRoom();
         repaint();
+    }
+
+    /**
+     * The first line of the frame to draw, and how many of them there are.
+     */
+    private int top() {
+        return overscan ? 0 : FrameRenderer.OVERSCAN_TOP;
+    }
+
+    private int lines() {
+        return overscan ? PPU.SCREEN_HEIGHT : FrameRenderer.VISIBLE_HEIGHT;
     }
 
     /**
@@ -264,13 +325,15 @@ public class ScreenComponent extends JComponent {
                 return null;
             }
 
+            var crop = !overscan;
+
             return switch (videoFilter) {
                 case NTSC -> FrameRenderer.render(
-                        frame, ntsc(), framePhase, pixelAspect, true, scale.factor());
+                        frame, ntsc(), framePhase, pixelAspect, crop, scale.factor());
                 case CRT -> FrameRenderer.render(
-                        frame, palette, filterStrength, warp, pixelAspect, true, scale.factor());
+                        frame, palette, filterStrength, warp, pixelAspect, crop, scale.factor());
                 case NONE -> FrameRenderer.render(
-                        frame, palette, pixelAspect, true, scale.factor());
+                        frame, palette, pixelAspect, crop, scale.factor());
             };
         }
     }
@@ -371,16 +434,14 @@ public class ScreenComponent extends JComponent {
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
             // Uniform scale, centred, so the aspect ratio survives a resize in either direction.
-            // The picture it is fitting is PPU.SCREEN_WIDTH * pixelAspect across rather than
-            // PPU.SCREEN_WIDTH, which is the whole of what the setting does here: a window wide
-            // enough for square pixels letterboxes a television's, and the black goes above and
-            // below instead of down the sides.
+            // The picture being fitted is PPU.SCREEN_WIDTH * pixelAspect across rather than
+            // PPU.SCREEN_WIDTH, which is the whole of what that setting does here: a window still
+            // wide enough only for square pixels letterboxes a television's, and the black goes
+            // above and below instead of down the sides.
             var drawn = PPU.SCREEN_WIDTH * pixelAspect;
-            var scale = Math.min(
-                    getWidth() / drawn,
-                    getHeight() / (double) FrameRenderer.VISIBLE_HEIGHT);
-            var width = (int) Math.round(drawn * scale);
-            var height = (int) (FrameRenderer.VISIBLE_HEIGHT * scale);
+            var fit = Math.min(getWidth() / drawn, getHeight() / (double) lines());
+            var width = (int) Math.round(drawn * fit);
+            var height = (int) (lines() * fit);
             var x = (getWidth() - width) / 2;
             var y = (getHeight() - height) / 2;
 
@@ -393,8 +454,8 @@ public class ScreenComponent extends JComponent {
                     g2.drawImage(
                             image,
                             x, y, x + width, y + height,
-                            0, FrameRenderer.OVERSCAN_TOP,
-                            PPU.SCREEN_WIDTH, FrameRenderer.VISIBLE_BOTTOM,
+                            0, top(),
+                            PPU.SCREEN_WIDTH, top() + lines(),
                             null);
                 }
             }
@@ -460,8 +521,8 @@ public class ScreenComponent extends JComponent {
 
         CRTScreen.draw(
                 source,
-                FrameRenderer.OVERSCAN_TOP,
-                FrameRenderer.VISIBLE_HEIGHT,
+                top(),
+                lines(),
                 tubePixels,
                 width,
                 height,

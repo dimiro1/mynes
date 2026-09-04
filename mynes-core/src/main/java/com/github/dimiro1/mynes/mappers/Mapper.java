@@ -65,7 +65,9 @@ public interface Mapper {
      * the enable line is there for -- so a save file taken that way would be blank precisely when
      * it mattered most. The battery is soldered to the chip, not to the enable line.
      *
-     * @return the eight kilobytes, or {@link #NO_PRG_RAM} on a board with no RAM fitted.
+     * @return the whole chip -- eight kilobytes on most boards, and every bank of a board that
+     *         switches between several, since the battery is soldered to all of them -- or
+     *         {@link #NO_PRG_RAM} on a board with no RAM fitted.
      */
     default byte[] prgRAM() {
         return NO_PRG_RAM;

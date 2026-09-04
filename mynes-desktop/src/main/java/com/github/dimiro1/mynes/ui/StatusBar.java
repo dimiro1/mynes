@@ -93,10 +93,12 @@ final class StatusBar extends JPanel {
      * @param strength         how hard that filter is applied, which the filter can make
      *                         irrelevant by being none at all.
      * @param warp             whether the tube's glass is curved, which only the tube has.
+     * @param overscan         whether the scanlines a television hid are being drawn, which every
+     *                         way of drawing the picture has.
      * @param tvAspect         whether the picture's pixels are the shape the television drew them
-     *                         rather than square. Unlike the two above it this is nobody's setting
-     *                         on a filter, so it never goes irrelevant -- and how wide 8:7 actually
-     *                         is depends on {@code region}, which is why the two are read together.
+     *                         rather than square. Nobody's setting on a filter either, so like
+     *                         {@code overscan} it never goes irrelevant -- and how wide 8:7 is
+     *                         depends on {@code region}, which is why the two are read together.
      * @param palette          the name of the table the picture is drawn through, which the
      *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -123,6 +125,7 @@ final class StatusBar extends JPanel {
             VideoFilter filter,
             FilterStrength strength,
             boolean warp,
+            boolean overscan,
             boolean tvAspect,
             String palette,
             ScreenScale screenScale,
@@ -341,7 +344,7 @@ final class StatusBar extends JPanel {
      * picture until something is wrong. Then the two that mean this is not the game as it shipped:
      * a frame with extra scanlines on it and a cartridge being answered with somebody else's bytes.
      * Then silence, which is not a change to the game at all but is the question a status bar is
-     * asked most often. Then the three that change what you see and nothing the game can observe.
+     * asked most often. Then the four that change what you see and nothing the game can observe.
      * <p>
      * Only what is not the ordinary case, apart from the console -- so the usual list is one long,
      * and the settings that always have a value, like the palette and the screen size, are left to
@@ -396,9 +399,15 @@ final class StatusBar extends JPanel {
                             + String.join(", ", qualifiers) + ")");
         }
 
-        // Its own part rather than a qualifier on the filter's, which is where the strength and the
-        // curve ride: those are settings on something already named and this applies whether or not
-        // a filter is named at all.
+        // Its own part rather than a qualifier on the filter's, because it is not one: it is the
+        // same sixteen scanlines whichever of the three is drawing, and there is nothing for it to
+        // qualify when none of them is.
+        if (machine.overscan()) {
+            parts.add("Overscan");
+        }
+
+        // And the same again for the shape of a pixel, for the same reason: it applies whether or
+        // not a filter is named at all, so it has to be able to appear on a line with none on it.
         if (machine.tvAspect()) {
             parts.add("TV aspect");
         }
@@ -451,9 +460,15 @@ final class StatusBar extends JPanel {
                 ? "No tube"
                 : machine.warp() ? "On" : "Off");
 
-        // The ratio rather than "On", because the number is the console's and nobody knows the PAL
-        // one by heart. Written the same way for both rather than as 8:7 for the one that happens
-        // to simplify, so that a reader comparing two machines is comparing two of the same thing.
+        // Unqualified, unlike the three rows above it: no filter and no console makes this one
+        // irrelevant, since the eight lines at either end are the chip's rather than a way of
+        // drawing what the chip sent.
+        row(rows, "Overscan", machine.overscan() ? "Shown" : "Hidden");
+
+        // Unqualified for the same reason, but not unconditional: the ratio rather than "On",
+        // because the number is the console's and nobody knows the PAL one by heart. Written the
+        // same way for both rather than as 8:7 for the one that happens to simplify, so that a
+        // reader comparing two machines is comparing two of the same thing.
         row(rows, "Pixel shape", machine.tvAspect()
                 ? String.format(Locale.ROOT, "Television, %.3f:1", machine.region().pixelAspect())
                 : "Square");

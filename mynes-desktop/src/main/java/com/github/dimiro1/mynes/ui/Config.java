@@ -52,6 +52,7 @@ public final class Config {
     private static final String FILTER_KEY = "video.filter";
     private static final String FILTER_STRENGTH_KEY = "video.filter.strength";
     private static final String FILTER_WARP_KEY = "video.filter.warp";
+    private static final String OVERSCAN_KEY = "video.overscan";
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
@@ -136,6 +137,15 @@ public final class Config {
             #
             # video.filter.warp bends the picture the way the curve of a tube's glass bent it,
             # which cuts the corners off. It belongs to crt and does nothing beside the other two.
+            """;
+
+    private static final String OVERSCAN_HEADER = """
+            # Whether the eight scanlines at the top of the picture and the eight at the bottom are
+            # drawn. A television hid them behind its bezel and games draw their scroll seams and
+            # their partial tiles up there counting on it, so this is false unless somebody wants
+            # to see that -- true shows all 240 lines, and the window is sixteen of them taller.
+            # Settings > Show Overscan is the same setting, and --full-frame is what the headless
+            # mode calls it.
             """;
 
     private static final String SCALE_HEADER = """
@@ -239,9 +249,10 @@ public final class Config {
     private VideoFilter videoFilter;
     private FilterStrength filterStrength;
     private boolean warp;
+    private boolean overscan;
+    private boolean tvAspect;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
-    private boolean tvAspect;
     private boolean statusBar;
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
@@ -266,9 +277,10 @@ public final class Config {
             final VideoFilter videoFilter,
             final FilterStrength filterStrength,
             final boolean warp,
+            final boolean overscan,
+            final boolean tvAspect,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
-            final boolean tvAspect,
             final boolean statusBar,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
@@ -286,9 +298,10 @@ public final class Config {
         this.videoFilter = videoFilter;
         this.filterStrength = filterStrength;
         this.warp = warp;
+        this.overscan = overscan;
+        this.tvAspect = tvAspect;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
-        this.tvAspect = tvAspect;
         this.statusBar = statusBar;
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
@@ -332,9 +345,10 @@ public final class Config {
                 videoFilterFrom(properties),
                 filterStrengthFrom(properties),
                 flagFrom(properties, FILTER_WARP_KEY),
+                flagFrom(properties, OVERSCAN_KEY),
+                flagFrom(properties, TV_ASPECT_KEY),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
-                flagFrom(properties, TV_ASPECT_KEY),
                 statusBarFrom(properties),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
@@ -669,6 +683,18 @@ public final class Config {
                 .append(warp)
                 .append("\n\n");
 
+        text.append(OVERSCAN_HEADER)
+                .append(OVERSCAN_KEY)
+                .append('=')
+                .append(overscan)
+                .append("\n\n");
+
+        text.append(TV_ASPECT_HEADER)
+                .append(TV_ASPECT_KEY)
+                .append('=')
+                .append(tvAspect)
+                .append("\n\n");
+
         text.append(SCALE_HEADER)
                 .append(SCALE_KEY)
                 .append('=')
@@ -679,12 +705,6 @@ public final class Config {
                 .append(SCREENSHOT_SCALE_KEY)
                 .append('=')
                 .append(screenshotScale.id())
-                .append("\n\n");
-
-        text.append(TV_ASPECT_HEADER)
-                .append(TV_ASPECT_KEY)
-                .append('=')
-                .append(tvAspect)
                 .append("\n\n");
 
         text.append(STATUS_BAR_HEADER)
@@ -842,6 +862,20 @@ public final class Config {
 
     public void setWarp(final boolean warp) {
         this.warp = warp;
+    }
+
+    /**
+     * Whether the scanlines a television hid behind its bezel are drawn. Off, because the picture
+     * everybody means when they say the picture is the 224 lines the games were composed for; the
+     * whole 240 is a question somebody asks on purpose, which is what the headless mode's
+     * {@code --full-frame} is for as well.
+     */
+    public boolean overscan() {
+        return overscan;
+    }
+
+    public void setOverscan(final boolean overscan) {
+        this.overscan = overscan;
     }
 
     /**

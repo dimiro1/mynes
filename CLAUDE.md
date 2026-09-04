@@ -260,8 +260,8 @@ rather than a setting that quietly does nothing.
 **It is not on the comparability checklist**, and the things that draw the picture -- the two
 filters and the shape of a pixel -- are the only things in this file that are not. Everything the
 report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` -- is taken over
-the colour *indices* the chip emits, so `video.finalFrame` is
-identical with the filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
+the colour *indices* the chip emits, so `video.finalFrame` is identical with the filter on and off
+and only the PNGs differ. Which is also why it rides freely with `--play`, where
 `--hack overclock` cannot: a replay does not depend on it. `video.filter` and `video.filterStrength`
 in the report say which were used -- the second explicitly null when the palette drew -- and
 `filter ntsc low` / `filter ntsc` / `filter none` / bare `filter` do it inside an interactive
@@ -358,12 +358,17 @@ stretch of a blocky picture looks like rather than something to interpolate away
 for a picture of a given size.
 
 `tv-aspect on|off` does it inside an interactive session, which is how to take the same frame twice
-and diff the two pictures, and `filter` reports it beside the strength and the warp. The window has
-**Settings > TV Aspect Ratio**, under both size submenus rather than inside Video Filter, because it
-governs the window and the screenshots alike and is not a setting on any of the three filters. It is
-the one video setting that changes how big the component asks to be, so ticking it repacks the
-window -- where a PAL cartridge arriving merely moves the number and leaves the window where
-somebody put it.
+and diff the two pictures, and `filter` reports it beside the strength and the warp.
+
+The window has **Settings > TV Aspect Ratio** directly under **Show Overscan** and above the two
+size submenus, because those two are the same kind of question turned on its side: one decides how
+much of the frame is a picture and the other what shape its pixels are, neither is a setting on a
+filter, and each takes one of the window's dimensions with it where a size takes both.
+`ScreenComponent.askForRoom` reads both -- how wide it asks to be is the magnification times
+however wide a pixel makes a line, the way how tall it asks to be is the magnification times
+however many lines there are. Ticking the item packs the window; a PAL cartridge arriving merely
+moves the number, and resizing a window somebody had put somewhere is not what loading a game
+should do, so `applyPixelAspect` does not pack and the menu item does.
 
 ### Taking a voice out of the mixer
 
@@ -767,6 +772,17 @@ Cartridge RAM is the one memory `peek` is *wrong* for. `MMU.peek` at $6000 falls
 mapper, and MMC1 and MMC3 read back zero when the game has switched the chip off -- which is exactly
 what a battery board does around anything risky. Use `Mapper.prgRAM()`, which is the chip rather than
 the bus.
+
+`Cart.load` reads both header formats, and `cart.format` in the report says which it was, because
+which one decides what bytes 8 to 15 *mean*: byte 9 is the PAL flag under iNES and the top of the
+ROM sizes under NES 2.0. Everything iNES keeps past byte 8 is only believed out of a header whose
+bytes 12 to 15 are zero, since 1990s dumps wrote the ripper's name across the tail. The RAM sizes
+are what the header **claims** -- `cart.prgRAMBytes`, `prgNVRAMBytes`, `chrRAMBytes`,
+`chrNVRAMBytes` -- and `cart.sram.bytes` is what the mapper fitted; they differ where a header says
+nothing and the board gets the 8KB every board here has. Only MMC1 consumes the size, being the only
+supported chip that banks the window: it reads SNROM, SOROM, SUROM and SXROM out of how much ROM and
+RAM there is, not out of a submapper, because NES 2.0 retired the submappers that named them. The
+`.sav` file is the whole chip, so a 32KB board writes a 32KB file, as FCEUX does.
 
 Adding a field to any of the chips means adding it to that class's `serialize`, or adding it to
 `NOT_IN_THE_STATE` in `SaveStateCompletenessTests` with a reason. That test walks the console

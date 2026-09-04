@@ -224,9 +224,18 @@ public final class Report {
             node.put("bytes", patch.bytes());
         }
 
+        // Which header was read decides what the rest of it meant, so it goes first. The RAM
+        // sizes are the header's claim; sram.bytes below is what the mapper fitted, and the two
+        // differ where a header says nothing and the board gets the 8KB every board here has.
+        cartridge.put("format", cart.format().id());
         cartridge.put("mapper", cart.mapperNumber());
+        cartridge.put("submapper", cart.submapper());
         cartridge.put("prgROMBytes", cart.prgROM().length);
         cartridge.put("chrROMBytes", cart.chrROM().length);
+        cartridge.put("prgRAMBytes", cart.ram().prgRAM());
+        cartridge.put("prgNVRAMBytes", cart.ram().prgNVRAM());
+        cartridge.put("chrRAMBytes", cart.ram().chrRAM());
+        cartridge.put("chrNVRAMBytes", cart.ram().chrNVRAM());
         cartridge.put("headerMirror", cart.mirror());
         // Live rather than out of the header: MMC1 changes it while the game runs, so what the
         // cartridge is doing now is more use than what it started as.

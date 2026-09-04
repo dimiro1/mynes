@@ -47,10 +47,18 @@ class ScreenComponentTests {
      * since a scanline lives between two rows of the picture on screen.
      */
     private static BufferedImage paint(final ScreenComponent screen, final int scale) {
-        var target = new BufferedImage(
-                PPU.SCREEN_WIDTH * scale, VISIBLE_HEIGHT * scale, BufferedImage.TYPE_INT_RGB);
+        return paint(screen, PPU.SCREEN_WIDTH * scale, VISIBLE_HEIGHT * scale);
+    }
 
-        screen.setSize(PPU.SCREEN_WIDTH * scale, VISIBLE_HEIGHT * scale);
+    /**
+     * And at whatever size, which is what the overscan wants: a component showing all 240 lines
+     * into a window 224 tall would fit them rather than draw them, and fitting is not the question.
+     */
+    private static BufferedImage paint(
+            final ScreenComponent screen, final int width, final int height) {
+        var target = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+
+        screen.setSize(width, height);
 
         var g = target.createGraphics();
         try {
@@ -295,6 +303,90 @@ class ScreenComponentTests {
         assertNotEquals(0xFF000000, tube.getRGB(tube.getWidth() / 2, tube.getHeight() / 2));
     }
 
+    /**
+     * The same question the headless mode's {@code --full-frame} asks, asked of the window. The
+     * framebuffer holds all 240 lines either way; this is only how many of them anybody sees, so
+     * the picture that is already here shows them without another frame arriving -- which is what
+     * makes it usable with the emulator paused, like the palette and the filters.
+     */
+    @Test
+    void showingTheOverscanPaintsTheLinesATelevisionHid() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        // The eight scanlines the crop hides, in a colour nothing else in the frame is.
+        Arrays.fill(frame, 0, OVERSCAN_TOP * PPU.SCREEN_WIDTH, 0x11);
+        screen.present(frame, 0);
+
+        var picture = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
+        var hidden = Palettes.defaultPalette().colour(0x11) & 0xFFFFFF;
+
+        assertEquals(picture, paint(screen).getRGB(0, 0) & 0xFFFFFF, "the crop starts eight down");
+
+        screen.setOverscan(true);
+
+        assertEquals(
+                hidden,
+                paint(screen, PPU.SCREEN_WIDTH, PPU.SCREEN_HEIGHT).getRGB(0, 0) & 0xFFFFFF,
+                "and now the frame starts where the chip started it");
+
+        screen.setOverscan(false);
+
+        assertEquals(picture, paint(screen).getRGB(0, 0) & 0xFFFFFF, "and back again");
+    }
+
+    /**
+     * The window is given the sixteen rows rather than the picture being squeezed into the height
+     * it already had -- the lines somebody asked to see arriving by shrinking everything else is
+     * not what was asked for.
+     */
+    @Test
+    void showingTheOverscanAsksTheWindowForSixteenMoreRows() {
+        var screen = new ScreenComponent();
+        screen.setScale(ScreenScale.THREE_TIMES);
+
+        assertEquals(
+                new Dimension(PPU.SCREEN_WIDTH * 3, VISIBLE_HEIGHT * 3),
+                screen.getPreferredSize());
+
+        screen.setOverscan(true);
+
+        assertEquals(
+                new Dimension(PPU.SCREEN_WIDTH * 3, PPU.SCREEN_HEIGHT * 3),
+                screen.getPreferredSize());
+
+        // And the magnification is remembered across it, which is the whole reason the component
+        // keeps the scale rather than only the size it worked out from one.
+        screen.setScale(ScreenScale.TWO_TIMES);
+
+        assertEquals(
+                new Dimension(PPU.SCREEN_WIDTH * 2, PPU.SCREEN_HEIGHT * 2),
+                screen.getPreferredSize());
+    }
+
+    /**
+     * A screenshot is the picture, so it is the whole frame when the whole frame is what is being
+     * shown -- the same rule that puts the filter in it.
+     */
+    @Test
+    void aSnapshotIsTheWholeFrameWhileTheOverscanIsShown() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        Arrays.fill(frame, 0, OVERSCAN_TOP * PPU.SCREEN_WIDTH, 0x11);
+        screen.present(frame, 0);
+        screen.setOverscan(true);
+
+        var image = snapshotOf(screen, ScreenScale.TWO_TIMES);
+
+        assertEquals(PPU.SCREEN_WIDTH * 2, image.getWidth());
+        assertEquals(PPU.SCREEN_HEIGHT * 2, image.getHeight());
+        assertEquals(
+                Palettes.defaultPalette().colour(0x11) & 0xFFFFFF,
+                image.getRGB(0, 0) & 0xFFFFFF,
+                "starting at the line the chip started at");
+    }
+
     @Test
     void theScaleSetsHowBigTheComponentAsksToBe() {
         var screen = new ScreenComponent();
@@ -313,8 +405,8 @@ class ScreenComponentTests {
     }
 
     /**
-     * The one video setting that changes how big the component wants to be, since the picture it is
-     * asking room for is a different shape.
+     * The other half of what the overscan does to the component's preferred size: that one asks for
+     * more rows and this one for more columns.
      */
     @Test
     void theTelevisionsPixelsMakeTheComponentAskForAWiderWindow() {
@@ -376,6 +468,31 @@ class ScreenComponentTests {
                 colour,
                 painted.getRGB(PPU.SCREEN_WIDTH - 1, VISIBLE_HEIGHT / 2) & 0xFFFFFF,
                 "all the way across, since the width is what it ran out of");
+    }
+
+    /**
+     * And the two are independent, which is the whole reason {@link ScreenComponent} works the sum
+     * again rather than either setting owning one dimension: 240 lines of the television's pixels
+     * is wider <em>and</em> taller than 224 of the framebuffer's.
+     */
+    @Test
+    void theOverscanAndTheTelevisionsPixelsBothMoveTheSizeAskedFor() {
+        var screen = new ScreenComponent();
+
+        screen.setPixelAspect(Region.NTSC.pixelAspect());
+        screen.setOverscan(true);
+        screen.setScale(ScreenScale.TWO_TIMES);
+
+        assertEquals(
+                new Dimension(585, PPU.SCREEN_HEIGHT * 2),
+                screen.getPreferredSize());
+
+        screen.setOverscan(false);
+
+        assertEquals(
+                new Dimension(585, VISIBLE_HEIGHT * 2),
+                screen.getPreferredSize(),
+                "dropping the overscan leaves the width where the pixel shape put it");
     }
 
     @Test

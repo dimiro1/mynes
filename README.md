@@ -18,7 +18,8 @@ cd mynes-0.3.0
 The same zip works on macOS, Windows and Linux. You need Java 25 —
 [Adoptium](https://adoptium.net) has builds for everything.
 
-Then **File > Open...** and pick a `.nes` file. No ROMs are included, so bring your own.
+Then **File > Open...** and pick a `.nes` file, or drag one onto the window. No ROMs are
+included, so bring your own.
 
 ## Controls
 
@@ -63,8 +64,11 @@ file is where they live.
 - NTSC and PAL, as the genuinely different machines they are. Most ROM headers don't say which
   region they want, so **Machine > Region** lets you insist. A game running 17% fast with the
   music too high is a game that wants PAL.
-- Eleven mappers: NROM, MMC1, UxROM, CNROM, MMC3 (0–4), AxROM (7), MMC2 and MMC4 (9, 10),
-  Color Dreams (11), GxROM (66) and Camerica (71).
+- Twelve mappers: NROM, MMC1, UxROM, CNROM, MMC3 (0–4), AxROM (7), MMC2 and MMC4 (9, 10),
+  Color Dreams (11), GxROM (66), Camerica (71) and MMC1A (155). The MMC1 covers the big boards
+  too: 512KB SUROM, and the 16KB and 32KB save RAM of SOROM and SXROM.
+- iNES and NES 2.0 headers, including the ROM and RAM sizes, the submapper and the region the
+  latter carries.
 
 **Video**
 
@@ -75,9 +79,11 @@ file is where they live.
   machines only.
 - A CRT filter that draws the scanline gaps a 240-line picture left on a 480-line tube, with
   optional curved glass. Works on either region; needs at least 2x scale.
+- **Settings > Show Overscan** draws all 240 scanlines instead of the 224 a television showed —
+  the scroll seams and partial tiles games hide behind the bezel. `--full-frame` in headless mode.
 - **Settings > TV Aspect Ratio** draws the pixels the shape a television drew them — 8:7 on NTSC,
   about 1.386:1 on PAL — rather than the square ones the framebuffer holds. Applies to the window
-  and to screenshots, whichever filter is on.
+  and to screenshots, whichever filter is on. `--tv-aspect` in headless mode.
 - Whole-number scaling from 1x to 4x, with free window resizing on top.
 - Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
 - A status bar showing the real frame rate and any setting that isn't the default one.
