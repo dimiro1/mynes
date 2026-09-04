@@ -282,6 +282,29 @@ class ConfigTests {
     }
 
     @Nested
+    @DisplayName("loading the overscan")
+    class LoadingOverscan {
+        /**
+         * Hidden, which is the picture everybody means when they say the picture: the games were
+         * composed for the 224 lines a television showed and draw their scroll seams in the rest.
+         */
+        @Test
+        void aMissingEntryHidesTheLinesATelevisionHid() throws IOException {
+            assertFalse(Config.load(write("video.palette=nesdev\n")).overscan());
+        }
+
+        @Test
+        void trueShowsTheWholeFrame() throws IOException {
+            assertTrue(Config.load(write("video.overscan=true\n")).overscan());
+        }
+
+        @Test
+        void anythingThatIsNotTrueIsTheCrop() throws IOException {
+            assertFalse(Config.load(write("video.overscan=all\n")).overscan());
+        }
+    }
+
+    @Nested
     @DisplayName("loading the screen size")
     class LoadingScreenScale {
         @Test
@@ -819,6 +842,15 @@ class ConfigTests {
 
             assertSame(OTHER, loaded.palette(Region.NTSC));
             assertSame(Palettes.NESDEV, loaded.palette(Region.PAL));
+        }
+
+        @Test
+        void theOverscanSurvivesTheRoundTrip() throws IOException {
+            var config = Config.load(config());
+            config.setOverscan(true);
+            config.save(config());
+
+            assertTrue(Config.load(config()).overscan());
         }
 
         @Test

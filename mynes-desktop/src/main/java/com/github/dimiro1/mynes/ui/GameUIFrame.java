@@ -182,6 +182,7 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
+    private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
     private final JCheckBoxMenuItem settingsMenuFullScreen = new JCheckBoxMenuItem("Full Screen");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
@@ -403,7 +404,9 @@ public class GameUIFrame extends JFrame {
         screen.setPalette(config.palette(currentRegion()));
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
-        // at the default and then jumping.
+        // at the default and then jumping. Both of these, because how tall the picture is is the
+        // magnification times however many scanlines are being shown.
+        screen.setOverscan(config.overscan());
         screen.setScale(config.screenScale());
 
         init();
@@ -417,6 +420,12 @@ public class GameUIFrame extends JFrame {
         // account or not according to exactly this.
         statusBar.setVisible(config.statusBar());
         add(statusBar, BorderLayout.SOUTH);
+
+        // On the window rather than on the picture, because the whole of it is what somebody aims a
+        // cartridge at: a drop that worked over the middle and not over the status bar or the menu
+        // bar would look broken rather than particular. Neither of those has a drop target of its
+        // own, so AWT walks up to this one.
+        setTransferHandler(new RomDrop(rom -> open(rom, null)));
 
         var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
@@ -605,6 +614,14 @@ public class GameUIFrame extends JFrame {
 
         settingsMenu.add(videoFilterMenu());
 
+        // Beside the filters rather than in with them, and above the sizes: what it changes is how
+        // much of the frame is a picture, which is the same question they answer differently and
+        // not the same question as how big that picture is drawn. It takes the window's height
+        // with it, which is why it is not in the group below either.
+        settingsMenuOverscan.setMnemonic(KeyEvent.VK_O);
+        settingsMenuOverscan.setSelected(config.overscan());
+        settingsMenu.add(settingsMenuOverscan);
+
         settingsMenuScreenSize = screenSizeMenu();
         settingsMenu.add(settingsMenuScreenSize);
         settingsMenu.add(screenshotSizeMenu());
@@ -647,6 +664,12 @@ public class GameUIFrame extends JFrame {
         // Every key event in the application comes past here before anything else sees it, which
         // is how the game gets the arrow keys without taking them off the menu bar.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
+
+        settingsMenuOverscan.addActionListener(e -> {
+            config.setOverscan(settingsMenuOverscan.isSelected());
+            saveConfig();
+            applyOverscan();
+        });
 
         settingsMenuController.addActionListener(e ->
                 new ControllerSettingsDialog(this, config.keyBindings(), updated -> {
@@ -1382,6 +1405,43 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Shows the scanlines a television hid behind its bezel, or stops, and gives the window the
+     * sixteen rows rather than taking them out of the picture.
+     * <p>
+     * Packed the way a screen size is, and for the reason {@link ScreenComponent#setOverscan}
+     * gives: the picture really is taller, and a window that kept its height would answer a
+     * request to see two more strips of frame by making everything else smaller. Unlike
+     * {@link #applyScreenScale} a maximized window is left maximized -- there is no tick here
+     * against a size nobody is looking at, only a picture that lays itself out again inside
+     * whatever room the window manager gave it.
+     * <p>
+     * A full screen window is that case and one step further: packing one would hand it back a
+     * size while the display still held it, so the rows come out of the picture there instead.
+     * Unlike Screen Size this is not greyed out for it -- how much of the frame is a picture is a
+     * question worth asking at any size, and it is only the packing that a full screen window has
+     * no use for. What takes the sixteen rows there is the size the window will be given back, so
+     * that leaving full screen does not land on a height decided before they were asked for.
+     */
+    private void applyOverscan() {
+        // Asked of the content pane on either side of the change, the way applyStatusBar asks it
+        // and for the same reason: the difference is the rows, however tall the magnification
+        // makes them.
+        var before = getContentPane().getPreferredSize().height;
+
+        screen.setOverscan(config.overscan());
+
+        var after = getContentPane().getPreferredSize().height;
+
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(after - before);
+        } else {
+            pack();
+        }
+
+        updateStatusBar();
+    }
+
+    /**
      * Which filter the picture is actually being drawn with, which is not always the one the menu
      * has ticked: a PAL machine draws a signal this decoder is not for, so <em>that</em> choice
      * falls back to the palette while the tick stays where it was. Nothing else falls back, the
@@ -1422,8 +1482,11 @@ public class GameUIFrame extends JFrame {
         var after = getContentPane().getPreferredSize().height;
 
         // A full screen window is as big as the display and nothing else, so the row has to come
-        // out of the picture there the way it does for a maximized one.
-        if (getExtendedState() == Frame.NORMAL && !settingsMenuFullScreen.isSelected()) {
+        // out of the picture there the way it does for a maximized one -- and the size waiting for
+        // it takes the row instead.
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(after - before);
+        } else if (getExtendedState() == Frame.NORMAL) {
             setSize(getWidth(), getHeight() + after - before);
         }
 
@@ -1480,6 +1543,7 @@ public class GameUIFrame extends JFrame {
                 currentVideoFilter(),
                 config.filterStrength(),
                 config.warp(),
+                config.overscan(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),
@@ -1716,6 +1780,25 @@ public class GameUIFrame extends JFrame {
 
         settingsMenuFullScreen.setSelected(false);
         applyFullScreen(false);
+    }
+
+    /**
+     * Gives the size waiting for the end of full screen the change the live window would have
+     * taken.
+     * <p>
+     * The two ticks that move the window's height -- the status bar and the overscan -- cannot move
+     * a full screen window's, because the display decides that one. Without this the window would
+     * come back at the height it had before whichever of them was moved, and the row or the sixteen
+     * lines would come out of the picture rather than out of the window.
+     * <p>
+     * The height alone, and by the difference rather than to the packed size, which is the choice
+     * {@link #applyStatusBar} makes for the same reason: a window that has been dragged wider
+     * should still be that wide when it comes back.
+     */
+    private void growWindowedBounds(final int by) {
+        if (windowedBounds != null) {
+            windowedBounds.height += by;
+        }
     }
 
     /**

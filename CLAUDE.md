@@ -414,11 +414,15 @@ size it is given, centred and letterboxed, so this is a window somebody dragged 
 edges a corner cannot be dragged to. Three things about it are decisions rather than arithmetic.
 **Screen Size greys out**, because the four sizes pack the window around a whole multiple of the
 picture and a window the size of a display is at none of them -- the same step `applyScreenScale`
-already takes for a maximized one, taken earlier. **The menu bar stays**, because it is the way back
-for somebody who arrived with the mouse and because an accelerator belongs to the menu bar carrying
-it, so hiding the menu would take `F11` down with it. And **it is not remembered between runs**,
-unlike every other tick in that menu: those are answers to how the emulator should look, and this is
-where the window is, which is the same kind of thing as where it has been dragged to.
+already takes for a maximized one, taken earlier. **Show Overscan is not greyed out** beside it,
+which is the distinction worth keeping: how much of the frame is a picture is a question worth
+asking at any size, and it is only `applyOverscan`'s `pack()` that a full screen window has no use
+for, since packing one would hand it back a size while the display still held it. **The menu bar
+stays**, because it is the way back for somebody who arrived with the mouse and because an
+accelerator belongs to the menu bar carrying it, so hiding the menu would take `F11` down with it.
+And **it is not remembered between runs**, unlike every other tick in that menu: those are answers
+to how the emulator should look, and this is where the window is, which is the same kind of thing
+as where it has been dragged to.
 
 **Machine > Pause in Background** stops the game when the window goes behind another application.
 It is remembered, and it is the second of the two entries in `config.properties` whose *missing*
