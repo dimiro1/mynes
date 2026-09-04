@@ -19,6 +19,7 @@ class CRTScreenTests {
     private static final int WIDTH = PPU.SCREEN_WIDTH;
     private static final int LINES = FrameRenderer.VISIBLE_HEIGHT;
     private static final int TOP = FrameRenderer.OVERSCAN_TOP;
+    private static final Crop CROP = Crop.TELEVISION;
 
     private static final int WHITE = 0xFFFFFFFF;
     private static final int BLACK = 0xFF000000;
@@ -48,7 +49,7 @@ class CRTScreenTests {
         var height = LINES * scale;
         var out = new int[width * height];
 
-        CRTScreen.draw(white(), TOP, LINES, out, width, height, strength, warp);
+        CRTScreen.draw(white(), CROP, out, width, height, strength, warp);
 
         var light = new int[height];
 
@@ -179,7 +180,7 @@ class CRTScreenTests {
         var height = (int) Math.round(LINES * rowsPerLine);
         var out = new int[width * height];
 
-        CRTScreen.draw(white(), TOP, LINES, out, width, height, FilterStrength.MEDIUM, false);
+        CRTScreen.draw(white(), CROP, out, width, height, FilterStrength.MEDIUM, false);
 
         var total = 0L;
 
@@ -200,7 +201,7 @@ class CRTScreenTests {
         var height = LINES * 3;
         var out = new int[width * height];
 
-        CRTScreen.draw(white(), TOP, LINES, out, width, height, FilterStrength.MEDIUM, true);
+        CRTScreen.draw(white(), CROP, out, width, height, FilterStrength.MEDIUM, true);
 
         assertEquals(BLACK, out[0], "the top left corner is off the tube");
         assertEquals(BLACK, out[width - 1], "and the top right");
@@ -231,13 +232,13 @@ class CRTScreenTests {
         var height = LINES * scale;
         var out = new int[width * height];
 
-        CRTScreen.draw(frame, TOP, LINES, out, width, height, FilterStrength.MEDIUM, true);
+        CRTScreen.draw(frame, CROP, out, width, height, FilterStrength.MEDIUM, true);
 
         assertNotEquals(edgeAt(out, width, height / 2), edgeAt(out, width, height / 12),
                 "the same straight line should not land on the same column at both heights");
 
         var straight = new int[width * height];
-        CRTScreen.draw(frame, TOP, LINES, straight, width, height, FilterStrength.MEDIUM, false);
+        CRTScreen.draw(frame, CROP, straight, width, height, FilterStrength.MEDIUM, false);
 
         assertEquals(edgeAt(straight, width, height / 2), edgeAt(straight, width, height / 12),
                 "and it should land on the same column at both heights when it is not bent");
@@ -270,7 +271,7 @@ class CRTScreenTests {
         var height = LINES * 3;
         var out = new int[width * height];
 
-        CRTScreen.draw(frame, TOP, LINES, out, width, height, FilterStrength.MEDIUM, true);
+        CRTScreen.draw(frame, CROP, out, width, height, FilterStrength.MEDIUM, true);
 
         assertEquals(BLACK, out[0]);
         assertEquals(BLACK, out[1]);
@@ -293,16 +294,17 @@ class CRTScreenTests {
         var out = new int[16];
 
         assertThrows(IllegalArgumentException.class, () -> CRTScreen.draw(
-                white(), TOP, LINES, out, 0, 4, FilterStrength.MEDIUM, false));
+                white(), CROP, out, 0, 4, FilterStrength.MEDIUM, false));
 
         assertThrows(IllegalArgumentException.class, () -> CRTScreen.draw(
-                white(), TOP, 0, out, 4, 4, FilterStrength.MEDIUM, false));
-
-        assertThrows(IllegalArgumentException.class, () -> CRTScreen.draw(
-                white(), 8, PPU.SCREEN_HEIGHT, out, 4, 4, FilterStrength.MEDIUM, false));
-
-        assertThrows(IllegalArgumentException.class, () -> CRTScreen.draw(
-                white(), TOP, LINES, out, 5, 4, FilterStrength.MEDIUM, false),
+                white(), CROP, out, 5, 4, FilterStrength.MEDIUM, false),
                 "and a buffer too small for the picture, which is a window that has been resized");
+
+        // A rectangle that is not on a frame is refused where it is named rather than where it is
+        // used, which is the point of its being a type.
+        assertThrows(IllegalArgumentException.class, () -> new Crop(TOP, 0, 0, WIDTH));
+        assertThrows(IllegalArgumentException.class,
+                () -> new Crop(8, 0, PPU.SCREEN_HEIGHT, WIDTH));
+        assertThrows(IllegalArgumentException.class, () -> new Crop(TOP, 8, LINES, WIDTH));
     }
 }

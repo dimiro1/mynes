@@ -95,10 +95,13 @@ final class StatusBar extends JPanel {
      * @param warp             whether the tube's glass is curved, which only the tube has.
      * @param overscan         whether the scanlines a television hid are being drawn, which every
      *                         way of drawing the picture has.
+     * @param leftEdge         whether the columns the chip clips down the left edge are being
+     *                         drawn, which every way of drawing the picture also has.
      * @param tvAspect         whether the picture's pixels are the shape the television drew them
-     *                         rather than square. Nobody's setting on a filter either, so like
-     *                         {@code overscan} it never goes irrelevant -- and how wide 8:7 is
-     *                         depends on {@code region}, which is why the two are read together.
+     *                         rather than square. The third of the three that every way of drawing
+     *                         the picture has, and the only one that is not a crop -- and how wide
+     *                         8:7 is depends on {@code region}, which is why the two are read
+     *                         together.
      * @param palette          the name of the table the picture is drawn through, which the
      *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -126,6 +129,7 @@ final class StatusBar extends JPanel {
             FilterStrength strength,
             boolean warp,
             boolean overscan,
+            boolean leftEdge,
             boolean tvAspect,
             String palette,
             ScreenScale screenScale,
@@ -344,7 +348,7 @@ final class StatusBar extends JPanel {
      * picture until something is wrong. Then the two that mean this is not the game as it shipped:
      * a frame with extra scanlines on it and a cartridge being answered with somebody else's bytes.
      * Then silence, which is not a change to the game at all but is the question a status bar is
-     * asked most often. Then the four that change what you see and nothing the game can observe.
+     * asked most often. Then the five that change what you see and nothing the game can observe.
      * <p>
      * Only what is not the ordinary case, apart from the console -- so the usual list is one long,
      * and the settings that always have a value, like the palette and the screen size, are left to
@@ -406,8 +410,16 @@ final class StatusBar extends JPanel {
             parts.add("Overscan");
         }
 
-        // And the same again for the shape of a pixel, for the same reason: it applies whether or
-        // not a filter is named at all, so it has to be able to appear on a line with none on it.
+        // Named for what has gone rather than for what is there, unlike the line above it, because
+        // that is the way round somebody switched it: the columns are drawn until they are in the
+        // way.
+        if (!machine.leftEdge()) {
+            parts.add("No left edge");
+        }
+
+        // And the shape of a pixel, which is neither of those: it is not a crop, so it is named for
+        // what is there. Its own part for the reason the two above it are -- it applies whether or
+        // not a filter is named at all, so it has to read on a line with none on it.
         if (machine.tvAspect()) {
             parts.add("TV aspect");
         }
@@ -464,6 +476,7 @@ final class StatusBar extends JPanel {
         // irrelevant, since the eight lines at either end are the chip's rather than a way of
         // drawing what the chip sent.
         row(rows, "Overscan", machine.overscan() ? "Shown" : "Hidden");
+        row(rows, "Left edge", machine.leftEdge() ? "Shown" : "Hidden");
 
         // Unqualified for the same reason, but not unconditional: the ratio rather than "On",
         // because the number is the console's and nobody knows the PAL one by heart. Written the

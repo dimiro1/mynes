@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.CRTScreen;
+import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.NTSCFilter;
@@ -33,6 +34,8 @@ import java.awt.image.DataBufferInt;
  * The picture is cropped, by {@link FrameRenderer#OVERSCAN_TOP} and its neighbours, which is also
  * where the reason for it is written down -- unless {@link #setOverscan} has been told to show
  * those lines, which is the headless mode's {@code --full-frame} asked of the window.
+ * {@link #setLeftEdge} takes eight columns off the other axis, and
+ * {@link com.github.dimiro1.mynes.video.Crop} is where the two meet.
  */
 public class ScreenComponent extends JComponent {
 
@@ -93,6 +96,22 @@ public class ScreenComponent extends JComponent {
      * that decide how much of it to take.
      */
     private boolean overscan;
+
+    /**
+     * Whether the eight columns the chip clips down the left edge are drawn. True, because they
+     * are the picture on every game that does not clip them, and the games that do are the only
+     * ones with anything to hide -- {@link com.github.dimiro1.mynes.video.Crop} is where what they
+     * are hiding is written down. Kept on the same thread and reaching the same places
+     * {@link #overscan} does, and for the same reasons.
+     */
+    private boolean leftEdge = true;
+
+    /**
+     * Which rectangle of {@link #image} the two settings above add up to, worked out when either
+     * of them moves rather than on every call. A paint asks several times over and the answer
+     * cannot change between them, since all of this is the event dispatch thread's.
+     */
+    private Crop crop = Crop.TELEVISION;
 
     /**
      * How the frame is drawn: through {@link #palette}, by decoding the signal, or through the
@@ -211,13 +230,34 @@ public class ScreenComponent extends JComponent {
 
         this.overscan = overscan;
 
-        askForRoom();
-        repaint();
+        recrop();
+    }
+
+    /**
+     * Draws the eight columns the chip clips down the left edge, or stops.
+     * <p>
+     * The other half of the same question {@link #setOverscan} asks, kept apart from it because it
+     * has the opposite answer by default and a different reason for it: what a television hid at
+     * the top and the bottom is a mess the game did not mean to draw, and what is down the left
+     * edge is the backdrop colour the chip was <em>told</em> to put there. So the lines go unless
+     * somebody asks for them and the columns stay unless somebody asks to be rid of them.
+     * <p>
+     * The window is packed around the eight columns the way it is packed around the sixteen rows,
+     * and for the reason written above them.
+     */
+    public void setLeftEdge(final boolean leftEdge) {
+        if (this.leftEdge == leftEdge) {
+            return;
+        }
+
+        this.leftEdge = leftEdge;
+
+        recrop();
     }
 
     private void askForRoom() {
         setPreferredSize(new Dimension(
-                FrameRenderer.widthFor(scale.factor(), pixelAspect),
+                FrameRenderer.widthFor(crop, scale.factor(), pixelAspect),
                 lines() * scale.factor()));
 
         revalidate();
@@ -232,11 +272,11 @@ public class ScreenComponent extends JComponent {
      * one sold in Europe. {@link GameUIFrame} is where the machine running is known, so that is
      * where the question is turned into a number.
      * <p>
-     * The other half of what {@link #setOverscan} does, turned on its side: that one asks for
-     * sixteen more rows and this one for thirty-seven more columns, and neither will fit a taller
-     * or a wider picture into the room the window already had. So it asks, and the window decides
-     * -- {@link GameUIFrame} packs when somebody ticked the menu item and leaves the window alone
-     * when a European cartridge merely moved the number.
+     * The third of the three settings that move how much room the picture asks for, and the only
+     * one that is not a crop: the overscan and the left edge decide how many of the chip's rows and
+     * columns are picture, and this decides how wide one of those columns is drawn. They compose by
+     * multiplying, which is why {@link #askForRoom} asks {@link FrameRenderer#widthFor} for the
+     * answer rather than working it out twice.
      */
     public void setPixelAspect(final double aspect) {
         if (this.pixelAspect == aspect) {
@@ -250,14 +290,31 @@ public class ScreenComponent extends JComponent {
     }
 
     /**
-     * The first line of the frame to draw, and how many of them there are.
+     * Works out which rectangle of the frame is the picture, and asks for the room to draw it in.
      */
+    private void recrop() {
+        var whole = overscan ? Crop.FULL_FRAME : Crop.TELEVISION;
+
+        crop = leftEdge ? whole : whole.withoutLeftEdge();
+
+        askForRoom();
+        repaint();
+    }
+
     private int top() {
-        return overscan ? 0 : FrameRenderer.OVERSCAN_TOP;
+        return crop.top();
     }
 
     private int lines() {
-        return overscan ? PPU.SCREEN_HEIGHT : FrameRenderer.VISIBLE_HEIGHT;
+        return crop.height();
+    }
+
+    private int left() {
+        return crop.left();
+    }
+
+    private int columns() {
+        return crop.width();
     }
 
     /**
@@ -324,8 +381,6 @@ public class ScreenComponent extends JComponent {
             if (!hasFrame) {
                 return null;
             }
-
-            var crop = !overscan;
 
             return switch (videoFilter) {
                 case NTSC -> FrameRenderer.render(
@@ -434,11 +489,11 @@ public class ScreenComponent extends JComponent {
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
             // Uniform scale, centred, so the aspect ratio survives a resize in either direction.
-            // The picture being fitted is PPU.SCREEN_WIDTH * pixelAspect across rather than
-            // PPU.SCREEN_WIDTH, which is the whole of what that setting does here: a window still
-            // wide enough only for square pixels letterboxes a television's, and the black goes
-            // above and below instead of down the sides.
-            var drawn = PPU.SCREEN_WIDTH * pixelAspect;
+            // The picture being fitted is columns() * pixelAspect across rather than columns(),
+            // which is the whole of what that setting does here: a window still wide enough only
+            // for square pixels letterboxes a television's, and the black goes above and below
+            // instead of down the sides.
+            var drawn = columns() * pixelAspect;
             var fit = Math.min(getWidth() / drawn, getHeight() / (double) lines());
             var width = (int) Math.round(drawn * fit);
             var height = (int) (lines() * fit);
@@ -454,8 +509,8 @@ public class ScreenComponent extends JComponent {
                     g2.drawImage(
                             image,
                             x, y, x + width, y + height,
-                            0, top(),
-                            PPU.SCREEN_WIDTH, top() + lines(),
+                            left(), top(),
+                            left() + columns(), top() + lines(),
                             null);
                 }
             }
@@ -521,8 +576,7 @@ public class ScreenComponent extends JComponent {
 
         CRTScreen.draw(
                 source,
-                top(),
-                lines(),
+                crop,
                 tubePixels,
                 width,
                 height,

@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Overclock;
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
@@ -77,7 +78,23 @@ class OptionsTests {
         assertNull(options.palette(), "nobody named one, so the region decides");
         assertNull(options.region(), "and nobody named that either, so the cartridge does");
         assertFalse(options.fullFrame());
+        assertFalse(options.hideLeftEdge());
         assertFalse(options.audio());
+    }
+
+    /**
+     * The two crops are independent questions, so they compose: 248 columns of all 240 lines.
+     */
+    @Test
+    void theTwoCropsCompose() {
+        assertEquals(
+                Crop.TELEVISION, parse("--rom", "x.nes").crop());
+        assertEquals(
+                Crop.TELEVISION.withoutLeftEdge(),
+                parse("--rom", "x.nes", "--hide-left-edge").crop());
+        assertEquals(
+                Crop.FULL_FRAME.withoutLeftEdge(),
+                parse("--rom", "x.nes", "--full-frame", "--hide-left-edge").crop());
     }
 
     @Test

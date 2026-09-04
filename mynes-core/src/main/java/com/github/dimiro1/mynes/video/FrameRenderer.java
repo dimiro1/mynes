@@ -40,6 +40,16 @@ public final class FrameRenderer {
     public static final int OVERSCAN_BOTTOM = 8;
 
     /**
+     * Columns hidden at the left of the picture, leaving 248 visible -- when anybody asks, which
+     * unlike the two above is not by default. {@link Crop} is where the reason is written down.
+     * <p>
+     * Eight because that is the width of the 2C02's own clipping window and there is no second
+     * number to choose: the stripe this hides is exactly the pixels $2001 stops the background
+     * being drawn in.
+     */
+    public static final int OVERSCAN_LEFT = 8;
+
+    /**
      * The first scanline below the picture, so that walking it is
      * {@code for (y = OVERSCAN_TOP; y < VISIBLE_BOTTOM; y++)} everywhere rather than three
      * separate spellings of the same subtraction.
@@ -47,6 +57,12 @@ public final class FrameRenderer {
     public static final int VISIBLE_BOTTOM = PPU.SCREEN_HEIGHT - OVERSCAN_BOTTOM;
 
     public static final int VISIBLE_HEIGHT = VISIBLE_BOTTOM - OVERSCAN_TOP;
+
+    /**
+     * How wide the picture is once {@link #OVERSCAN_LEFT} has been taken off it. Nothing comes off
+     * the right, so this is the whole of the horizontal crop.
+     */
+    public static final int VISIBLE_WIDTH = PPU.SCREEN_WIDTH - OVERSCAN_LEFT;
 
     /**
      * The largest magnification {@link #render} will do. Eight times is a 2048x1792 picture, which
@@ -67,10 +83,14 @@ public final class FrameRenderer {
     }
 
     /**
-     * How wide a picture magnified {@code scale} times comes out, once its pixels have been given
-     * the shape {@code aspect} says they are.
+     * How wide a crop magnified {@code scale} times comes out, once its pixels have been given the
+     * shape {@code aspect} says they are.
      * <p>
-     * The height is {@code scale} times the lines and needs no arithmetic, which is the asymmetry
+     * The crop rather than the frame, so that a picture with {@link #OVERSCAN_LEFT} taken off it is
+     * stretched as the 248 columns it is rather than as the 256 it came from -- the shape belongs
+     * to a pixel, not to a frame, and the two settings compose by multiplying.
+     * <p>
+     * The height is {@code scale} times the crop's and needs no arithmetic, which is the asymmetry
      * worth knowing about: a picture is made the television's shape by widening it rather than by
      * shortening it, so that nothing the chip drew is thrown away to make room for the shape.
      * <p>
@@ -79,11 +99,11 @@ public final class FrameRenderer {
      * what a non-integer stretch of a blocky picture is, and no interpolation is put in to hide it
      * -- see {@link #magnify}.
      */
-    public static int widthFor(final int scale, final double aspect) {
+    public static int widthFor(final Crop crop, final int scale, final double aspect) {
         checkScale(scale);
         checkAspect(aspect);
 
-        return (int) Math.round(PPU.SCREEN_WIDTH * (double) scale * aspect);
+        return (int) Math.round(crop.width() * (double) scale * aspect);
     }
 
     /**
@@ -96,7 +116,7 @@ public final class FrameRenderer {
      * @param aspect        how much wider than tall to draw one pixel: {@link #SQUARE_PIXELS} for
      *                      the shape the framebuffer holds them in, {@link Region#pixelAspect()}
      *                      for the shape the television drew them.
-     * @param cropOverscan  whether to hide the scanlines a television would.
+     * @param crop          which rectangle of the frame is the picture.
      * @param scale         how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
@@ -104,10 +124,10 @@ public final class FrameRenderer {
             final int[] frame,
             final int[] palette,
             final double aspect,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
-        return magnify(through(frame, palette), aspect, cropOverscan, scale);
+        return magnify(through(frame, palette), aspect, crop, scale);
     }
 
     /**
@@ -133,7 +153,7 @@ public final class FrameRenderer {
      *                     is already asked for a picture of a given size and works out where on the
      *                     raster each of its pixels lands, so a wider one is a wider raster rather
      *                     than a stretch of a picture that was drawn narrow.
-     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param crop         which rectangle of the frame is the picture.
      * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
@@ -143,19 +163,17 @@ public final class FrameRenderer {
             final FilterStrength strength,
             final boolean warp,
             final double aspect,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
-        var top = cropOverscan ? OVERSCAN_TOP : 0;
-        var lines = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
-        var width = widthFor(scale, aspect);
-        var height = lines * scale;
+        var width = widthFor(crop, scale, aspect);
+        var height = crop.height() * scale;
 
         var image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 
         CRTScreen.draw(
-                through(frame, palette), top, lines, pixels, width, height, strength, warp);
+                through(frame, palette), crop, pixels, width, height, strength, warp);
 
         return image;
     }
@@ -185,7 +203,7 @@ public final class FrameRenderer {
      *                     stretches of one picture and neither is the other: the decoder resolves
      *                     the 2C02's line into 256 samples because that is how many pixels the chip
      *                     put in it, and this says how wide the line those samples came off was.
-     * @param cropOverscan whether to hide the scanlines a television would.
+     * @param crop         which rectangle of the frame is the picture.
      * @param scale        how many times to magnify, 1 to {@link #MAX_SCALE}.
      * @return the picture, {@link BufferedImage#TYPE_INT_RGB}.
      */
@@ -194,10 +212,10 @@ public final class FrameRenderer {
             final NTSCFilter filter,
             final int framePhase,
             final double aspect,
-            final boolean cropOverscan,
+            final Crop crop,
             final int scale
     ) {
-        return magnify(filter.colourise(frame, framePhase), aspect, cropOverscan, scale);
+        return magnify(filter.colourise(frame, framePhase), aspect, crop, scale);
     }
 
     /**
@@ -215,16 +233,14 @@ public final class FrameRenderer {
      * class magnifies the way it does, and the uneven columns are what an honest stretch of a
      * blocky picture looks like.
      * <p>
-     * Only the columns need it. The height is a whole multiple of the lines however wide the
+     * Only the columns need it. The height is a whole multiple of the crop's however wide the
      * picture is, so the rows are still written once and copied.
      */
     private static BufferedImage magnify(
-            final int[] colours, final double aspect, final boolean cropOverscan, final int scale) {
-        var width = widthFor(scale, aspect);
-        var top = cropOverscan ? OVERSCAN_TOP : 0;
-        var height = cropOverscan ? VISIBLE_HEIGHT : PPU.SCREEN_HEIGHT;
-
-        var image = new BufferedImage(width, height * scale, BufferedImage.TYPE_INT_RGB);
+            final int[] colours, final double aspect, final Crop crop, final int scale) {
+        var width = widthFor(crop, scale, aspect);
+        var image = new BufferedImage(
+                width, crop.height() * scale, BufferedImage.TYPE_INT_RGB);
 
         // The image's own storage, written into directly. Reaching for the backing array costs the
         // image its hardware acceleration, which does not matter for a picture that is about to be
@@ -233,12 +249,11 @@ public final class FrameRenderer {
         var columns = new int[width];
 
         for (var x = 0; x < width; x++) {
-            columns[x] = Math.min(
-                    (int) ((x + 0.5) * PPU.SCREEN_WIDTH / width), PPU.SCREEN_WIDTH - 1);
+            columns[x] = Math.min((int) ((x + 0.5) * crop.width() / width), crop.width() - 1);
         }
 
-        for (var y = 0; y < height; y++) {
-            var sourceRow = (top + y) * PPU.SCREEN_WIDTH;
+        for (var y = 0; y < crop.height(); y++) {
+            var sourceRow = (crop.top() + y) * PPU.SCREEN_WIDTH + crop.left();
             var targetRow = y * scale * width;
 
             for (var x = 0; x < width; x++) {

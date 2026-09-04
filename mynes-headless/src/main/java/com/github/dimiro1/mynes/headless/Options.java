@@ -9,6 +9,7 @@ import com.github.dimiro1.mynes.cheat.InvalidGameGenieCodeException;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.CRTScreen;
+import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -50,6 +51,7 @@ import java.util.TreeSet;
  * @param screenshotEvery  photograph every this many frames, or 0 for none.
  * @param scale            how many times to magnify a screenshot.
  * @param fullFrame        whether to keep the scanlines a television hides.
+ * @param hideLeftEdge     whether to drop the eight columns the chip clips down the left edge.
  * @param region           which machine to run the cartridge on, or null to believe its header.
  * @param filter           how a frame becomes a picture: through the palette, by decoding the
  *                         composite signal, or through the palette and onto a tube. The decoder is
@@ -111,6 +113,7 @@ public record Options(
         long screenshotEvery,
         int scale,
         boolean fullFrame,
+        boolean hideLeftEdge,
         Region region,
         NESPalette palette,
         VideoFilter filter,
@@ -280,6 +283,10 @@ public record Options(
                                     The emulator's own window hides the same eight at each end, so
                                     leaving this off is what a player would see. The frame hash
                                     always covers the cropped picture, whichever this is.
+              --hide-left-edge      Drop the leftmost 8 columns. A game that scrolls sideways tells
+                                    the chip not to draw the background there, and the chip fills
+                                    the gap with the backdrop colour -- which is the stripe down the
+                                    left of Super Mario Bros. 3. Nothing comes off the right.
               --palette ID          Which measurement of the chip's colours to draw with. Default
                                     nesdev, or 2c07 on a PAL machine, whose PPU does not generate
                                     the same colours at all. --list-palettes has the rest.
@@ -313,9 +320,11 @@ public record Options(
               --tv-aspect           Draw the picture with the pixels a television had rather than
                                     the square ones the framebuffer holds: 8:7 on NTSC and about
                                     1.386:1 on PAL, so a 256 pixel line comes out 293 wide at
-                                    --scale 1 and 585 at --scale 2. Works with every --filter,
-                                    since the shape of a pixel is not one of the things a filter
-                                    does, and nothing measured moves -- only the PNGs are wider.
+                                    --scale 1 and 585 at --scale 2. Stretches whatever the crop
+                                    left, so with --hide-left-edge it is 248 columns and 283.
+                                    Works with every --filter, since the shape of a pixel is not
+                                    one of the things a filter does, and nothing measured moves --
+                                    only the PNGs are wider.
 
             Sound
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
@@ -478,6 +487,7 @@ public record Options(
         var screenshotEvery = 0L;
         var scale = 1;
         var fullFrame = false;
+        var hideLeftEdge = false;
         Region region = null;
         NESPalette palette = null;
         var filter = VideoFilter.NONE;
@@ -534,6 +544,7 @@ public record Options(
                         positive(value(args, ++i, flag), flag);
                 case "--scale" -> scale = parseScale(value(args, ++i, flag));
                 case "--full-frame" -> fullFrame = true;
+                case "--hide-left-edge" -> hideLeftEdge = true;
                 case "--region" -> region = parseRegion(value(args, ++i, flag));
                 case "--palette" -> palette = parsePalette(value(args, ++i, flag));
                 case "--filter" -> {
@@ -646,6 +657,7 @@ public record Options(
                 screenshotEvery,
                 scale,
                 fullFrame,
+                hideLeftEdge,
                 region,
                 palette,
                 filter,
@@ -690,6 +702,16 @@ public record Options(
      */
     public NESPalette paletteFor(final Region region) {
         return palette == null ? Palettes.defaultPalette(region) : palette;
+    }
+
+    /**
+     * Which rectangle of a frame the screenshots are, which the two flags above answer between
+     * them: how many scanlines, and whether the chip's own clipped columns are among them.
+     */
+    public Crop crop() {
+        var crop = fullFrame ? Crop.FULL_FRAME : Crop.TELEVISION;
+
+        return hideLeftEdge ? crop.withoutLeftEdge() : crop;
     }
 
     /**

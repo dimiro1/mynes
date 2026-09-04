@@ -621,7 +621,7 @@ public final class Headless {
 
     private static void shoot(final Options options, final Session session, final long frame)
             throws IOException {
-        session.screenshot(options.screenshotPath(frame), !options.fullFrame(), options.scale());
+        session.screenshot(options.screenshotPath(frame), options.crop(), options.scale());
     }
 
     private static List<Report.Dump> writeDumps(final Options options, final Session session)

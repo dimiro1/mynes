@@ -82,6 +82,9 @@ file is where they live.
   optional curved glass. Works on either region; needs at least 2x scale.
 - **Settings > Show Overscan** draws all 240 scanlines instead of the 224 a television showed —
   the scroll seams and partial tiles games hide behind the bezel. `--full-frame` in headless mode.
+- Turning **Settings > Show Left Edge** off drops the leftmost 8 columns — the stripe of backdrop
+  colour the chip leaves where a scrolling game tells it not to draw the background there, as in
+  Super Mario Bros. 3. `--hide-left-edge` in headless mode.
 - **Settings > TV Aspect Ratio** draws the pixels the shape a television drew them — 8:7 on NTSC,
   about 1.386:1 on PAL — rather than the square ones the framebuffer holds. Applies to the window
   and to screenshots, whichever filter is on. `--tv-aspect` in headless mode.

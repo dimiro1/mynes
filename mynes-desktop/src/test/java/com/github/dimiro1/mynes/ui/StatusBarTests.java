@@ -44,6 +44,7 @@ class StatusBarTests {
         private FilterStrength strength = FilterStrength.defaultStrength();
         private boolean warp;
         private boolean overscan;
+        private boolean leftEdge = true;
         private boolean tvAspect;
         private String palette = "NESdev";
         private final ScreenScale screenScale = ScreenScale.TWO_TIMES;
@@ -95,6 +96,11 @@ class StatusBarTests {
             return this;
         }
 
+        Setup withoutTheLeftEdge() {
+            this.leftEdge = false;
+            return this;
+        }
+
         Setup withTelevisionsPixels() {
             this.tvAspect = true;
             return this;
@@ -127,7 +133,8 @@ class StatusBarTests {
 
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
-                    unlimitedSprites, filter, strength, warp, overscan, tvAspect, palette,
+                    unlimitedSprites, filter, strength, warp, overscan, leftEdge, tvAspect,
+                    palette,
                     screenScale,
                     screenshotScale, fastForward, rewindSeconds, muted, volume, audioLatencyMs);
         }
@@ -264,6 +271,24 @@ class StatusBarTests {
         }
 
         /**
+         * Named for what has gone rather than for what is there, because that is the way round it
+         * was switched: the columns are drawn until somebody finds them in the way.
+         */
+        @Test
+        void aHiddenLeftEdgeSaysWhatIsMissing() {
+            assertEquals(
+                    List.of("NTSC", "No left edge"),
+                    StatusBar.parts(setup().withoutTheLeftEdge().machine()));
+
+            assertEquals(
+                    List.of("NTSC", "Overscan", "No left edge"),
+                    StatusBar.parts(setup()
+                            .showingOverscan()
+                            .withoutTheLeftEdge()
+                            .machine()));
+        }
+
+        /**
          * The order is the whole of the design, because the window decides where to stop reading
          * it: the console, then what makes this not the game as it shipped, then silence, then
          * what changes only what you see.
@@ -272,7 +297,8 @@ class StatusBarTests {
         void everythingAtOnceComesOutInTheOrderItWantsSaying() {
             assertEquals(
                     List.of("NTSC", "Overclock +100%", "2 Genie codes", "Muted",
-                            "Unlimited sprites", "NTSC filter", "Overscan", "Screenshot 3x"),
+                            "Unlimited sprites", "NTSC filter", "Overscan", "No left edge",
+                            "Screenshot 3x"),
                     StatusBar.parts(setup()
                             .overclocked(Overclock.percentOf(Region.NTSC, 100))
                             .cheating(2)
@@ -280,6 +306,7 @@ class StatusBarTests {
                             .withEverySpriteDrawn()
                             .through(VideoFilter.NTSC)
                             .showingOverscan()
+                            .withoutTheLeftEdge()
                             .shotAt(ScreenScale.THREE_TIMES)
                             .machine()));
         }
@@ -453,7 +480,7 @@ class StatusBarTests {
 
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
                     "Unlimited sprites", "Video filter", "Filter strength", "Palette",
-                    "Curved glass", "Overscan", "Pixel shape", "Screen size",
+                    "Curved glass", "Overscan", "Left edge", "Pixel shape", "Screen size",
                     "Screenshot size", "Fast forward speed", "Rewind history", "Sound", "Volume",
                     "Audio latency"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
@@ -579,6 +606,15 @@ class StatusBarTests {
 
             assertTrue(StatusBar.detail(setup().through(VideoFilter.NTSC).showingOverscan().machine())
                     .contains("Overscan&nbsp;&nbsp;&nbsp;</td><td>Shown"));
+        }
+
+        @Test
+        void theLeftEdgeIsShownOrHiddenBesideIt() {
+            assertTrue(StatusBar.detail(setup().machine())
+                    .contains("Left edge&nbsp;&nbsp;&nbsp;</td><td>Shown"));
+
+            assertTrue(StatusBar.detail(setup().withoutTheLeftEdge().machine())
+                    .contains("Left edge&nbsp;&nbsp;&nbsp;</td><td>Hidden"));
         }
 
         /**

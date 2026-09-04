@@ -227,6 +227,35 @@ the machine's own blanking interval or every sprite in the game vanishes once a 
 are `static` on purpose: `SaveStateCompletenessTests` vandalises every primitive array it can reach
 through the console, and an `int[]` field on `Region` would be one of them.
 
+### How much of the frame is a picture
+
+The chip draws 256 by 240 and nobody has ever looked at all of it. `--full-frame` writes all 240
+scanlines instead of the 224 a television showed; `--hide-left-edge` drops the leftmost 8 columns,
+leaving 248. Both are `Crop`, which is what every renderer takes and where the reasons are written
+down, and the two compose -- `--full-frame --hide-left-edge` is 248 by 240.
+
+**They are hidden and shown for opposite reasons, which is why one is on by default and the other
+is not.** What is at the top and the bottom is a mess the game did not mean to draw -- partial
+tiles, scroll seams, and the pixel or two of the following frame that the loop's three-dots-per-tick
+granularity lets into scanline 0 -- so it goes unless somebody asks for it. What is down the left
+edge is something the chip was *told* to do: $2001 has a bit that stops the background being drawn
+in the leftmost eight pixels, a game that scrolls sideways sets it because that is where the tile it
+is part way through would show, and the 2C02 fills the gap with the backdrop colour rather than with
+black. So a scrolling Super Mario Bros. 3 has an eight pixel stripe of sky down the side of
+everything, status bar included -- and on every game that does *not* set that bit those columns are
+the picture, so they stay unless somebody asks to be rid of them.
+
+Nothing comes off the right, and that is deliberate: the clipping window is at the left because that
+is the end a fine scroll shifts from, and eight columns off the other side to make the numbers
+symmetrical would be picture thrown away to no purpose.
+
+**Neither is on the comparability checklist**, for the reason the video filters are not:
+`FrameAnalysis` measures the frame the chip emitted -- the hash over the 224 lines and the full 256
+columns, whichever crop drew -- so two runs that disagree here are two measurements of one thing and
+only their PNGs differ. `video.overscan` and `video.leftEdge` in the report say which drew. The
+window has the same two under **Settings > Show Overscan** and **Settings > Show Left Edge**, and
+packs itself around them rather than fitting a differently shaped picture into the room it had.
+
 ### Drawing it the way a television did
 
 `--filter ntsc` colours the picture by rebuilding the composite waveform the chip drew and decoding
@@ -340,6 +369,11 @@ a 256 pixel line is 293 wide at `--scale 1`, 585 at 2, and 355 and 710 on a PAL 
 `Region.pixelAspect` is where both numbers live -- it is a fact about a console and belongs with
 `oamDecayDots` and the rest -- and `FrameRenderer.widthFor` is what turns one into a width.
 
+**It is not a crop, and it composes with the two that are.** `widthFor` is asked for a `Crop`
+rather than for a frame, so the shape stretches whatever the crop left: `--hide-left-edge` takes
+248 columns and 8:7 makes them 283, not 293 with eight taken off the end. The shape belongs to a
+pixel and the crop decides how many pixels there are, so the two multiply.
+
 **It is not a filter and is refused beside nothing.** A strength is how much of what a filter does
 to do, and a curve is part of what a tube does -- so `--filter none=low` and `--warp` without the
 tube are errors. The shape of a pixel is a fact about the screen the picture went to, and all three
@@ -360,20 +394,20 @@ for a picture of a given size.
 `tv-aspect on|off` does it inside an interactive session, which is how to take the same frame twice
 and diff the two pictures, and `filter` reports it beside the strength and the warp.
 
-The window has **Settings > TV Aspect Ratio** directly under **Show Overscan** and above the two
-size submenus, because those two are the same kind of question turned on its side: one decides how
-much of the frame is a picture and the other what shape its pixels are, neither is a setting on a
-filter, and each takes one of the window's dimensions with it where a size takes both.
-`ScreenComponent.askForRoom` reads both -- how wide it asks to be is the magnification times
-however wide a pixel makes a line, the way how tall it asks to be is the magnification times
-however many lines there are.
+The window has **Settings > TV Aspect Ratio** under **Show Overscan** and **Show Left Edge** and
+above the two size submenus. Those three are one group: the first two say which of the chip's rows
+and columns are picture and this one says how wide one of those columns is drawn, none of them is a
+setting on a filter -- all three filters draw whatever the three say -- and each moves how much room
+the picture asks for, where a screen size moves both dimensions at once.
+`ScreenComponent.askForRoom` is where they meet, and it asks `widthFor` rather than multiplying
+anything itself.
 
 **Two callers and only one of them resizes the window.** `applyTvAspect` is the menu item and is
-`applyOverscan` turned on its side down to the arithmetic: it measures the content pane either
-side of the change and packs, or hands a full screen window's share of the difference to the size
-waiting for it. `applyPixelAspect` is the number alone, and `startMachine` calls it -- a PAL
-cartridge arriving moves the shape of a pixel, but resizing a window somebody had put somewhere is
-not what loading a game should do.
+`applyCrop` down to the arithmetic: it measures the content pane either side of the change and
+packs, or hands a full screen window's share of the difference to `growWindowedBounds`.
+`applyPixelAspect` is the number alone, and `startMachine` calls it -- a PAL cartridge arriving
+moves the shape of a pixel, but resizing a window somebody had put somewhere is not what loading a
+game should do.
 
 ### Taking a voice out of the mixer
 
@@ -461,12 +495,13 @@ size it is given, centred and letterboxed, so this is a window somebody dragged 
 edges a corner cannot be dragged to. Three things about it are decisions rather than arithmetic.
 **Screen Size greys out**, because the four sizes pack the window around a whole multiple of the
 picture and a window the size of a display is at none of them -- the same step `applyScreenScale`
-already takes for a maximized one, taken earlier. **Show Overscan and TV Aspect Ratio are not
-greyed out** beside it, which is the distinction worth keeping: how much of the frame is a picture
-and what shape its pixels are are questions worth asking at any size, and it is only the `pack()`
-in `applyOverscan` and `applyTvAspect` that a full screen window has no use for, since packing one
-would hand it back a size while the display still held it. `growWindowedBounds` is what they reach
-for instead, one axis each. **The menu bar
+already takes for a maximized one, taken earlier. **Show Overscan, Show Left Edge and TV Aspect
+Ratio are not greyed out** beside it, which is the distinction worth keeping: how much of the frame
+is a picture and what shape its pixels are are questions worth asking at any size, and it is only
+the `pack()` in `applyCrop` and `applyTvAspect` that a full screen window has no use for, since
+packing one would hand it back a size while the display still held it. What takes the rows, the
+columns and the stretch there is `growWindowedBounds`, on the size the window will be given back.
+**The menu bar
 stays**, because it is the way back for somebody who arrived with the mouse and because an
 accelerator belongs to the menu bar carrying it, so hiding the menu would take `F11` down with it.
 And **it is not remembered between runs**, unlike every other tick in that menu: those are answers

@@ -33,6 +33,8 @@ class ScreenComponentTests {
      */
     private static final int VISIBLE_HEIGHT = FrameRenderer.VISIBLE_HEIGHT;
     private static final int OVERSCAN_TOP = FrameRenderer.OVERSCAN_TOP;
+    private static final int OVERSCAN_LEFT = FrameRenderer.OVERSCAN_LEFT;
+    private static final int VISIBLE_WIDTH = FrameRenderer.VISIBLE_WIDTH;
 
     /**
      * Paints the component at 1:1, which is the only way to see what it would put on screen without
@@ -385,6 +387,108 @@ class ScreenComponentTests {
                 Palettes.defaultPalette().colour(0x11) & 0xFFFFFF,
                 image.getRGB(0, 0) & 0xFFFFFF,
                 "starting at the line the chip started at");
+    }
+
+    /**
+     * The other half of the same question, asked the other way up. A game that scrolls sideways
+     * tells the chip not to draw the background in the leftmost eight pixels and the chip fills
+     * them with the backdrop colour, so what this hides is a stripe of sky rather than a mess --
+     * which is why it is drawn until somebody says otherwise.
+     */
+    @Test
+    void hidingTheLeftEdgeDropsTheColumnsTheChipCanClip() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        // The eight columns the chip clips, in a colour nothing else in the frame is.
+        for (var y = 0; y < PPU.SCREEN_HEIGHT; y++) {
+            Arrays.fill(frame, y * PPU.SCREEN_WIDTH, y * PPU.SCREEN_WIDTH + OVERSCAN_LEFT, 0x11);
+        }
+
+        screen.present(frame, 0);
+
+        var picture = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
+        var stripe = Palettes.defaultPalette().colour(0x11) & 0xFFFFFF;
+
+        assertEquals(stripe, paint(screen).getRGB(0, 0) & 0xFFFFFF, "the stripe is drawn");
+
+        screen.setLeftEdge(false);
+
+        assertEquals(
+                picture,
+                paint(screen, VISIBLE_WIDTH, VISIBLE_HEIGHT).getRGB(0, 0) & 0xFFFFFF,
+                "and now the picture starts where the chip stopped clipping");
+
+        screen.setLeftEdge(true);
+
+        assertEquals(stripe, paint(screen).getRGB(0, 0) & 0xFFFFFF, "and back again");
+    }
+
+    /**
+     * Eight columns off the left and none off the right, which is the whole of why the crop is not
+     * symmetrical: the chip's clipping window is at the left and there is nothing at the other end
+     * to hide.
+     */
+    @Test
+    void hidingTheLeftEdgeTakesNothingOffTheRight() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        for (var y = 0; y < PPU.SCREEN_HEIGHT; y++) {
+            frame[y * PPU.SCREEN_WIDTH + PPU.SCREEN_WIDTH - 1] = 0x11;
+        }
+
+        screen.present(frame, 0);
+        screen.setLeftEdge(false);
+
+        var picture = paint(screen, VISIBLE_WIDTH, VISIBLE_HEIGHT);
+
+        assertEquals(
+                Palettes.defaultPalette().colour(0x11) & 0xFFFFFF,
+                picture.getRGB(VISIBLE_WIDTH - 1, 0) & 0xFFFFFF);
+    }
+
+    /**
+     * And the window is given the eight columns rather than squeezing the picture into the width it
+     * already had, the way it is given the sixteen rows. The two compose: neither wins.
+     */
+    @Test
+    void hidingTheLeftEdgeAsksTheWindowForEightFewerColumns() {
+        var screen = new ScreenComponent();
+        screen.setScale(ScreenScale.THREE_TIMES);
+        screen.setLeftEdge(false);
+
+        assertEquals(
+                new Dimension(VISIBLE_WIDTH * 3, VISIBLE_HEIGHT * 3),
+                screen.getPreferredSize());
+
+        screen.setOverscan(true);
+
+        assertEquals(
+                new Dimension(VISIBLE_WIDTH * 3, PPU.SCREEN_HEIGHT * 3),
+                screen.getPreferredSize());
+    }
+
+    @Test
+    void aSnapshotDropsTheLeftEdgeWhileItIsHidden() {
+        var screen = new ScreenComponent();
+        var frame = frameOf(0x21);
+
+        for (var y = 0; y < PPU.SCREEN_HEIGHT; y++) {
+            Arrays.fill(frame, y * PPU.SCREEN_WIDTH, y * PPU.SCREEN_WIDTH + OVERSCAN_LEFT, 0x11);
+        }
+
+        screen.present(frame, 0);
+        screen.setLeftEdge(false);
+
+        var image = snapshotOf(screen, ScreenScale.TWO_TIMES);
+
+        assertEquals(VISIBLE_WIDTH * 2, image.getWidth());
+        assertEquals(VISIBLE_HEIGHT * 2, image.getHeight());
+        assertEquals(
+                Palettes.defaultPalette().colour(0x21) & 0xFFFFFF,
+                image.getRGB(0, 0) & 0xFFFFFF,
+                "starting at the column the chip stopped clipping at");
     }
 
     @Test
