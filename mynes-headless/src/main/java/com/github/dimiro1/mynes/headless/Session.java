@@ -101,6 +101,14 @@ public final class Session {
     private boolean warp;
 
     /**
+     * Whether a screenshot's pixels are drawn the shape the television drew them rather than the
+     * square shape the framebuffer holds them in. Mutable for the reason the filter is, and a
+     * boolean rather than the ratio itself because how wide 8:7 actually is depends on the console
+     * -- which this already knows, and which nobody setting this should have to look up.
+     */
+    private boolean tvAspect;
+
+    /**
      * The composite decoder, built the first time one is asked for and kept after that: it carries
      * a couple of scratch buffers, and a session that never asks should not pay for them.
      */
@@ -173,6 +181,9 @@ public final class Session {
      *                 through the palette and onto a tube.
      * @param strength how hard that filter is applied, and nothing at all when neither is.
      * @param warp     whether the tube's glass is curved, and nothing at all unless it is drawing.
+     * @param tvAspect whether to draw a screenshot's pixels the shape the television drew them.
+     *                 Applies whichever filter is on, unlike the two above it: the shape of a pixel
+     *                 is not a thing any of them does.
      * @param wav      where to write the sound, or null to only count it.
      */
     public Session(
@@ -181,12 +192,14 @@ public final class Session {
             final VideoFilter filter,
             final FilterStrength strength,
             final boolean warp,
+            final boolean tvAspect,
             final WavWriter wav) {
         this.nes = nes;
         this.palette = palette;
         this.filter = filter;
         this.strength = strength;
         this.warp = warp;
+        this.tvAspect = tvAspect;
         this.wav = wav;
         this.previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
 
@@ -235,6 +248,29 @@ public final class Session {
 
     public void setWarp(final boolean warp) {
         this.warp = warp;
+    }
+
+    /**
+     * Whether screenshots are drawn with the television's pixels rather than square ones.
+     */
+    public boolean tvAspect() {
+        return tvAspect;
+    }
+
+    public void setTvAspect(final boolean tvAspect) {
+        this.tvAspect = tvAspect;
+    }
+
+    /**
+     * How much wider than tall one pixel is drawn, which is the region's answer or 1.
+     * <p>
+     * Read off the machine rather than remembered beside the flag, so that it is the console
+     * actually running that decides -- the two consoles' pixels are different shapes, and a
+     * {@code --load-state} or a movie can put a different machine here than the one the number
+     * would have been worked out from.
+     */
+    private double aspect() {
+        return tvAspect ? nes.getRegion().pixelAspect() : FrameRenderer.SQUARE_PIXELS;
     }
 
     private NTSCFilter ntsc() {
@@ -463,12 +499,14 @@ public final class Session {
     public void screenshot(final Path path, final Crop crop, final int scale)
             throws IOException {
         var ppu = nes.getPPU();
+        var aspect = aspect();
         var image = switch (filter) {
             case NTSC -> FrameRenderer.render(
-                    ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), crop, scale);
+                    ppu.getFrameBuffer(), ntsc(), ppu.getFramePhase(), aspect, crop, scale);
             case CRT -> FrameRenderer.render(
-                    ppu.getFrameBuffer(), palette, strength, warp, crop, scale);
-            case NONE -> FrameRenderer.render(ppu.getFrameBuffer(), palette, crop, scale);
+                    ppu.getFrameBuffer(), palette, strength, warp, aspect, crop, scale);
+            case NONE -> FrameRenderer.render(
+                    ppu.getFrameBuffer(), palette, aspect, crop, scale);
         };
 
         var parent = path.getParent();

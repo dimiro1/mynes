@@ -231,6 +231,35 @@ class HeadlessRunTests {
     }
 
     /**
+     * The same claim again for the shape of a pixel, and one more: it is the region's number, so a
+     * PAL run and an NTSC run of the same cartridge come out different widths.
+     */
+    @Test
+    void theTelevisionsPixelsWidenThePictureAndNothingThatIsMeasured() throws Exception {
+        run("--screenshot", "60");
+
+        var square = report().get("video").get("finalFrame");
+
+        assertFalse(report().at("/video/tvAspect").asBoolean());
+
+        run("--screenshot", "60", "--tv-aspect");
+
+        assertTrue(report().at("/video/tvAspect").asBoolean());
+        assertEquals(square, report().get("video").get("finalFrame"),
+                "the hash, the colour counts and the blank flag are over indices, not widths");
+
+        var image = ImageIO.read(out.resolve("frame-000060.png").toFile());
+
+        assertEquals(293, image.getWidth(), "256 stretched by 8:7");
+        assertEquals(224, image.getHeight(), "and as tall as it ever was");
+
+        run("--screenshot", "60", "--tv-aspect", "--region", "pal");
+
+        assertEquals(355, ImageIO.read(out.resolve("frame-000060.png").toFile()).getWidth(),
+                "the 2C07 put its pixels into a different line, so they are a different shape");
+    }
+
+    /**
      * The 2C07 draws a different signal, so there is nothing here that decodes it. Refused rather
      * than quietly falling back to the palette, for the reason a misspelled {@code --palette} is.
      */

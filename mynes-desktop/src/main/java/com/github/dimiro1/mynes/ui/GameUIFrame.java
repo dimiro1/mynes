@@ -25,6 +25,7 @@ import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
+import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 import org.jetbrains.annotations.Nullable;
@@ -194,6 +195,8 @@ public class GameUIFrame extends JFrame {
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
     private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
     private final JCheckBoxMenuItem settingsMenuLeftEdge = new JCheckBoxMenuItem("Show Left Edge");
+    private final JCheckBoxMenuItem settingsMenuTvAspect =
+            new JCheckBoxMenuItem("TV Aspect Ratio");
     private final JCheckBoxMenuItem settingsMenuFullScreen = new JCheckBoxMenuItem("Full Screen");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
@@ -429,8 +432,10 @@ public class GameUIFrame extends JFrame {
         screen.setPalette(config.palette(currentRegion()));
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
-        // at the default and then jumping. Both of these, because how tall the picture is is the
-        // magnification times however many scanlines are being shown.
+        // at the default and then jumping. All three of these, because how big the picture is is
+        // the magnification times however many scanlines are being shown by however wide the shape
+        // of a pixel makes a line.
+        applyPixelAspect();
         screen.setOverscan(config.overscan());
         screen.setLeftEdge(config.leftEdge());
         screen.setScale(config.screenScale());
@@ -658,6 +663,20 @@ public class GameUIFrame extends JFrame {
         settingsMenuLeftEdge.setMnemonic(KeyEvent.VK_L);
         settingsMenuLeftEdge.setSelected(config.leftEdge());
         settingsMenu.add(settingsMenuLeftEdge);
+
+        // Under both of them, because it is the third thing that decides the shape of the picture
+        // and the only one of the three that is not a crop: those two say which of the chip's rows
+        // and columns are picture, and this says how wide one of those columns is drawn. None of
+        // them is a setting on a filter -- all three filters draw whatever these three say -- which
+        // is why the group sits between Video Filter and the sizes rather than inside either.
+        settingsMenuTvAspect.setMnemonic(KeyEvent.VK_T);
+        settingsMenuTvAspect.setSelected(config.tvAspect());
+        settingsMenuTvAspect.addActionListener(e -> {
+            config.setTvAspect(settingsMenuTvAspect.isSelected());
+            saveConfig();
+            applyTvAspect();
+        });
+        settingsMenu.add(settingsMenuTvAspect);
 
         settingsMenuScreenSize = screenSizeMenu();
         settingsMenu.add(settingsMenuScreenSize);
@@ -1488,6 +1507,54 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Tells the screen how wide to draw a pixel: the television's shape, or the square one the
+     * framebuffer holds.
+     * <p>
+     * The number is the region's -- 8:7 on the 2C02 and about 1.386:1 on the 2C07 -- so it is
+     * worked out here, where which machine is running is known, rather than in the component, which
+     * has never been told. Which also means this has to run again whenever the machine changes, and
+     * it does: {@link #startMachine} calls it beside the palette and the filter, for the same
+     * reason both of those are called there.
+     * <p>
+     * <strong>It does not resize the window, which is where it parts company with
+     * {@link #applyTvAspect}.</strong> The picture really is wider and the component says so, but
+     * the two callers are asking different questions: the menu item is somebody asking for a
+     * differently shaped picture, where a European cartridge arriving has merely moved the number
+     * and is no reason to resize a window somebody had put somewhere.
+     */
+    private void applyPixelAspect() {
+        screen.setPixelAspect(config.tvAspect()
+                ? currentRegion().pixelAspect()
+                : FrameRenderer.SQUARE_PIXELS);
+    }
+
+    /**
+     * The same, for the tick rather than for the cartridge: the shape changes and the window is
+     * given the columns rather than having them taken out of the picture.
+     * <p>
+     * {@link #applyCrop} down to the arithmetic -- it measures the content pane on either side of
+     * the change and hands a full screen window's share to the size waiting for it, because a
+     * display decides how big a full screen window is and the four screen sizes are greyed out
+     * there for the same reason. What differs is only what moved: that one takes rows and columns
+     * off the frame, and this one stretches the columns that are left.
+     */
+    private void applyTvAspect() {
+        var before = getContentPane().getPreferredSize();
+
+        applyPixelAspect();
+
+        var after = getContentPane().getPreferredSize();
+
+        if (settingsMenuFullScreen.isSelected()) {
+            growWindowedBounds(after.width - before.width, after.height - before.height);
+        } else {
+            pack();
+        }
+
+        updateStatusBar();
+    }
+
+    /**
      * Which filter the picture is actually being drawn with, which is not always the one the menu
      * has ticked: a PAL machine draws a signal this decoder is not for, so <em>that</em> choice
      * falls back to the palette while the tick stays where it was. Nothing else falls back, the
@@ -1591,6 +1658,7 @@ public class GameUIFrame extends JFrame {
                 config.warp(),
                 config.overscan(),
                 config.leftEdge(),
+                config.tvAspect(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),
@@ -1833,11 +1901,11 @@ public class GameUIFrame extends JFrame {
      * Gives the size waiting for the end of full screen the change the live window would have
      * taken.
      * <p>
-     * The three ticks that move the window's size -- the status bar, the overscan and the left
-     * edge -- cannot move a full screen window's, because the display decides that one. Without
-     * this the window would come back at the size it had before whichever of them was moved, and
-     * the row, the sixteen lines or the eight columns would come out of the picture rather than
-     * out of the window.
+     * The four ticks that move the window's size -- the status bar, the overscan, the left edge
+     * and the TV aspect ratio -- cannot move a full screen window's, because the display decides
+     * that one. Without this the window would come back at the size it had before whichever of
+     * them was moved, and the row, the sixteen lines, the eight columns or the stretch would come
+     * out of the picture rather than out of the window.
      * <p>
      * By the difference rather than to the packed size, which is the choice {@link #applyStatusBar}
      * makes for the same reason: a window that has been dragged wider should still be that much
@@ -2698,9 +2766,16 @@ public class GameUIFrame extends JFrame {
         // palette is chosen, because this is the one moment the kind of machine can change.
         screen.setPalette(config.palette(nes.getRegion()));
 
+        // And how wide a pixel is, which is the third thing the kind of machine decides: the two
+        // consoles put a different number of pixels into the same line, so a television drew them
+        // different shapes. The window is left at whatever size it has -- a cartridge being
+        // European is not somebody asking for a differently shaped window.
+        applyPixelAspect();
+
         // And which decoder, for the same reason and one more: the NTSC filter has no meaning on a
         // 2C07, so this is where a European cartridge takes it away and an American one gives it
-        // back.
+        // back. After the shape rather than before, since its call to updateStatusBar is what tells
+        // the bar about both.
         applyVideoFilter();
 
         // A fresh PPU has both layers on and no hacks, and a fresh APU has all five voices in the

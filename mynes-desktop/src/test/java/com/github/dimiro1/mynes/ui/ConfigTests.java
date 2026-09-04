@@ -885,6 +885,17 @@ class ConfigTests {
         }
 
         @Test
+        void theTelevisionsPixelsSurviveTheRoundTrip() throws IOException {
+            assertFalse(Config.load(config()).tvAspect(), "square unless asked for");
+
+            var config = Config.load(config());
+            config.setTvAspect(true);
+            config.save(config());
+
+            assertTrue(Config.load(config()).tvAspect());
+        }
+
+        @Test
         void bothPalettesSurviveTheRoundTrip() throws IOException {
             // Separately, which is the whole point of there being two: choosing a palette for
             // European games must not quietly become the choice for all of them.

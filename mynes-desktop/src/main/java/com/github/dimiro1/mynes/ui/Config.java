@@ -57,6 +57,7 @@ public final class Config {
     private static final String PAL_PALETTE_KEY = "video.palette.pal";
     private static final String SCALE_KEY = "video.scale";
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
+    private static final String TV_ASPECT_KEY = "video.tv-aspect";
     private static final String STATUS_BAR_KEY = "ui.status-bar";
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
@@ -173,6 +174,14 @@ public final class Config {
             # The files land beside the ROM, named after it and stamped with the time.
             """;
 
+    private static final String TV_ASPECT_HEADER = """
+            # Whether the picture's pixels are drawn the shape a television drew them rather than
+            # square: 8:7 on NTSC and about 1.386:1 on PAL, because neither console's dot clock
+            # divides its line into square pixels. One setting for the window and for the
+            # screenshots, since it is one question about how the picture is shaped rather than
+            # about how big it is. Settings > TV Aspect Ratio is the same setting.
+            """;
+
     private static final String STATUS_BAR_HEADER = """
             # Whether the row along the bottom of the window is shown: the frame rate the machine
             # is really running at, which console it is, whatever hacks are on it, and what it is
@@ -265,6 +274,7 @@ public final class Config {
     private boolean warp;
     private boolean overscan;
     private boolean leftEdge;
+    private boolean tvAspect;
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private boolean statusBar;
@@ -294,6 +304,7 @@ public final class Config {
             final boolean warp,
             final boolean overscan,
             final boolean leftEdge,
+            final boolean tvAspect,
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final boolean statusBar,
@@ -316,6 +327,7 @@ public final class Config {
         this.warp = warp;
         this.overscan = overscan;
         this.leftEdge = leftEdge;
+        this.tvAspect = tvAspect;
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.statusBar = statusBar;
@@ -364,6 +376,7 @@ public final class Config {
                 flagFrom(properties, FILTER_WARP_KEY),
                 flagFrom(properties, OVERSCAN_KEY),
                 flagFrom(properties, LEFT_EDGE_KEY, true),
+                flagFrom(properties, TV_ASPECT_KEY),
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 flagFrom(properties, STATUS_BAR_KEY, true),
@@ -731,6 +744,12 @@ public final class Config {
                 .append(leftEdge)
                 .append("\n\n");
 
+        text.append(TV_ASPECT_HEADER)
+                .append(TV_ASPECT_KEY)
+                .append('=')
+                .append(tvAspect)
+                .append("\n\n");
+
         text.append(SCALE_HEADER)
                 .append(SCALE_KEY)
                 .append('=')
@@ -963,6 +982,21 @@ public final class Config {
      */
     public ScreenScale screenshotScale() {
         return screenshotScale;
+    }
+
+    /**
+     * Whether the picture's pixels are drawn the shape the television drew them rather than square.
+     * <p>
+     * A yes or a no rather than the ratio, because the ratio is the region's and the region is not
+     * this file's business: what somebody is expressing here is a preference about televisions,
+     * which holds across a European cartridge and an American one even though the number does not.
+     */
+    public boolean tvAspect() {
+        return tvAspect;
+    }
+
+    public void setTvAspect(final boolean tvAspect) {
+        this.tvAspect = tvAspect;
     }
 
     public void setScreenshotScale(final ScreenScale screenshotScale) {

@@ -133,6 +133,21 @@ public class ScreenComponent extends JComponent {
     private boolean warp;
 
     /**
+     * How much wider than tall one of the picture's pixels is drawn.
+     * <p>
+     * {@link FrameRenderer#SQUARE_PIXELS} until somebody asks for the television's, which is the
+     * region's number and so arrives from {@link GameUIFrame} rather than being worked out here:
+     * this component draws whatever machine is running and has never been told which one that is.
+     * <p>
+     * Not inside {@link #setVideoFilter} with the other three, because it is not a setting on a
+     * filter -- all three draw the pixels whatever shape this says. It is the other half of what
+     * {@link #overscan} is, and {@link #askForRoom} reads both: how wide the component asks to be
+     * is the magnification times however wide this makes a line, the way how tall it asks to be is
+     * the magnification times however many lines there are.
+     */
+    private double pixelAspect = FrameRenderer.SQUARE_PIXELS;
+
+    /**
      * The composite decoder, built the first time somebody asks for it. A window that is never
      * switched to it should not carry its tables.
      */
@@ -242,9 +257,36 @@ public class ScreenComponent extends JComponent {
 
     private void askForRoom() {
         setPreferredSize(new Dimension(
-                columns() * scale.factor(), lines() * scale.factor()));
+                FrameRenderer.widthFor(crop, scale.factor(), pixelAspect),
+                lines() * scale.factor()));
 
         revalidate();
+    }
+
+    /**
+     * Draws the picture's pixels {@code aspect} times as wide as they are tall from now on,
+     * including the frame already on screen.
+     * <p>
+     * A number rather than a yes or a no, because how wide a television's pixel was is the region's
+     * answer and not this component's: 8:7 on the console sold in America and about 1.386:1 on the
+     * one sold in Europe. {@link GameUIFrame} is where the machine running is known, so that is
+     * where the question is turned into a number.
+     * <p>
+     * The third of the three settings that move how much room the picture asks for, and the only
+     * one that is not a crop: the overscan and the left edge decide how many of the chip's rows and
+     * columns are picture, and this decides how wide one of those columns is drawn. They compose by
+     * multiplying, which is why {@link #askForRoom} asks {@link FrameRenderer#widthFor} for the
+     * answer rather than working it out twice.
+     */
+    public void setPixelAspect(final double aspect) {
+        if (this.pixelAspect == aspect) {
+            return;
+        }
+
+        this.pixelAspect = aspect;
+
+        askForRoom();
+        repaint();
     }
 
     /**
@@ -341,10 +383,12 @@ public class ScreenComponent extends JComponent {
             }
 
             return switch (videoFilter) {
-                case NTSC -> FrameRenderer.render(frame, ntsc(), framePhase, crop, scale.factor());
+                case NTSC -> FrameRenderer.render(
+                        frame, ntsc(), framePhase, pixelAspect, crop, scale.factor());
                 case CRT -> FrameRenderer.render(
-                        frame, palette, filterStrength, warp, crop, scale.factor());
-                case NONE -> FrameRenderer.render(frame, palette, crop, scale.factor());
+                        frame, palette, filterStrength, warp, pixelAspect, crop, scale.factor());
+                case NONE -> FrameRenderer.render(
+                        frame, palette, pixelAspect, crop, scale.factor());
             };
         }
     }
@@ -445,10 +489,13 @@ public class ScreenComponent extends JComponent {
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
             // Uniform scale, centred, so the aspect ratio survives a resize in either direction.
-            var fit = Math.min(
-                    getWidth() / (double) columns(),
-                    getHeight() / (double) lines());
-            var width = (int) (columns() * fit);
+            // The picture being fitted is columns() * pixelAspect across rather than columns(),
+            // which is the whole of what that setting does here: a window still wide enough only
+            // for square pixels letterboxes a television's, and the black goes above and below
+            // instead of down the sides.
+            var drawn = columns() * pixelAspect;
+            var fit = Math.min(getWidth() / drawn, getHeight() / (double) lines());
+            var width = (int) Math.round(drawn * fit);
             var height = (int) (lines() * fit);
             var x = (getWidth() - width) / 2;
             var y = (getHeight() - height) / 2;

@@ -14,6 +14,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.ToIntFunction;
 
 /**
@@ -96,6 +97,11 @@ final class StatusBar extends JPanel {
      *                         way of drawing the picture has.
      * @param leftEdge         whether the columns the chip clips down the left edge are being
      *                         drawn, which every way of drawing the picture also has.
+     * @param tvAspect         whether the picture's pixels are the shape the television drew them
+     *                         rather than square. The third of the three that every way of drawing
+     *                         the picture has, and the only one that is not a crop -- and how wide
+     *                         8:7 is depends on {@code region}, which is why the two are read
+     *                         together.
      * @param palette          the name of the table the picture is drawn through, which the
      *                         decoder can make irrelevant.
      * @param screenScale      how big the window's picture is.
@@ -124,6 +130,7 @@ final class StatusBar extends JPanel {
             boolean warp,
             boolean overscan,
             boolean leftEdge,
+            boolean tvAspect,
             String palette,
             ScreenScale screenScale,
             ScreenScale screenshotScale,
@@ -410,6 +417,13 @@ final class StatusBar extends JPanel {
             parts.add("No left edge");
         }
 
+        // And the shape of a pixel, which is neither of those: it is not a crop, so it is named for
+        // what is there. Its own part for the reason the two above it are -- it applies whether or
+        // not a filter is named at all, so it has to read on a line with none on it.
+        if (machine.tvAspect()) {
+            parts.add("TV aspect");
+        }
+
         // Last, because it changes nothing until a file is written -- which also makes it the one
         // somebody is most likely to have forgotten about.
         if (machine.screenshotScale() != ScreenScale.defaultScreenshotScale()) {
@@ -463,6 +477,14 @@ final class StatusBar extends JPanel {
         // drawing what the chip sent.
         row(rows, "Overscan", machine.overscan() ? "Shown" : "Hidden");
         row(rows, "Left edge", machine.leftEdge() ? "Shown" : "Hidden");
+
+        // Unqualified for the same reason, but not unconditional: the ratio rather than "On",
+        // because the number is the console's and nobody knows the PAL one by heart. Written the
+        // same way for both rather than as 8:7 for the one that happens to simplify, so that a
+        // reader comparing two machines is comparing two of the same thing.
+        row(rows, "Pixel shape", machine.tvAspect()
+                ? String.format(Locale.ROOT, "Television, %.3f:1", machine.region().pixelAspect())
+                : "Square");
 
         row(rows, "Screen size", machine.screenScale().label());
         row(rows, "Screenshot size", machine.screenshotScale().label());

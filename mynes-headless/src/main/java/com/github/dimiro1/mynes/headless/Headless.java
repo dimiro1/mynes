@@ -192,6 +192,7 @@ public final class Headless {
                     options.filter(),
                     options.strength(),
                     options.warp(),
+                    options.tvAspect(),
                     wav);
 
             // Before either of the two below it, because a hack is not machine state: a save state

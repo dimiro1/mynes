@@ -26,6 +26,23 @@ class RegionTests {
         assertEquals(106392, 341 * Region.PAL.scanlinesPerFrame());
     }
 
+    /**
+     * Both ratios are worked back out of the line each console draws rather than restated, for the
+     * reason the rest of this file works: 1.386 is a number nobody would spot a wrong digit in.
+     * <p>
+     * The 2C02 puts its 256 pixels and their border into 280 pixels' worth of a 4:3 line, so a
+     * pixel is 240/280 of 4/3 across -- which comes out at exactly 8:7. The 2C07's dot clock and
+     * PAL's square-pixel rate are the same sum with numbers that do not simplify.
+     */
+    @Test
+    void aTelevisionDrewThePixelsWiderThanTheyWereTall() {
+        assertEquals(8 / 7.0, Region.NTSC.pixelAspect());
+        assertEquals(240 / 280.0 * 4 / 3, Region.NTSC.pixelAspect(), 1e-12);
+
+        assertEquals(7_375_000 / 5_320_342.5, Region.PAL.pixelAspect());
+        assertEquals(1.3862, Region.PAL.pixelAspect(), 0.0001);
+    }
+
     @Test
     void thePreRenderLineIsTheLastOne() {
         assertEquals(261, Region.NTSC.preRenderLine());

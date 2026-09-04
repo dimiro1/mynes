@@ -61,6 +61,10 @@ import java.util.TreeSet;
  *                         {@code filter} is the bare palette.
  * @param warp             whether the tube's glass is curved. Always answered, and meaningless
  *                         unless {@code filter} is the tube.
+ * @param tvAspect         whether to draw the picture with the pixels the television had rather
+ *                         than the square ones the framebuffer holds. Applies whichever filter is
+ *                         drawing, unlike {@code strength} and {@code warp}: the shape of a pixel
+ *                         is not one of the things a filter does.
  * @param palette          which measurement of the chip's colours to draw with, or null to let the
  *                         region decide.
  * @param audio            whether to write the sound to a file as well as counting it.
@@ -115,6 +119,7 @@ public record Options(
         VideoFilter filter,
         FilterStrength strength,
         boolean warp,
+        boolean tvAspect,
         boolean audio,
         Set<APUChannel> mute,
         Set<String> hacks,
@@ -312,6 +317,14 @@ public record Options(
               --warp                Bend the picture the way the curve of a tube's glass bent it,
                                     which cuts the corners off. Needs --filter crt, since it is
                                     part of that filter rather than a fourth thing to choose.
+              --tv-aspect           Draw the picture with the pixels a television had rather than
+                                    the square ones the framebuffer holds: 8:7 on NTSC and about
+                                    1.386:1 on PAL, so a 256 pixel line comes out 293 wide at
+                                    --scale 1 and 585 at --scale 2. Stretches whatever the crop
+                                    left, so with --hide-left-edge it is 248 columns and 283.
+                                    Works with every --filter, since the shape of a pixel is not
+                                    one of the things a filter does, and nothing measured moves --
+                                    only the PNGs are wider.
 
             Sound
               --audio               Also write <out>/audio.wav: signed sixteen bit, one channel,
@@ -480,6 +493,7 @@ public record Options(
         var filter = VideoFilter.NONE;
         var strength = FilterStrength.defaultStrength();
         var warp = false;
+        var tvAspect = false;
         var audio = false;
         var mute = EnumSet.noneOf(APUChannel.class);
         var hacks = new LinkedHashSet<String>();
@@ -543,6 +557,7 @@ public record Options(
                             : parseFilterStrength(filter, spec.substring(equals + 1));
                 }
                 case "--warp" -> warp = true;
+                case "--tv-aspect" -> tvAspect = true;
                 case "--audio" -> audio = true;
                 case "--mute" -> parseMute(value(args, ++i, flag), mute);
                 case "--hack" -> overclock =
@@ -648,6 +663,7 @@ public record Options(
                 filter,
                 strength,
                 warp,
+                tvAspect,
                 audio,
                 Set.copyOf(mute),
                 Set.copyOf(hacks),

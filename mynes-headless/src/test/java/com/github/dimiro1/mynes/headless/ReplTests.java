@@ -59,6 +59,7 @@ class ReplTests {
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
                 false,
+                false,
                 null);
         var options = Options.parse(new String[]{
                 "--rom", ROM, "--interactive", "--scale", Integer.toString(scale)});
@@ -385,6 +386,42 @@ class ReplTests {
         // And the filter command reports it too, since that is the one line that says how the
         // picture is being drawn.
         assertFalse(magnified(2, "filter", "quit").getFirst().get("warp").asBoolean());
+    }
+
+    /**
+     * The shape of a pixel is switched the same way and refused beside nothing, which is what says
+     * it is not a setting on a filter: it is a fact about the screen the picture went to, and all
+     * three of them drew on one.
+     */
+    @Test
+    void thePixelsShapeIsSwitchedWhateverIsDrawing() throws Exception {
+        var replies = session(
+                "tv-aspect",
+                "tv-aspect on",
+                "filter ntsc",
+                "tv-aspect",
+                "tv-aspect off",
+                "filter",
+                "quit");
+
+        assertFalse(replies.getFirst().get("tvAspect").asBoolean(), "square unless asked for");
+
+        assertTrue(replies.get(1).get("ok").asBoolean(), "no filter needed to ask for it");
+        assertTrue(replies.get(1).get("tvAspect").asBoolean());
+        assertTrue(replies.get(3).get("tvAspect").asBoolean(), "and it survives a filter change");
+        assertFalse(replies.get(4).get("tvAspect").asBoolean());
+
+        // And the filter command reports it beside the other two, since that is the one line that
+        // says how the picture is being drawn.
+        assertFalse(replies.get(5).get("tvAspect").asBoolean());
+    }
+
+    @Test
+    void tvAspectTakesOnOrOffAndNothingElse() throws Exception {
+        var replies = session("tv-aspect diagonally", "quit");
+
+        assertFalse(replies.getFirst().get("ok").asBoolean());
+        assertTrue(replies.getFirst().get("error").asText().contains("diagonally"));
     }
 
     @Test
@@ -1201,6 +1238,7 @@ class ReplTests {
                 Palettes.defaultPalette().colours(),
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
+                false,
                 false,
                 null);
         var options = Options.parse(new String[]{"--rom", ROM, "--interactive"});

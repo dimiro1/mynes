@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.FrameRenderer;
@@ -505,6 +506,97 @@ class ScreenComponentTests {
         assertEquals(
                 new Dimension(PPU.SCREEN_WIDTH * 3, VISIBLE_HEIGHT * 3),
                 screen.getPreferredSize());
+    }
+
+    /**
+     * The other half of what the overscan does to the component's preferred size: that one asks for
+     * more rows and this one for more columns.
+     */
+    @Test
+    void theTelevisionsPixelsMakeTheComponentAskForAWiderWindow() {
+        var screen = new ScreenComponent();
+
+        screen.setPixelAspect(Region.NTSC.pixelAspect());
+        screen.setScale(ScreenScale.TWO_TIMES);
+
+        assertEquals(new Dimension(585, VISIBLE_HEIGHT * 2), screen.getPreferredSize());
+
+        screen.setPixelAspect(FrameRenderer.SQUARE_PIXELS);
+        screen.setScale(ScreenScale.TWO_TIMES);
+
+        assertEquals(
+                new Dimension(PPU.SCREEN_WIDTH * 2, VISIBLE_HEIGHT * 2),
+                screen.getPreferredSize());
+    }
+
+    /**
+     * And a snapshot is the shape on screen, for the reason it is the filter on screen: a picture
+     * of the window that was a different shape from the window would be a picture of nothing.
+     */
+    @Test
+    void aSnapshotTakesTheTelevisionsPixelsToo() {
+        var screen = new ScreenComponent();
+
+        screen.present(frameOf(0x21), 0);
+
+        assertEquals(
+                PPU.SCREEN_WIDTH * 2,
+                snapshotOf(screen, ScreenScale.TWO_TIMES).getWidth());
+
+        screen.setPixelAspect(Region.NTSC.pixelAspect());
+
+        var stretched = snapshotOf(screen, ScreenScale.TWO_TIMES);
+
+        assertEquals(585, stretched.getWidth());
+        assertEquals(VISIBLE_HEIGHT * 2, stretched.getHeight());
+    }
+
+    /**
+     * A window still the square picture's shape letterboxes a television's rather than distorting
+     * it, which is the same rule the component has always followed for a window dragged to any
+     * other shape: the black goes above and below instead of down the sides.
+     */
+    @Test
+    void aWindowShapedForSquarePixelsLetterboxesATelevisions() {
+        var screen = new ScreenComponent();
+
+        screen.setPixelAspect(Region.NTSC.pixelAspect());
+        screen.present(frameOf(0x21), 0);
+
+        var painted = paint(screen);
+        var colour = Palettes.defaultPalette().colour(0x21) & 0xFFFFFF;
+
+        assertEquals(0, painted.getRGB(0, 0) & 0xFFFFFF, "black along the top");
+        assertEquals(colour, painted.getRGB(0, VISIBLE_HEIGHT / 2) & 0xFFFFFF, "picture across");
+        assertEquals(
+                colour,
+                painted.getRGB(PPU.SCREEN_WIDTH - 1, VISIBLE_HEIGHT / 2) & 0xFFFFFF,
+                "all the way across, since the width is what it ran out of");
+    }
+
+    /**
+     * And the two are independent, which is the whole reason {@link ScreenComponent} works the sum
+     * again rather than either setting owning one dimension: 240 lines of the television's pixels
+     * is wider <em>and</em> taller than 224 of the framebuffer's.
+     */
+    @Test
+    void theOverscanAndTheTelevisionsPixelsBothMoveTheSizeAskedFor() {
+        var screen = new ScreenComponent();
+
+        screen.setPixelAspect(Region.NTSC.pixelAspect());
+        screen.setOverscan(true);
+        screen.setScale(ScreenScale.TWO_TIMES);
+
+        assertEquals(
+                new Dimension(585, PPU.SCREEN_HEIGHT * 2),
+                screen.getPreferredSize());
+
+        screen.setOverscan(false);
+
+        assertEquals(
+                new Dimension(585, VISIBLE_HEIGHT * 2),
+                screen.getPreferredSize(),
+                "dropping the overscan leaves the width where the pixel shape put it");
     }
 
     @Test

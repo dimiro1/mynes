@@ -286,10 +286,11 @@ cycles wide, so both null the subcarrier and both have a gain of one at DC, whic
 field comes out flat and every colour lands where it did at all three. `--filter none=low` is exit 2
 rather than a setting that quietly does nothing.
 
-**It is not on the comparability checklist**, and the video filters are the only things in this file
-that are not. Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`,
-`frameChanges` -- is taken over the colour *indices* the chip emits, so `video.finalFrame` is
-identical with the filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
+**It is not on the comparability checklist**, and the things that draw the picture -- the two
+filters and the shape of a pixel -- are the only things in this file that are not. Everything the
+report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` -- is taken over
+the colour *indices* the chip emits, so `video.finalFrame` is identical with the filter on and off
+and only the PNGs differ. Which is also why it rides freely with `--play`, where
 `--hack overclock` cannot: a replay does not depend on it. `video.filter` and `video.filterStrength`
 in the report say which were used -- the second explicitly null when the palette drew -- and
 `filter ntsc low` / `filter ntsc` / `filter none` / bare `filter` do it inside an interactive
@@ -356,6 +357,57 @@ brighter than its picture.
 There is no shadow mask, and that is deliberate rather than pending. A consumer tube's triad pitch is
 finer than an NES pixel is wide at any magnification anybody uses, so drawing one triad per pixel is
 not the tube's mask -- it is a different, coarser thing invented for the screenshot.
+
+### Drawing the pixels the shape a television drew them
+
+`--tv-aspect` widens the picture so that one pixel comes out as wide as a television made it rather
+than as wide as the framebuffer holds it. Neither console's dot clock divides its line into square
+pixels: the 2C02 puts its 256 pixels and their border into 280 pixels' worth of a 4:3 line, so a
+pixel is `240/280 * 4/3` across, which is **exactly 8:7**; the 2C07's line is 277 of them at a
+different clock, which is `7375000/5320342.5` and comes to about **1.386:1** without simplifying. So
+a 256 pixel line is 293 wide at `--scale 1`, 585 at 2, and 355 and 710 on a PAL machine.
+`Region.pixelAspect` is where both numbers live -- it is a fact about a console and belongs with
+`oamDecayDots` and the rest -- and `FrameRenderer.widthFor` is what turns one into a width.
+
+**It is not a crop, and it composes with the two that are.** `widthFor` is asked for a `Crop`
+rather than for a frame, so the shape stretches whatever the crop left: `--hide-left-edge` takes
+248 columns and 8:7 makes them 283, not 293 with eight taken off the end. The shape belongs to a
+pixel and the crop decides how many pixels there are, so the two multiply.
+
+**It is not a filter and is refused beside nothing.** A strength is how much of what a filter does
+to do, and a curve is part of what a tube does -- so `--filter none=low` and `--warp` without the
+tube are errors. The shape of a pixel is a fact about the screen the picture went to, and all three
+filters drew on one, so `--tv-aspect` combines with every one of them and with `--play`. It joins
+the filters in *not* being on the comparability checklist, for their reason: `video.finalFrame` is
+taken over the colour indices the chip emitted, so the hash, `uniqueColours`, `topColours`, `blank`
+and `frameChanges` are identical with it on and off and only the PNGs are wider. `video.tvAspect`
+says which was used, always present rather than null, since every picture's pixels have a shape.
+
+**The picture is widened rather than shortened**, so nothing the chip drew is thrown away to make
+room for the shape. The stretch is nearest neighbour like every other magnification here -- 256 at
+8:7 is 292.57, so some columns come out a pixel wider than others, and that is what an honest
+stretch of a blocky picture looks like rather than something to interpolate away.
+`FrameRenderer.magnify` does it with a table of source columns, which is the same shape
+`CRTScreen.flat` uses and is why the tube gets the aspect for nothing: it was already being asked
+for a picture of a given size.
+
+`tv-aspect on|off` does it inside an interactive session, which is how to take the same frame twice
+and diff the two pictures, and `filter` reports it beside the strength and the warp.
+
+The window has **Settings > TV Aspect Ratio** under **Show Overscan** and **Show Left Edge** and
+above the two size submenus. Those three are one group: the first two say which of the chip's rows
+and columns are picture and this one says how wide one of those columns is drawn, none of them is a
+setting on a filter -- all three filters draw whatever the three say -- and each moves how much room
+the picture asks for, where a screen size moves both dimensions at once.
+`ScreenComponent.askForRoom` is where they meet, and it asks `widthFor` rather than multiplying
+anything itself.
+
+**Two callers and only one of them resizes the window.** `applyTvAspect` is the menu item and is
+`applyCrop` down to the arithmetic: it measures the content pane either side of the change and
+packs, or hands a full screen window's share of the difference to `growWindowedBounds`.
+`applyPixelAspect` is the number alone, and `startMachine` calls it -- a PAL cartridge arriving
+moves the shape of a pixel, but resizing a window somebody had put somewhere is not what loading a
+game should do.
 
 ### Taking a voice out of the mixer
 
@@ -443,12 +495,13 @@ size it is given, centred and letterboxed, so this is a window somebody dragged 
 edges a corner cannot be dragged to. Three things about it are decisions rather than arithmetic.
 **Screen Size greys out**, because the four sizes pack the window around a whole multiple of the
 picture and a window the size of a display is at none of them -- the same step `applyScreenScale`
-already takes for a maximized one, taken earlier. **Show Overscan and Show Left Edge are not greyed
-out** beside it, which is the distinction worth keeping: how much of the frame is a picture is a
-question worth asking at any size, and it is only `applyCrop`'s `pack()` that a full screen window
-has no use for, since packing one would hand it back a size while the display still held it. What
-takes the rows and the columns there is `growWindowedBounds`, on the size the window will be given
-back. **The menu bar
+already takes for a maximized one, taken earlier. **Show Overscan, Show Left Edge and TV Aspect
+Ratio are not greyed out** beside it, which is the distinction worth keeping: how much of the frame
+is a picture and what shape its pixels are are questions worth asking at any size, and it is only
+the `pack()` in `applyCrop` and `applyTvAspect` that a full screen window has no use for, since
+packing one would hand it back a size while the display still held it. What takes the rows, the
+columns and the stretch there is `growWindowedBounds`, on the size the window will be given back.
+**The menu bar
 stays**, because it is the way back for somebody who arrived with the mouse and because an
 accelerator belongs to the menu bar carrying it, so hiding the menu would take `F11` down with it.
 And **it is not remembered between runs**, unlike every other tick in that menu: those are answers

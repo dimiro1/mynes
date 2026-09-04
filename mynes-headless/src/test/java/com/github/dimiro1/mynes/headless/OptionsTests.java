@@ -201,6 +201,20 @@ class OptionsTests {
     }
 
     /**
+     * The one video flag that is refused beside nothing, which is the difference between the shape
+     * of a pixel and the two settings above it: those are things a particular filter does, and this
+     * is a fact about the screen the picture went to whichever of the three drew it.
+     */
+    @Test
+    void theTelevisionsPixelsRideWithEveryFilter() {
+        assertFalse(parse("--rom", "x.nes").tvAspect());
+        assertTrue(parse("--rom", "x.nes", "--tv-aspect").tvAspect());
+        assertTrue(parse("--rom", "x.nes", "--filter", "ntsc", "--tv-aspect").tvAspect());
+        assertTrue(parse("--rom", "x.nes", "--filter", "crt", "--scale", "2", "--tv-aspect")
+                .tvAspect());
+    }
+
+    /**
      * Refused rather than fallen back from, for the reason an unknown palette is. Whether the
      * machine can actually use it is a different question and cannot be asked here: it depends on
      * the cartridge, so {@code Headless} asks it once one has been read.
