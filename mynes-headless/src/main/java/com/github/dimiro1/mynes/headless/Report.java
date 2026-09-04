@@ -292,6 +292,13 @@ public final class Report {
             video.putNull("warp");
         }
 
+        // Never null, unlike the two above it, because the shape of a pixel is not a setting on a
+        // filter: every one of the three draws them square or draws them the television's shape.
+        // Not on the comparability checklist either, for the reason the filters are not -- the hash
+        // and the colour counts are taken over the indices the chip emitted, so all this moves is
+        // how wide the PNGs are.
+        video.put("tvAspect", session.tvAspect());
+
         video.put("overscan", options.fullFrame() ? "full" : "cropped");
         video.put("scale", options.scale());
 

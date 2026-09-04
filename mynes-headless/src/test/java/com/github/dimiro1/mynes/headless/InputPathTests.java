@@ -119,6 +119,7 @@ class InputPathTests {
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
                 false,
+                false,
                 null);
     }
 

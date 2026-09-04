@@ -75,6 +75,9 @@ file is where they live.
   machines only.
 - A CRT filter that draws the scanline gaps a 240-line picture left on a 480-line tube, with
   optional curved glass. Works on either region; needs at least 2x scale.
+- **Settings > TV Aspect Ratio** draws the pixels the shape a television drew them — 8:7 on NTSC,
+  about 1.386:1 on PAL — rather than the square ones the framebuffer holds. Applies to the window
+  and to screenshots, whichever filter is on.
 - Whole-number scaling from 1x to 4x, with free window resizing on top.
 - Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
 - A status bar showing the real frame rate and any setting that isn't the default one.

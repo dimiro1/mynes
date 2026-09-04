@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.video;
 
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.palette.Palettes;
 import org.junit.jupiter.api.Test;
 
@@ -18,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FrameRendererTests {
     private static final int[] PALETTE = Palettes.defaultPalette().colours();
+
+    private static final double SQUARE = FrameRenderer.SQUARE_PIXELS;
 
     private static int[] frameOf(final int entry) {
         var frame = new int[PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT];
@@ -41,7 +44,7 @@ class FrameRendererTests {
 
     @Test
     void aFrameIsColouredThroughTheGivenPalette() {
-        var image = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1);
+        var image = FrameRenderer.render(frameOf(0x21), PALETTE, SQUARE, true, 1);
 
         assertEquals(PALETTE[0x21] & 0xFFFFFF, image.getRGB(0, 0) & 0xFFFFFF);
     }
@@ -54,12 +57,12 @@ class FrameRendererTests {
      */
     @Test
     void aFilteredFrameIsCroppedAndMagnifiedTheSameWay() {
-        var image = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, true, 3);
+        var image = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, SQUARE, true, 3);
 
         assertEquals(PPU.SCREEN_WIDTH * 3, image.getWidth());
         assertEquals(FrameRenderer.VISIBLE_HEIGHT * 3, image.getHeight());
 
-        var full = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, false, 1);
+        var full = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, SQUARE, false, 1);
 
         assertEquals(PPU.SCREEN_HEIGHT, full.getHeight());
     }
@@ -69,8 +72,10 @@ class FrameRendererTests {
      */
     @Test
     void aFilteredFrameIsNotColouredThroughThePalette() {
-        var palette = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1).getRGB(0, 0);
-        var filtered = FrameRenderer.render(frameOf(0x21), new NTSCFilter(), 0, true, 1).getRGB(0, 0);
+        var palette = FrameRenderer.render(frameOf(0x21), PALETTE, SQUARE, true, 1).getRGB(0, 0);
+        var filtered = FrameRenderer
+                .render(frameOf(0x21), new NTSCFilter(), 0, SQUARE, true, 1)
+                .getRGB(0, 0);
 
         org.junit.jupiter.api.Assertions.assertNotEquals(palette, filtered);
     }
@@ -82,14 +87,15 @@ class FrameRendererTests {
     @Test
     void aTubeColoursThroughThePaletteAndThenTakesTheLightOffTheGaps() {
         var image = FrameRenderer.render(
-                frameOf(0x20), PALETTE, FilterStrength.MEDIUM, false, true, 2);
+                frameOf(0x20), PALETTE, FilterStrength.MEDIUM, false, SQUARE, true, 2);
 
         assertEquals(PPU.SCREEN_WIDTH * 2, image.getWidth());
         assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, image.getHeight());
 
         var lit = image.getRGB(0, 0) & 0xFF;
         var dark = image.getRGB(0, 1) & 0xFF;
-        var plain = FrameRenderer.render(frameOf(0x20), PALETTE, true, 2).getRGB(0, 0) & 0xFF;
+        var plain =
+                FrameRenderer.render(frameOf(0x20), PALETTE, SQUARE, true, 2).getRGB(0, 0) & 0xFF;
 
         assertTrue(lit < plain, "even a lit row loses a little: " + lit + " of " + plain);
         assertTrue(dark * 3 < lit * 2, "and the gap loses far more: " + dark + " against " + lit);
@@ -102,9 +108,9 @@ class FrameRendererTests {
      */
     @Test
     void aTubeAtOneTimesIsThePaletteStraightThrough() {
-        var plain = FrameRenderer.render(rowNumberedFrame(), PALETTE, true, 1);
+        var plain = FrameRenderer.render(rowNumberedFrame(), PALETTE, SQUARE, true, 1);
         var tube = FrameRenderer.render(
-                rowNumberedFrame(), PALETTE, FilterStrength.STRONG, false, true, 1);
+                rowNumberedFrame(), PALETTE, FilterStrength.STRONG, false, SQUARE, true, 1);
 
         for (var y = 0; y < plain.getHeight(); y++) {
             assertEquals(plain.getRGB(0, y), tube.getRGB(0, y), "row " + y);
@@ -117,9 +123,9 @@ class FrameRendererTests {
     @Test
     void aTubeCropsAndMagnifiesTheSameWay() {
         var cropped = FrameRenderer.render(
-                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, true, 2);
+                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, SQUARE, true, 2);
         var full = FrameRenderer.render(
-                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, false, 2);
+                rowNumberedFrame(), PALETTE, FilterStrength.MEDIUM, true, SQUARE, false, 2);
 
         assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, cropped.getHeight());
         assertEquals(PPU.SCREEN_HEIGHT * 2, full.getHeight());
@@ -132,8 +138,8 @@ class FrameRendererTests {
      */
     @Test
     void emphasisPicksTheDimmedCopyOfTheColour() {
-        var plain = FrameRenderer.render(frameOf(0x21), PALETTE, true, 1).getRGB(0, 0);
-        var emphasised = FrameRenderer.render(frameOf(0x61), PALETTE, true, 1).getRGB(0, 0);
+        var plain = FrameRenderer.render(frameOf(0x21), PALETTE, SQUARE, true, 1).getRGB(0, 0);
+        var emphasised = FrameRenderer.render(frameOf(0x61), PALETTE, SQUARE, true, 1).getRGB(0, 0);
 
         assertEquals(PALETTE[0x61] & 0xFFFFFF, emphasised & 0xFFFFFF);
         org.junit.jupiter.api.Assertions.assertNotEquals(plain, emphasised);
@@ -141,7 +147,7 @@ class FrameRendererTests {
 
     @Test
     void theCropTakesEightScanlinesFromEachEnd() {
-        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, true, 1);
+        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, SQUARE, true, 1);
 
         assertEquals(PPU.SCREEN_WIDTH, image.getWidth());
         assertEquals(FrameRenderer.VISIBLE_HEIGHT, image.getHeight());
@@ -153,7 +159,7 @@ class FrameRendererTests {
 
     @Test
     void theFullFrameKeepsAllTwoHundredAndFortyLines() {
-        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, false, 1);
+        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, SQUARE, false, 1);
 
         assertEquals(PPU.SCREEN_HEIGHT, image.getHeight());
         assertEquals(PALETTE[0] & 0xFFFFFF, image.getRGB(0, 0) & 0xFFFFFF);
@@ -161,7 +167,7 @@ class FrameRendererTests {
 
     @Test
     void scalingRepeatsEveryPixel() {
-        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, true, 3);
+        var image = FrameRenderer.render(rowNumberedFrame(), PALETTE, SQUARE, true, 3);
 
         assertEquals(PPU.SCREEN_WIDTH * 3, image.getWidth());
         assertEquals(FrameRenderer.VISIBLE_HEIGHT * 3, image.getHeight());
@@ -181,11 +187,122 @@ class FrameRendererTests {
                 "the fourth row of the picture is the next framebuffer row");
     }
 
+    /**
+     * A frame whose every column holds its own column number, which is what makes a stretch
+     * visible: the picture comes out wider, and every column of the framebuffer is still in it, in
+     * order, with some of them drawn twice.
+     */
+    private static int[] columnNumberedFrame() {
+        var frame = new int[PPU.SCREEN_WIDTH * PPU.SCREEN_HEIGHT];
+
+        for (var i = 0; i < frame.length; i++) {
+            frame[i] = i % PPU.SCREEN_WIDTH;
+        }
+
+        return frame;
+    }
+
+    @Test
+    void aTelevisionsPixelsMakeThePictureWiderAndLeaveItAsTall() {
+        var square = FrameRenderer.render(frameOf(0x21), PALETTE, SQUARE, true, 2);
+        var television = FrameRenderer.render(
+                frameOf(0x21), PALETTE, Region.NTSC.pixelAspect(), true, 2);
+
+        assertEquals(512, square.getWidth());
+        assertEquals(585, television.getWidth(), "512 stretched by 8:7, rounded");
+        assertEquals(square.getHeight(), television.getHeight(), "nothing happens to the height");
+    }
+
+    /**
+     * The stretch is a stretch and not a crop or a resample: every column the chip drew is still
+     * there, in order, and the ones that are drawn twice are what makes up the extra width.
+     */
+    @Test
+    void aStretchedPictureHoldsEveryColumnInOrder() {
+        // Coloured through a table that hands each index straight back, so that a pixel of the
+        // picture says which column of the framebuffer it came from. A measured palette could not
+        // answer that: two entries of it are allowed to be the same colour.
+        var identity = new int[512];
+
+        for (var i = 0; i < identity.length; i++) {
+            identity[i] = i;
+        }
+
+        var image = FrameRenderer.render(
+                columnNumberedFrame(), identity, Region.NTSC.pixelAspect(), true, 1);
+
+        assertEquals(293, image.getWidth());
+
+        var seen = 0;
+
+        for (var x = 0; x < image.getWidth(); x++) {
+            var column = image.getRGB(x, 0) & 0xFFFFFF;
+
+            assertTrue(column == seen || column == seen + 1,
+                    "column " + x + " of the picture is framebuffer column " + column
+                            + ", after " + seen);
+
+            seen = column;
+        }
+
+        assertEquals(PPU.SCREEN_WIDTH - 1, seen, "and the last one is the last one");
+    }
+
+    /**
+     * The tube gets the shape for nothing, because it was already being asked for a picture of a
+     * given size rather than for a magnification.
+     */
+    @Test
+    void aTubeDrawsOnATelevisionsPixelsToo() {
+        var image = FrameRenderer.render(
+                frameOf(0x20), PALETTE, FilterStrength.MEDIUM, false,
+                Region.NTSC.pixelAspect(), true, 2);
+
+        assertEquals(585, image.getWidth());
+        assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, image.getHeight());
+
+        // And the mask is still the mask: what the shape moved is the columns, not the rows.
+        assertTrue((image.getRGB(0, 1) & 0xFF) < (image.getRGB(0, 0) & 0xFF));
+    }
+
+    @Test
+    void aDecodedFrameTakesTheSameShape() {
+        var image = FrameRenderer.render(
+                frameOf(0x21), new NTSCFilter(), 0, Region.PAL.pixelAspect(), true, 2);
+
+        assertEquals(
+                FrameRenderer.widthFor(2, Region.PAL.pixelAspect()),
+                image.getWidth());
+        assertEquals(FrameRenderer.VISIBLE_HEIGHT * 2, image.getHeight());
+    }
+
+    /**
+     * The picture the two consoles' televisions drew is a different width, because the two chips
+     * put a different number of pixels into the same line.
+     */
+    @Test
+    void theTwoConsolesPixelsAreDifferentShapes() {
+        assertEquals(1170, FrameRenderer.widthFor(4, Region.NTSC.pixelAspect()));
+        assertEquals(1419, FrameRenderer.widthFor(4, Region.PAL.pixelAspect()));
+        assertEquals(1024, FrameRenderer.widthFor(4, FrameRenderer.SQUARE_PIXELS));
+    }
+
+    @Test
+    void aPixelWithNoShapeIsRefused() {
+        assertThrows(IllegalArgumentException.class,
+                () -> FrameRenderer.render(frameOf(0), PALETTE, 0, true, 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> FrameRenderer.render(frameOf(0), PALETTE, -1, true, 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> FrameRenderer.render(frameOf(0), PALETTE, Double.NaN, true, 1));
+    }
+
     @Test
     void aScaleOutsideWhatItWillDoIsRefused() {
         assertThrows(IllegalArgumentException.class,
-                () -> FrameRenderer.render(frameOf(0), PALETTE, true, 0));
+                () -> FrameRenderer.render(frameOf(0), PALETTE, SQUARE, true, 0));
         assertThrows(IllegalArgumentException.class,
-                () -> FrameRenderer.render(frameOf(0), PALETTE, true, FrameRenderer.MAX_SCALE + 1));
+                () -> FrameRenderer.render(
+                        frameOf(0), PALETTE, SQUARE, true, FrameRenderer.MAX_SCALE + 1));
     }
 }

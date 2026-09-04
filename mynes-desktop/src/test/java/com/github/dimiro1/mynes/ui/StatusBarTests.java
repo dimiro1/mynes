@@ -43,6 +43,7 @@ class StatusBarTests {
         private VideoFilter filter = VideoFilter.NONE;
         private FilterStrength strength = FilterStrength.defaultStrength();
         private boolean warp;
+        private boolean tvAspect;
         private String palette = "NESdev";
         private final ScreenScale screenScale = ScreenScale.TWO_TIMES;
         private ScreenScale screenshotScale = ScreenScale.ONE_TIMES;
@@ -88,6 +89,11 @@ class StatusBarTests {
             return this;
         }
 
+        Setup withTelevisionsPixels() {
+            this.tvAspect = true;
+            return this;
+        }
+
         Setup colouredBy(final String palette) {
             this.palette = palette;
             return this;
@@ -115,7 +121,7 @@ class StatusBarTests {
 
         StatusBar.Machine machine() {
             return new StatusBar.Machine(region, regionSetting, overclock, genieCodes,
-                    unlimitedSprites, filter, strength, warp, palette, screenScale,
+                    unlimitedSprites, filter, strength, warp, tvAspect, palette, screenScale,
                     screenshotScale, fastForward, rewindSeconds, muted, volume, audioLatencyMs);
         }
     }
@@ -125,6 +131,21 @@ class StatusBarTests {
     class WhatItSays {
         private static String line(final StatusBar.Machine machine) {
             return String.join(" · ", StatusBar.parts(machine));
+        }
+
+        /**
+         * Its own part rather than a qualifier on the filter's, because it applies whether or not
+         * a filter is named -- so it has to be able to appear on a line with no filter on it.
+         */
+        @Test
+        void theTelevisionsPixelsGetAPartOfTheirOwn() {
+            assertEquals(
+                    List.of("NTSC", "TV aspect"),
+                    StatusBar.parts(setup().withTelevisionsPixels().machine()));
+
+            assertEquals(
+                    "NTSC · NTSC filter · TV aspect",
+                    line(setup().through(VideoFilter.NTSC).withTelevisionsPixels().machine()));
         }
 
         @Test
@@ -405,7 +426,7 @@ class StatusBarTests {
 
             for (var row : new String[]{"Console", "Region setting", "Overclock", "Game Genie",
                     "Unlimited sprites", "Video filter", "Filter strength", "Palette",
-                    "Curved glass", "Screen size",
+                    "Curved glass", "Pixel shape", "Screen size",
                     "Screenshot size", "Fast forward speed", "Rewind history", "Sound", "Volume",
                     "Audio latency"}) {
                 assertTrue(detail.contains(row), row + " is missing from " + detail);
@@ -474,6 +495,27 @@ class StatusBarTests {
             assertTrue(StatusBar.detail(
                             setup().through(VideoFilter.NTSC).at(FilterStrength.LOW).machine())
                     .contains("Filter strength&nbsp;&nbsp;&nbsp;</td><td>Low"));
+        }
+
+        /**
+         * The ratio rather than "On", because it is the console's number and nobody knows the PAL
+         * one by heart -- and it is said the same way for both rather than as 8:7 for the one that
+         * happens to simplify, so that two machines are comparable.
+         */
+        @Test
+        void thePixelShapeIsGivenAsTheRatioTheConsoleDrewIt() {
+            assertTrue(StatusBar.detail(setup().machine())
+                    .contains("Pixel shape&nbsp;&nbsp;&nbsp;</td><td>Square"));
+
+            assertTrue(StatusBar.detail(setup().withTelevisionsPixels().machine())
+                    .contains("Pixel shape&nbsp;&nbsp;&nbsp;</td><td>Television, 1.143:1"));
+
+            assertTrue(StatusBar
+                    .detail(setup()
+                            .on(Region.PAL, RegionSetting.PAL)
+                            .withTelevisionsPixels()
+                            .machine())
+                    .contains("Pixel shape&nbsp;&nbsp;&nbsp;</td><td>Television, 1.386:1"));
         }
 
         /**

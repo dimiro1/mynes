@@ -257,9 +257,10 @@ cycles wide, so both null the subcarrier and both have a gain of one at DC, whic
 field comes out flat and every colour lands where it did at all three. `--filter none=low` is exit 2
 rather than a setting that quietly does nothing.
 
-**It is not on the comparability checklist**, and the video filters are the only things in this file
-that are not. Everything the report measures -- the hash, `uniqueColours`, `topColours`, `blank`,
-`frameChanges` -- is taken over the colour *indices* the chip emits, so `video.finalFrame` is
+**It is not on the comparability checklist**, and the things that draw the picture -- the two
+filters and the shape of a pixel -- are the only things in this file that are not. Everything the
+report measures -- the hash, `uniqueColours`, `topColours`, `blank`, `frameChanges` -- is taken over
+the colour *indices* the chip emits, so `video.finalFrame` is
 identical with the filter on and off and only the PNGs differ. Which is also why it rides freely with `--play`, where
 `--hack overclock` cannot: a replay does not depend on it. `video.filter` and `video.filterStrength`
 in the report say which were used -- the second explicitly null when the palette drew -- and
@@ -327,6 +328,42 @@ brighter than its picture.
 There is no shadow mask, and that is deliberate rather than pending. A consumer tube's triad pitch is
 finer than an NES pixel is wide at any magnification anybody uses, so drawing one triad per pixel is
 not the tube's mask -- it is a different, coarser thing invented for the screenshot.
+
+### Drawing the pixels the shape a television drew them
+
+`--tv-aspect` widens the picture so that one pixel comes out as wide as a television made it rather
+than as wide as the framebuffer holds it. Neither console's dot clock divides its line into square
+pixels: the 2C02 puts its 256 pixels and their border into 280 pixels' worth of a 4:3 line, so a
+pixel is `240/280 * 4/3` across, which is **exactly 8:7**; the 2C07's line is 277 of them at a
+different clock, which is `7375000/5320342.5` and comes to about **1.386:1** without simplifying. So
+a 256 pixel line is 293 wide at `--scale 1`, 585 at 2, and 355 and 710 on a PAL machine.
+`Region.pixelAspect` is where both numbers live -- it is a fact about a console and belongs with
+`oamDecayDots` and the rest -- and `FrameRenderer.widthFor` is what turns one into a width.
+
+**It is not a filter and is refused beside nothing.** A strength is how much of what a filter does
+to do, and a curve is part of what a tube does -- so `--filter none=low` and `--warp` without the
+tube are errors. The shape of a pixel is a fact about the screen the picture went to, and all three
+filters drew on one, so `--tv-aspect` combines with every one of them and with `--play`. It joins
+the filters in *not* being on the comparability checklist, for their reason: `video.finalFrame` is
+taken over the colour indices the chip emitted, so the hash, `uniqueColours`, `topColours`, `blank`
+and `frameChanges` are identical with it on and off and only the PNGs are wider. `video.tvAspect`
+says which was used, always present rather than null, since every picture's pixels have a shape.
+
+**The picture is widened rather than shortened**, so nothing the chip drew is thrown away to make
+room for the shape. The stretch is nearest neighbour like every other magnification here -- 256 at
+8:7 is 292.57, so some columns come out a pixel wider than others, and that is what an honest
+stretch of a blocky picture looks like rather than something to interpolate away.
+`FrameRenderer.magnify` does it with a table of source columns, which is the same shape
+`CRTScreen.flat` uses and is why the tube gets the aspect for nothing: it was already being asked
+for a picture of a given size.
+
+`tv-aspect on|off` does it inside an interactive session, which is how to take the same frame twice
+and diff the two pictures, and `filter` reports it beside the strength and the warp. The window has
+**Settings > TV Aspect Ratio**, under both size submenus rather than inside Video Filter, because it
+governs the window and the screenshots alike and is not a setting on any of the three filters. It is
+the one video setting that changes how big the component asks to be, so ticking it repacks the
+window -- where a PAL cartridge arriving merely moves the number and leaves the window where
+somebody put it.
 
 ### Taking a voice out of the mixer
 

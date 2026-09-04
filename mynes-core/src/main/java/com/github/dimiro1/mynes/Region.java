@@ -30,13 +30,14 @@ public enum Region {
     /**
      * The 2C02 and 2A03: 60.0988 frames a second, 262 scanlines, three dots to a CPU cycle.
      */
-    NTSC("ntsc", "NTSC", 12, 4, 1_789_773.0, 16_639_267L, 262, true, 100000,
+    NTSC("ntsc", "NTSC", 12, 4, 1_789_773.0, 16_639_267L, 262, true, 100000, 8.0 / 7.0,
             7457, 14913, 22371, 29828, 29829, 29830, 37281, 37282),
 
     /**
      * The 2C07 and 2A07: 50.0070 frames a second, 312 scanlines, 3.2 dots to a CPU cycle.
      */
     PAL("pal", "PAL", 16, 5, 1_662_607.0, 19_997_209L, 312, false, 100000,
+            7_375_000.0 / 5_320_342.5,
             8313, 16627, 24939, 33252, 33253, 33254, 41565, 41566);
 
     /**
@@ -67,6 +68,7 @@ public enum Region {
     private final int scanlinesPerFrame;
     private final boolean skipsDotOnOddFrames;
     private final int oamDecayDots;
+    private final double pixelAspect;
 
     // The frame counter's sequence, in CPU cycles from the point it was last reset. Named rather
     // than inlined because blargg's 4-jitter, 5-len_timing and 6-irq_flag_timing are sensitive to
@@ -90,6 +92,7 @@ public enum Region {
             final int scanlinesPerFrame,
             final boolean skipsDotOnOddFrames,
             final int oamDecayDots,
+            final double pixelAspect,
             final int step1Cycle,
             final int step2Cycle,
             final int step3Cycle,
@@ -107,6 +110,7 @@ public enum Region {
         this.scanlinesPerFrame = scanlinesPerFrame;
         this.skipsDotOnOddFrames = skipsDotOnOddFrames;
         this.oamDecayDots = oamDecayDots;
+        this.pixelAspect = pixelAspect;
         this.step1Cycle = step1Cycle;
         this.step2Cycle = step2Cycle;
         this.step3Cycle = step3Cycle;
@@ -223,6 +227,28 @@ public enum Region {
      */
     public int oamDecayDots() {
         return oamDecayDots;
+    }
+
+    /**
+     * How much wider than tall a television drew one of the chip's pixels.
+     * <p>
+     * The framebuffer is square: 256 by 240 numbers, each of them one pixel. The screen it went to
+     * was not, because neither console's dot clock divides its line into square pixels. The 2C02
+     * puts its 256 pixels and the border either side of them into 280 pixels' worth of a 4:3 line,
+     * so a pixel is {@code 240/280 * 4/3} as wide as it is tall -- exactly 8:7. The 2C07's line
+     * is 277 of them at a different clock, which is 7375000/5320342.5 and does not simplify;
+     * 1.3862 is what it comes to, and 7:5 and 18:13 are the fractions people round it to.
+     * <p>
+     * A property of the region for the reason {@link #oamDecayDots} is: it is a fact about one of
+     * these consoles and belongs with the others. Nothing inside the machine reads it -- the PPU
+     * emits indices and knows nothing about televisions -- so it is the front ends that ask, when
+     * somebody has said they want the picture the shape the set drew it rather than the shape the
+     * memory holds it.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/Overscan">NESdev: overscan</a>
+     */
+    public double pixelAspect() {
+        return pixelAspect;
     }
 
     /**

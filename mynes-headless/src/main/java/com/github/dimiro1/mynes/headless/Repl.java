@@ -81,6 +81,9 @@ public final class Repl {
                                        the mask's gaps go
             warp [on|off]              bend the picture the way a tube's glass did, which needs the
                                        crt filter to be the one drawing
+            tv-aspect [on|off]         draw the pixels the shape the television drew them, 8:7 on
+                                       NTSC and about 1.386:1 on PAL, rather than square. Whichever
+                                       filter is drawing
             hack NAME on|off           unlimited-sprites, which --hack also switches on
             hack overclock LINES [MORE]
                                        extra scanlines a frame before the NMI, and after it; off
@@ -287,6 +290,7 @@ public final class Repl {
             case "dump" -> dump(words);
             case "filter" -> filter(words);
             case "warp" -> warp(words);
+            case "tv-aspect" -> tvAspect(words);
             case "hack" -> hack(words);
             case "genie", "ungenie" -> genie(name, words);
             case "save-state" -> saveState(words);
@@ -810,6 +814,7 @@ public final class Repl {
             node.put("filter", session.filter().id());
             node.put("strength", session.strength().id());
             node.put("warp", session.warp());
+            node.put("tvAspect", session.tvAspect());
         });
     }
 
@@ -841,6 +846,27 @@ public final class Repl {
         }
 
         reply("warp", node -> node.put("warp", session.warp()));
+    }
+
+    /**
+     * Says whether the picture's pixels are the television's shape, or changes it.
+     * <p>
+     * The shape of {@code warp} and not refused beside anything, which is the difference between
+     * the two: a curve is part of what the tube does and there is no glass in front of a lookup
+     * table, where the shape of a pixel is a fact about the screen the picture went to and is the
+     * same fact whichever of the three drew it.
+     */
+    private void tvAspect(final String[] words) {
+        if (words.length >= 2) {
+            session.setTvAspect(switch (words[1]) {
+                case "on" -> true;
+                case "off" -> false;
+                default -> throw new UsageException(
+                        "tv-aspect is on or off, not \"" + words[1] + "\".");
+            });
+        }
+
+        reply("tv-aspect", node -> node.put("tvAspect", session.tvAspect()));
     }
 
     /**

@@ -97,6 +97,19 @@ public class ScreenComponent extends JComponent {
     private boolean warp;
 
     /**
+     * How much wider than tall one of the picture's pixels is drawn.
+     * <p>
+     * {@link FrameRenderer#SQUARE_PIXELS} until somebody asks for the television's, which is the
+     * region's number and so arrives from {@link GameUIFrame} rather than being worked out here:
+     * this component draws whatever machine is running and has never been told which one that is.
+     * <p>
+     * Not inside {@link #setVideoFilter} with the other three, because it is not a setting on a
+     * filter -- all three draw the pixels whatever shape this says. And it is the one video setting
+     * that changes how big the component wants to be, which is why {@link #setScale} reads it.
+     */
+    private double pixelAspect = FrameRenderer.SQUARE_PIXELS;
+
+    /**
      * The composite decoder, built the first time somebody asks for it. A window that is never
      * switched to it should not carry its tables.
      */
@@ -155,10 +168,35 @@ public class ScreenComponent extends JComponent {
      */
     public void setScale(final ScreenScale scale) {
         setPreferredSize(new Dimension(
-                PPU.SCREEN_WIDTH * scale.factor(),
+                FrameRenderer.widthFor(scale.factor(), pixelAspect),
                 FrameRenderer.VISIBLE_HEIGHT * scale.factor()));
 
         revalidate();
+    }
+
+    /**
+     * Draws the picture's pixels {@code aspect} times as wide as they are tall from now on,
+     * including the frame already on screen.
+     * <p>
+     * A number rather than a yes or a no, because how wide a television's pixel was is the region's
+     * answer and not this component's: 8:7 on the console sold in America and about 1.386:1 on the
+     * one sold in Europe. {@link GameUIFrame} is where the machine running is known, so that is
+     * where the question is turned into a number.
+     * <p>
+     * The size the component <em>wants</em> does not change here, which is on purpose and is why
+     * this is not a call to {@link #setScale}: the window is packed around that size, and a picture
+     * that repacked the window every time a PAL cartridge was loaded would move a window somebody
+     * had put somewhere. The picture is fitted to whatever size the window has, which it already
+     * was; the caller that has a reason to resize as well says so by asking for the scale again.
+     */
+    public void setPixelAspect(final double aspect) {
+        if (this.pixelAspect == aspect) {
+            return;
+        }
+
+        this.pixelAspect = aspect;
+
+        repaint();
     }
 
     /**
@@ -227,10 +265,12 @@ public class ScreenComponent extends JComponent {
             }
 
             return switch (videoFilter) {
-                case NTSC -> FrameRenderer.render(frame, ntsc(), framePhase, true, scale.factor());
+                case NTSC -> FrameRenderer.render(
+                        frame, ntsc(), framePhase, pixelAspect, true, scale.factor());
                 case CRT -> FrameRenderer.render(
-                        frame, palette, filterStrength, warp, true, scale.factor());
-                case NONE -> FrameRenderer.render(frame, palette, true, scale.factor());
+                        frame, palette, filterStrength, warp, pixelAspect, true, scale.factor());
+                case NONE -> FrameRenderer.render(
+                        frame, palette, pixelAspect, true, scale.factor());
             };
         }
     }
@@ -331,10 +371,15 @@ public class ScreenComponent extends JComponent {
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
             // Uniform scale, centred, so the aspect ratio survives a resize in either direction.
+            // The picture it is fitting is PPU.SCREEN_WIDTH * pixelAspect across rather than
+            // PPU.SCREEN_WIDTH, which is the whole of what the setting does here: a window wide
+            // enough for square pixels letterboxes a television's, and the black goes above and
+            // below instead of down the sides.
+            var drawn = PPU.SCREEN_WIDTH * pixelAspect;
             var scale = Math.min(
-                    getWidth() / (double) PPU.SCREEN_WIDTH,
+                    getWidth() / drawn,
                     getHeight() / (double) FrameRenderer.VISIBLE_HEIGHT);
-            var width = (int) (PPU.SCREEN_WIDTH * scale);
+            var width = (int) Math.round(drawn * scale);
             var height = (int) (FrameRenderer.VISIBLE_HEIGHT * scale);
             var x = (getWidth() - width) / 2;
             var y = (getHeight() - height) / 2;

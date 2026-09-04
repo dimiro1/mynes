@@ -283,6 +283,9 @@ public final class Shots {
                 VideoFilter.NONE,
                 FilterStrength.defaultStrength(),
                 false,
+                // Square pixels, whatever the television did with them: a README picture is going
+                // to be scaled by a browser, and the frame the machine drew is what these are of.
+                false,
                 null);
 
         var schedule = InputSchedule.parse(List.of(input), PRESS_FRAMES);

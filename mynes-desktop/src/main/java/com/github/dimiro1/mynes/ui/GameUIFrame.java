@@ -23,6 +23,7 @@ import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
 import com.github.dimiro1.mynes.video.FilterStrength;
+import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
 
@@ -178,6 +179,8 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
     private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
+    private final JCheckBoxMenuItem settingsMenuTvAspect =
+            new JCheckBoxMenuItem("TV Aspect Ratio");
     private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
 
     /**
@@ -371,6 +374,11 @@ public class GameUIFrame extends JFrame {
         keyboardInput.setRewindKey(config.rewindKey());
 
         screen.setPalette(config.palette(currentRegion()));
+
+        // Before the scale rather than after, because the scale is what turns the shape of a pixel
+        // into a width: a window told these the other way round would ask for the square picture's
+        // size and letterbox a television's inside it from the moment it opened.
+        applyPixelAspect();
 
         // Before init()'s pack(), so the window opens at the size it was left at rather than opening
         // at the default and then jumping.
@@ -570,6 +578,25 @@ public class GameUIFrame extends JFrame {
 
         settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
+
+        // Under both sizes rather than inside either, and not in Video Filter with the strength and
+        // the curve: the shape of a pixel is not a setting on a filter -- all three draw them
+        // whatever shape this says -- and it governs the window and the screenshots alike, which is
+        // one question rather than two.
+        settingsMenuTvAspect.setMnemonic(KeyEvent.VK_T);
+        settingsMenuTvAspect.setSelected(config.tvAspect());
+        settingsMenuTvAspect.addActionListener(e -> {
+            config.setTvAspect(settingsMenuTvAspect.isSelected());
+            saveConfig();
+            applyPixelAspect();
+
+            // And the window follows the picture, unlike a region change, which also moves the
+            // number: this is somebody asking for a differently shaped picture, and leaving it
+            // letterboxed inside a window still the old shape would be answering half of it.
+            applyScreenScale(config.screenScale());
+            updateStatusBar();
+        });
+        settingsMenu.add(settingsMenuTvAspect);
 
         // Under the sizes rather than beside the palette: what this changes is the shape of the
         // window, not the picture in it.
@@ -1305,6 +1332,26 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Tells the screen how wide to draw a pixel: the television's shape, or the square one the
+     * framebuffer holds.
+     * <p>
+     * The number is the region's -- 8:7 on the 2C02 and about 1.386:1 on the 2C07 -- so it is
+     * worked out here, where which machine is running is known, rather than in the component, which
+     * has never been told. Which also means this has to run again whenever the machine changes, and
+     * it does: {@link #startMachine} calls it beside the palette and the filter, for the same
+     * reason both of those are called there.
+     * <p>
+     * The window is not resized. A cartridge that is European does not mean somebody asked for a
+     * differently shaped window, so the picture is fitted into whatever size the window has; only
+     * the menu item, which is somebody asking, packs it as well.
+     */
+    private void applyPixelAspect() {
+        screen.setPixelAspect(config.tvAspect()
+                ? currentRegion().pixelAspect()
+                : FrameRenderer.SQUARE_PIXELS);
+    }
+
+    /**
      * Which filter the picture is actually being drawn with, which is not always the one the menu
      * has ticked: a PAL machine draws a signal this decoder is not for, so <em>that</em> choice
      * falls back to the palette while the tick stays where it was. Nothing else falls back, the
@@ -1400,6 +1447,7 @@ public class GameUIFrame extends JFrame {
                 currentVideoFilter(),
                 config.filterStrength(),
                 config.warp(),
+                config.tvAspect(),
                 config.palette(currentRegion()).name(),
                 config.screenScale(),
                 config.screenshotScale(),
@@ -2242,9 +2290,16 @@ public class GameUIFrame extends JFrame {
         // palette is chosen, because this is the one moment the kind of machine can change.
         screen.setPalette(config.palette(nes.getRegion()));
 
+        // And how wide a pixel is, which is the third thing the kind of machine decides: the two
+        // consoles put a different number of pixels into the same line, so a television drew them
+        // different shapes. The window is left at whatever size it has -- a cartridge being
+        // European is not somebody asking for a differently shaped window.
+        applyPixelAspect();
+
         // And which decoder, for the same reason and one more: the NTSC filter has no meaning on a
         // 2C07, so this is where a European cartridge takes it away and an American one gives it
-        // back.
+        // back. After the shape rather than before, since its call to updateStatusBar is what tells
+        // the bar about both.
         applyVideoFilter();
 
         // A fresh PPU has both layers on and no hacks, and a fresh APU has all five voices in the
