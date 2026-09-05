@@ -2922,6 +2922,43 @@ public class PPU {
     }
 
     /**
+     * $2000 as it was last written, for a dashboard that decodes the whole byte rather than asking
+     * for one bit of it.
+     * <p>
+     * Beside {@link #getBackgroundPatternTable()} and the two after it rather than instead of them:
+     * a caller with a tile number and a table to add it to should not have to remember which bit
+     * meant what, and a caller drawing the register out bit by bit should not have to ask eight
+     * times.
+     */
+    public int getControl() {
+        return ctrl;
+    }
+
+    /**
+     * $2001 as the rendering hardware sees it, which is not always what was last written: a write
+     * takes two dots to reach here. See {@link #pendingMask}.
+     */
+    public int getMask() {
+        return mask;
+    }
+
+    /**
+     * The three flags of $2002, and nothing else -- no open bus in the low five bits, and none of
+     * the three things a real read does. {@link #peek(int)} answers what a read would have
+     * returned, which is a different question and the wrong one for a gauge.
+     */
+    public int peekStatus() {
+        return status();
+    }
+
+    /**
+     * Where the next $2004 read or write would land in OAM.
+     */
+    public int getOAMAddress() {
+        return oamAddress;
+    }
+
+    /**
      * Whether $2001 bit 0 is forcing every colour down onto the grey column on its way out of the
      * chip.
      * <p>

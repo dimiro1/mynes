@@ -28,6 +28,17 @@ public interface Controller {
     void setStrobe(int strobe);
 
     /**
+     * Which buttons are held down, as the eight {@code BUTTON_} flags.
+     * <p>
+     * What the front end last put in rather than what the game has read out: the shift register is
+     * half way through being clocked most of the time, and "what is being held" is the question
+     * anybody looking at a pad is asking.
+     *
+     * @return the button mask.
+     */
+    int getButtons();
+
+    /**
      * Reads the next button state from the controller shift register.
      * Returns 1 if the button is pressed, 0 otherwise.
      *

@@ -7,6 +7,7 @@ import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.ui.Commands;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.Sweep;
 import com.github.dimiro1.mynes.ui.Switches;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerPanel;
@@ -31,6 +32,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 
@@ -84,8 +86,15 @@ public final class ControlPanelFrame extends JFrame {
     private final PauseControl pauseControl;
 
     private final JTabbedPane tabs = new JTabbedPane();
+    private final Dashboard dashboard = new Dashboard();
 
     private final @Nullable Component parent;
+
+    /**
+     * Whichever machine is running, so that the readout can be switched on when the window is shown
+     * and off when it is put away. Null before the first one arrives.
+     */
+    private @Nullable EmulatorRunner runner;
 
     private @Nullable DebuggerPanel debugger;
     private @Nullable Instruments instruments;
@@ -124,6 +133,7 @@ public final class ControlPanelFrame extends JFrame {
         // which is the one thing a list of places has to not do.
         tabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
 
+        add(dashboard, BorderLayout.NORTH);
         add(tabs, BorderLayout.CENTER);
         add(new JScrollPane(new ControlsColumn(switches, commands)), BorderLayout.EAST);
 
@@ -133,6 +143,14 @@ public final class ControlPanelFrame extends JFrame {
 
         installPauseShortcut();
         applyLayout(layout);
+
+        // Nothing is read off the machine and nothing is posted to this thread while the window is
+        // put away, which is nearly always: the Debugger.isArmed() rule, for the dashboard.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
+                observeTheMachine();
+            }
+        });
 
         // A window put away is not a machine that is meant to stay stopped. Closing this while the
         // debugger has it standing at a breakpoint would otherwise leave a frozen emulator with the
@@ -168,6 +186,14 @@ public final class ControlPanelFrame extends JFrame {
             final Cart cart,
             final NESPalette colours) {
 
+        if (this.runner != null) {
+            this.runner.setFrameObserver(null);
+        }
+
+        this.runner = runner;
+
+        observeTheMachine();
+
         if (debugger == null) {
             debugger = new DebuggerPanel(nes, runner, points);
             debugger.installKeysIn(getRootPane());
@@ -198,6 +224,14 @@ public final class ControlPanelFrame extends JFrame {
             packInsideTheDisplay();
             setLocationRelativeTo(parent);
         }
+    }
+
+    /**
+     * The first line of the dashboard: how the machine is being run, which only the thing running
+     * it knows. The other two lines come off the machine itself.
+     */
+    public void setRunning(final String text) {
+        dashboard.setRunning(text);
     }
 
     /**
@@ -327,6 +361,39 @@ public final class ControlPanelFrame extends JFrame {
         pane.getVerticalScrollBar().setUnitIncrement(16);
 
         return pane;
+    }
+
+    /**
+     * Asks the machine for a readout while this window is on screen, and stops asking when it is
+     * not.
+     */
+    private void observeTheMachine() {
+        if (runner == null) {
+            return;
+        }
+
+        if (isShowing()) {
+            runner.setFrameObserver(this::describe);
+        } else {
+            runner.setFrameObserver(null);
+            dashboard.clear();
+        }
+    }
+
+    /**
+     * A frame has finished. Called on the event dispatch thread with a record that holds no
+     * reference to the machine -- see {@link Readout} -- which is what makes it safe to look at
+     * after the machine has gone on running.
+     * <p>
+     * Public because the README's camera hands one over the same way, over a machine that is
+     * stopped exactly where the picture wants it and has no thread clocking it to send one.
+     */
+    public void describe(final Readout readout) {
+        dashboard.show(readout);
+
+        if (debugger != null) {
+            debugger.readout(readout);
+        }
     }
 
     private void select(final String tab) {

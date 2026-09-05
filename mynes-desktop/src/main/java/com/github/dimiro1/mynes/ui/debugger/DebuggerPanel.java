@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.MenuKey;
+import com.github.dimiro1.mynes.ui.Readout;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.AbstractAction;
@@ -249,7 +250,7 @@ public final class DebuggerPanel extends JPanel {
         knownBreakpoints = breaks;
 
         disassembly.show(snapshot, breaks, conditions);
-        registers.show(snapshot);
+        registers.show(snapshot.machine());
         stack.show(snapshot);
         memory.show(snapshot, stop);
         points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
@@ -270,6 +271,19 @@ public final class DebuggerPanel extends JPanel {
 
             runToAddress = -1;
             edit(() -> debugger.removeBreakpoint(address));
+        }
+    }
+
+    /**
+     * The machine as it was at the end of a frame, while it goes on running.
+     * <p>
+     * Only the registers take it, and only while the machine is actually going: a panel showing a
+     * frame boundary over a machine somebody has stopped at a breakpoint would be describing the
+     * wrong moment, and the stop snapshot is both exact and already there.
+     */
+    public void readout(final Readout machine) {
+        if (!stoppedByUs) {
+            registers.live(machine);
         }
     }
 

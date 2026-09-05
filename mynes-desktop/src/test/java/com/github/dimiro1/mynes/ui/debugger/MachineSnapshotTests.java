@@ -113,15 +113,20 @@ class MachineSnapshotTests {
         assertArrayEquals(new int[]{0x11, 0x22}, snapshot.stack());
     }
 
+    /**
+     * The registers ride along as a {@link com.github.dimiro1.mynes.ui.Readout}, which is the same
+     * record the dashboard is handed while the machine runs -- one shape for the machine's scalars,
+     * so there is one place to add the next one to.
+     */
     @Test
     void theBeamAndTheScrollRegistersRideAlong() {
-        var snapshot = MachineSnapshot.of(nes, debugger);
+        var machine = MachineSnapshot.of(nes, debugger).machine();
 
-        assertEquals(nes.getPPU().getScanline(), snapshot.scanline());
-        assertEquals(nes.getPPU().getV(), snapshot.v());
-        assertEquals(nes.getPPU().getT(), snapshot.t());
-        assertEquals(8, snapshot.spriteHeight());
-        assertEquals(0x0000, snapshot.backgroundPatternTable());
+        assertEquals(nes.getPPU().getScanline(), machine.scanline());
+        assertEquals(nes.getPPU().getV(), machine.v());
+        assertEquals(nes.getPPU().getT(), machine.t());
+        assertEquals(8, machine.spriteHeight());
+        assertEquals(0x0000, machine.backgroundPatternTable());
     }
 
     /**

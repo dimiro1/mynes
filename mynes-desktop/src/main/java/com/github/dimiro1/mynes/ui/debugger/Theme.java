@@ -66,7 +66,7 @@ public final class Theme {
      * Fainter than muted, for the bytes column and the zeros in memory: present, but not what
      * anyone is reading.
      */
-    static Color dim() {
+    public static Color dim() {
         var muted = muted();
         var back = background();
 

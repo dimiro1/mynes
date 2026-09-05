@@ -58,8 +58,7 @@ import java.util.function.IntSupplier;
  * its execution rather than a picture of memory, and values read at different instants would not be
  * a slightly stale picture -- they would be a machine that never existed.
  *
- * @see com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame
- * @see com.github.dimiro1.mynes.ui.debugger.DebuggerFrame
+ * @see com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame
  */
 public class EmulatorRunner {
     private static final Logger logger = System.getLogger("EMU");
@@ -98,6 +97,13 @@ public class EmulatorRunner {
      * of a game they are about to play differently anyway.
      */
     private static final int REWIND_INTERVAL = 2;
+
+    /**
+     * How many finished frames go by between readouts: a quarter of a second on either console, the
+     * same interval every debug view in the front end sweeps on, and as fast as anybody reads a
+     * number off a screen.
+     */
+    private static final int READOUT_FRAMES = 15;
 
     private final NES nes;
     private final ScreenComponent screen;
@@ -185,6 +191,21 @@ public class EmulatorRunner {
      * Told, on the event dispatch thread, whenever the machine stops somewhere it was asked to.
      */
     private volatile Consumer<Debugger.Stop> stopListener;
+
+    /**
+     * Who wants the machine described at a frame boundary, or null when nobody does.
+     * <p>
+     * Null is the point of it, and it is the {@link Debugger#isArmed()} rule again: nothing is read
+     * off the machine and nothing is posted to the event dispatch thread while the control panel is
+     * closed, which is nearly always. Volatile because the window sets it and this thread reads it.
+     */
+    private volatile @Nullable Consumer<Readout> frameObserver;
+
+    /**
+     * Frames left before the next readout, counted down rather than taken as a remainder of the
+     * frame number: a rewind moves that by two at a time and would step over any multiple.
+     */
+    private int untilReadout;
 
     /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
@@ -387,6 +408,20 @@ public class EmulatorRunner {
      */
     public void setStopListener(final Consumer<Debugger.Stop> listener) {
         this.stopListener = listener;
+    }
+
+    /**
+     * Asks to be handed the machine at a frame boundary, four times a second, on the event dispatch
+     * thread. Null asks to stop being handed it.
+     * <p>
+     * A boundary rather than a timer, because what a gauge shows is a dozen scalars and reading
+     * those one at a time off a running machine gives a machine that never existed -- see
+     * {@link Readout}. Four times a second rather than sixty, because that is as fast as anybody
+     * reads a number and sixty would be fifty-six posts to the event dispatch thread that nobody
+     * looked at.
+     */
+    public void setFrameObserver(final @Nullable Consumer<Readout> observer) {
+        this.frameObserver = observer;
     }
 
     /**
@@ -696,6 +731,11 @@ public class EmulatorRunner {
 
                         framesRun += given;
 
+                        // Going backwards is still the frame counter moving, and a dashboard frozen
+                        // at whatever number a rewind started from would be the one thing on it
+                        // anybody would notice was wrong.
+                        observeFrames(given);
+
                         // Frames rather than the states the call above answered in: this ring keeps
                         // one every other frame, so the two numbers are different here in a way they
                         // are not in a headless session.
@@ -813,6 +853,7 @@ public class EmulatorRunner {
                 // machine somebody is stepping through is not running at all.
                 if (completed) {
                     framesRun++;
+                    observeFrames(1);
                 }
 
                 // Drained up here rather than at the two places below that used to do it, because
@@ -1024,6 +1065,35 @@ public class EmulatorRunner {
         if (listener != null) {
             SwingUtilities.invokeLater(listener);
         }
+    }
+
+    /**
+     * Hands the machine over, if anybody asked for it and enough frames have gone by.
+     * <p>
+     * Called from the two places {@code framesRun} moves and from nowhere else: a frame is a frame
+     * whatever ran it -- stepped, halted, fast forwarded, rewound -- and this is read at exactly
+     * the moment the last one finished, which is the moment nothing in the machine is half written.
+     */
+    private void observeFrames(final int frames) {
+        var observer = frameObserver;
+
+        if (observer == null) {
+            return;
+        }
+
+        untilReadout -= frames;
+
+        if (untilReadout > 0) {
+            return;
+        }
+
+        untilReadout = READOUT_FRAMES;
+
+        // Built here and handed over whole. A lambda that read the machine on the other thread
+        // would be reading a running one, which is the whole thing Readout exists to avoid.
+        var readout = Readout.of(nes);
+
+        SwingUtilities.invokeLater(() -> observer.accept(readout));
     }
 
     private void runPendingCommands() {

@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui.debugger;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.ui.Readout;
 
 /**
  * The machine as it stood when it stopped: everything the window paints, taken in one go.
@@ -17,40 +18,23 @@ import com.github.dimiro1.mynes.debug.Debugger;
  * with the machine halted and a happens-before edge behind it. Everything painted afterwards is
  * painted from this.
  *
- * @param v                      the PPU's current VRAM address, which is where the beam is reading.
- * @param t                      the temporary one, which is what the next frame will start from.
- * @param fineX                  the fine horizontal scroll, the three bits $2005 keeps outside t.
- * @param writeLatch             whether the next $2005/$2006 write is the second of a pair.
- * @param backgroundPatternTable $0000 or $1000, by $2000 bit 4.
- * @param spritePatternTable     $0000 or $1000, by $2000 bit 3 -- ignored for tall sprites.
- * @param spriteHeight           8 or 16.
+ * <p>
+ * The scalars are a {@link Readout}, which is the same record the dashboard is handed four times a
+ * second -- the machine's registers are the machine's registers, and two shapes for them would be
+ * two places to add the next one to. What a snapshot adds is what only a stopped machine can
+ * afford: the whole of the address space, and the trail of where the processor has been.
+ *
+ * @param machine the registers, taken with everything else.
+ * @param bus     64K of the CPU's address space, read through {@code peek}.
+ * @param trail   where the processor has been, newest last.
  */
-record MachineSnapshot(
-        CPU.State cpu,
-        long frame,
-        int scanline,
-        int dot,
-        boolean renderingEnabled,
-        int v,
-        int t,
-        int fineX,
-        boolean writeLatch,
-        int backgroundPatternTable,
-        int spritePatternTable,
-        int spriteHeight,
-        int[] bus,
-        int[] trail) {
+record MachineSnapshot(Readout machine, int[] bus, int[] trail) {
 
     /**
      * Where cartridge RAM sits in the CPU's address space.
      */
     private static final int CART_RAM = 0x6000;
     private static final int CART_RAM_SIZE = 0x2000;
-
-    /**
-     * Where the stack lives. The 6502 has one page of it and no way to move it.
-     */
-    private static final int STACK_PAGE = 0x0100;
 
     /**
      * Reads the whole machine.
@@ -80,21 +64,26 @@ record MachineSnapshot(
             bus[CART_RAM + i] = cartRAM[i] & 0xFF;
         }
 
-        return new MachineSnapshot(
-                nes.getCPU().getState(),
-                ppu.getFrame(),
-                ppu.getScanline(),
-                ppu.getDot(),
-                ppu.isRenderingEnabled(),
-                ppu.getV(),
-                ppu.getT(),
-                ppu.getFineX(),
-                ppu.isWriteLatchSet(),
-                ppu.getBackgroundPatternTable(),
-                ppu.getSpritePatternTable(),
-                ppu.getSpriteHeight(),
-                bus,
-                debugger.trail());
+        return new MachineSnapshot(Readout.of(nes), bus, debugger.trail());
+    }
+
+    // The registers, so that every panel here goes on reading a snapshot as one thing rather than
+    // reaching through it. Nothing else needs to know the scalars came in together with the memory.
+
+    CPU.State cpu() {
+        return machine.cpu();
+    }
+
+    long frame() {
+        return machine.frame();
+    }
+
+    int stackTop() {
+        return machine.stackTop();
+    }
+
+    String flags() {
+        return machine.flags();
     }
 
     int read(final int address) {
@@ -107,15 +96,11 @@ record MachineSnapshot(
      * The pointer names the next free slot rather than the last used one, so the top is one above
      * it -- and an empty stack's top would be $0200, which is the first address that is not stack.
      */
-    int stackTop() {
-        return STACK_PAGE + cpu.sp() + 1;
-    }
-
     /**
      * What is on the stack, top first, which is the order it will come off in.
      */
     int[] stack() {
-        var depth = 0xFF - cpu.sp();
+        var depth = 0xFF - cpu().sp();
         var out = new int[depth];
 
         for (var i = 0; i < depth; i++) {
@@ -125,21 +110,4 @@ record MachineSnapshot(
         return out;
     }
 
-    /**
-     * The processor flags the way nestest's log spells them: set ones in capitals, clear ones not,
-     * which reads at a glance where eight ones and zeros do not.
-     */
-    String flags() {
-        var names = "NV-BDIZC";
-        var out = new StringBuilder(8);
-
-        for (var bit = 0; bit < 8; bit++) {
-            var set = (cpu.p() & (0x80 >> bit)) != 0;
-            var name = names.charAt(bit);
-
-            out.append(set ? Character.toUpperCase(name) : Character.toLowerCase(name));
-        }
-
-        return out.toString();
-    }
 }

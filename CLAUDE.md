@@ -500,6 +500,32 @@ fifty is wider than a laptop, so side by side is a layout that is right on a des
 bag -- and a default that depends on which screen somebody opened it on is not a default. The
 debugger is still the main view: it is the first tab and the one that is up.
 
+**Three lines across the top say what the machine is doing**, and they are the third way anything
+in the front end reads a machine. The viewers poll on a Swing timer without synchronising, which is
+right for them: what they read is *arrays*, and an element cannot tear. The debugger takes a
+`MachineSnapshot` inside the stop callback, which is exact, once, halted. Neither works for a
+dashboard, because what a dashboard shows is *scalars* -- $2000, the scroll, which voices are
+sounding -- and a dozen of those read one at a time off a running machine is not a stale picture
+but a machine that never existed. So `EmulatorRunner.setFrameObserver` builds an immutable
+`Readout` **on the emulation thread, at the frame boundary** where nothing is half written, every
+fifteenth frame, and `invokeLater`s it. It holds no reference to the machine, which is what makes
+looking at it later safe. The observer is null while the panel is put away -- the
+`Debugger.isArmed()` rule -- so a closed panel costs one null check a frame.
+
+**`Readout` is also what a `MachineSnapshot` is made of.** The machine's registers are the
+machine's registers, and two shapes for them would be two places to add the next one to; a snapshot
+is a readout plus the things only a stopped machine can afford, which is 64K of address space and
+the processor's trail. That is what lets the debugger's registers panel show the frame boundary
+while the game runs, muted rather than blank, with the frame row saying which frame they came from.
+
+**Nothing the readout reads has a side effect, and three of them nearly do.** `$2002` clears the
+VBlank flag and resets the write latch, `$4015` acknowledges the frame counter's interrupt, and
+`$2007` moves the address on -- so the readout goes through `PPU.peekStatus()` and
+`APU.peekStatus()`, which are the same bytes with none of that. A gauge that fired any of them four
+times a second would be the thing that broke the game it was pointed at. `ReadoutTests` holds it to
+that by clocking the machine afterwards, since a real `$4015` read does not clear the flag there and
+then -- it arms the clear for the next cycle.
+
 **Every switch is one `javax.swing.Action`, in `Switches`, and every command is one in `Commands`.**
 The menu item and the column's control are built from the same object, so the two cannot disagree,
 `setEnabled(false)` greys both, and the movie gating on Overclock and the Game Genie stays one line

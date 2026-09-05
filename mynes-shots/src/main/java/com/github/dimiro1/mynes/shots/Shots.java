@@ -13,6 +13,7 @@ import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.GameUIFrame;
 import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
 import com.github.dimiro1.mynes.ui.Commands;
 import com.github.dimiro1.mynes.ui.Switches;
@@ -482,6 +483,13 @@ public final class Shots {
                     Palettes.defaultPalette(nes.getRegion()));
 
             panel[0].stopped(stopped.stop());
+
+            // The two lines the emulation thread normally sends, and the one the window normally
+            // writes. Nothing is clocking this machine, so nobody would otherwise.
+            panel[0].describe(Readout.of(nes));
+            panel[0].setRunning(
+                    "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
+
             show(panel[0]);
         });
 

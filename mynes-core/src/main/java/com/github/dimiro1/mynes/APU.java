@@ -560,6 +560,19 @@ public class APU {
      * @return the status byte.
      */
     public int readStatus() {
+        // The whole of what a read does besides handing the byte over, and the reason peekStatus
+        // exists: a gauge that read $4015 would be the thing that acknowledged the interrupt, and
+        // a game waiting on it would never see it.
+        frameIRQClearPending = true;
+
+        return peekStatus();
+    }
+
+    /**
+     * The same byte without acknowledging anything: which channels have something left to play and
+     * which of the two interrupts are up.
+     */
+    public int peekStatus() {
         var status = 0;
 
         if (pulse1.lengthCounter.value > 0) {
@@ -584,9 +597,26 @@ public class APU {
             status |= STATUS_DMC_IRQ;
         }
 
-        frameIRQClearPending = true;
-
         return status;
+    }
+
+    /**
+     * Whether the frame counter is running the five step sequence, which is $4017 bit 7.
+     * <p>
+     * Worth a gauge of its own because the two sequences are not the same thing at two speeds: four
+     * step clocks the envelopes four times and the lengths twice in 29830 cycles and raises an
+     * interrupt at the end; five step does it five and two in 37282 and never interrupts. A game
+     * whose music is running slow has usually written $80 here without meaning to.
+     */
+    public boolean isFiveStepFrameCounter() {
+        return frameCounter.fiveStep;
+    }
+
+    /**
+     * Whether $4017 bit 6 is holding the frame counter's interrupt off.
+     */
+    public boolean isFrameIRQInhibited() {
+        return frameCounter.irqInhibit;
     }
 
     /**

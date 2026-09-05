@@ -142,6 +142,13 @@ public class GameUIFrame extends JFrame {
     private final FrameRate frameRate = new FrameRate();
 
     /**
+     * What the rate last measured, kept because two things show it now: the status bar, which is
+     * told, and the control panel's first line, which is rewritten from scratch whenever anything
+     * changes and would otherwise have nothing to put there.
+     */
+    private int lastFrameRate = FrameRate.UNKNOWN;
+
+    /**
      * Everything remembered between runs, and the only thing that writes the config file.
      */
     private final Config config;
@@ -1455,11 +1462,19 @@ public class GameUIFrame extends JFrame {
      */
     private void measureFrameRate() {
         if (runner == null) {
-            statusBar.setFrameRate(FrameRate.UNKNOWN);
+            lastFrameRate = FrameRate.UNKNOWN;
+            statusBar.setFrameRate(lastFrameRate);
+            describeMachine();
             return;
         }
 
-        statusBar.setFrameRate(frameRate.sample(runner.getFramesRun(), System.nanoTime()));
+        lastFrameRate = frameRate.sample(runner.getFramesRun(), System.nanoTime());
+        statusBar.setFrameRate(lastFrameRate);
+
+        // The dashboard's first line carries the rate, so it is rewritten on the tick that measures
+        // it as well as whenever something changes. Cheap: it is one string, four times a minute
+        // more often than the bar's own.
+        describeMachine();
     }
 
     /**
@@ -2728,6 +2743,48 @@ public class GameUIFrame extends JFrame {
     private void describeMachine() {
         updateTitle();
         updateStatusBar();
+
+        if (controlPanel != null) {
+            controlPanel.setRunning(dashboardLine());
+        }
+    }
+
+    /**
+     * The control panel's first line: how the machine is being run.
+     * <p>
+     * Everything on it is the window's rather than the machine's -- whether the loop is paused,
+     * what the rate has measured, which cartridge somebody put in, whether a movie is going -- and
+     * none of it can be read off the NES at all, which is why the panel is handed it written rather
+     * than working it out. Whichever frame the machine has reached is on the line below, with the
+     * rest of what the machine is doing.
+     */
+    private String dashboardLine() {
+        var parts = new java.util.ArrayList<String>();
+
+        parts.add(runner == null ? "No machine" : runner.isPaused() ? "Paused" : "Running");
+
+        if (lastFrameRate != FrameRate.UNKNOWN) {
+            parts.add(lastFrameRate + " fps");
+        }
+
+        parts.add(currentRegion().label());
+
+        if (cart != null) {
+            parts.add(String.format(
+                    "%s  (mapper %d, %dK+%dK)",
+                    cart.filename(),
+                    cart.mapperNumber(),
+                    cart.prgROM().length / 1024,
+                    cart.chrROM().length / 1024));
+        }
+
+        var activity = machineState();
+
+        if (!activity.isEmpty() && !"Paused".equals(activity)) {
+            parts.add(activity);
+        }
+
+        return String.join("  ·  ", parts);
     }
 
     private void updateTitle() {
@@ -2989,6 +3046,8 @@ public class GameUIFrame extends JFrame {
                     this, switches, commands, pauseControl, config.debugLayout());
             controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
         }
+
+        controlPanel.setRunning(dashboardLine());
 
         controlPanel.setVisible(true);
         controlPanel.toFront();

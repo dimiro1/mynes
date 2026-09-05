@@ -134,6 +134,10 @@ file is where they live.
 - One **Control Panel** (`Cmd/Ctrl+D`), with every instrument as a tab and every switch on the
   machine in a column down the side — pause, speed, layers, volume, the five sound channels, the
   overclock, the Game Genie and the tracer, without going back to the game window for any of them.
+- Three lines across the top of it say what the machine is doing without being asked: the frame
+  rate and the cartridge, `$2000` and `$2001` decoded with the scroll and the sprite-0 flag, and
+  which of the five voices are playing, how the frame counter is sequencing them and what is being
+  held on the pad. Read at a frame boundary, so it is one moment rather than a dozen.
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
@@ -179,8 +183,8 @@ Every selection applies the moment it is made, so the game behind the dialog is 
 
 ### The control panel
 
-Every instrument as a tab and every switch on the machine beside them, stopped on a conditional
-breakpoint at Super Mario Bros.' NMI handler.
+Every instrument as a tab, every switch on the machine beside them, and three lines at the top
+saying what it is doing — stopped on a conditional breakpoint at Super Mario Bros.' NMI handler.
 
 ![The control panel](shots/control-panel.png)
 

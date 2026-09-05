@@ -71,6 +71,11 @@ public class StandardController implements Controller {
     }
 
     @Override
+    public int getButtons() {
+        return buttons;
+    }
+
+    @Override
     public void setButtons(int buttons) {
         this.buttons = buttons & 0xFF;
     }
