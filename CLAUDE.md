@@ -512,6 +512,37 @@ fifteenth frame, and `invokeLater`s it. It holds no reference to the machine, wh
 looking at it later safe. The observer is null while the panel is put away -- the
 `Debugger.isArmed()` rule -- so a closed panel costs one null check a frame.
 
+**The Sound tab is the one instrument with no picture to draw**, which is why a sound bug is the
+hardest kind to chase: a note that will not stop, a channel that never starts, music a semitone
+flat. So each of the five rows says the same thing three ways -- the period the game *wrote*, which
+is what a watchpoint catches; the frequency that comes out of it *on the console it is running on*;
+and the nearest note with how far off it is in cents. `APU.VoiceState` is the machine's answer and
+lives in core, so a REPL `voices` command is trivial later; `Notes` is the arithmetic that turns a
+frequency into a name.
+
+**A period is not a pitch and the two channels that look alike do not turn one into the other the
+same way.** A pulse's sequencer is eight steps of two CPU cycles and the triangle's is thirty-two of
+one, so the same period written to both is an octave apart -- which is why game music is written
+with the bass a period lower rather than an octave lower. The noise's number is a shift rate rather
+than a pitch, and the DMC's is a sample rate.
+
+**The meters are peaks, and reading them does not clear them.** A level sampled four times a second
+off a wave oscillating hundreds of times a second is a random number, so what is kept is the loudest
+each voice has been since `APU.clearPeaks()` -- which the runner calls after building a readout, and
+nobody else does. That separation is load-bearing: the debugger's stop snapshot goes through the
+same `Readout`, and a read that reset would mean whichever of the two looked first quietly emptied
+the other. Peaks are taken *before* the mute, so a voice somebody has switched off still moves its
+meter -- "this is playing and you cannot hear it" is a different answer from "this is not playing",
+and telling them apart is most of what the mute is for. Tracking is off until something asks, which
+costs the mixer's hottest line one null check.
+
+**The scope is scaled to what a game actually puts out rather than to the sixteen bit range.**
+Fifteen seconds of Super Mario Bros.' first level peaks at 0.20 of full scale and averages 0.02:
+two high passes take the DC out on the way, so what reaches a scope is the swing rather than the
+level, and a trace drawn against the whole range is a flat line. Fixed rather than normalised to
+whatever is in the buffer, which is the important half -- a scope that scaled itself would draw
+silence at full scale the moment the last note ended.
+
 **`Readout` is also what a `MachineSnapshot` is made of.** The machine's registers are the
 machine's registers, and two shapes for them would be two places to add the next one to; a snapshot
 is a readout plus the things only a stopped machine can afford, which is 64K of address space and

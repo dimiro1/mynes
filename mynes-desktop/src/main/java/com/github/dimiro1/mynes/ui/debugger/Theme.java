@@ -8,9 +8,12 @@ import java.awt.Font;
 import java.util.Locale;
 
 /**
- * Every colour the debugger paints with, in one place -- and, for the one thing that is not a
- * colour, the heading over a panel, which the control panel's own column borrows so that the two
- * halves of one window are lettered the same.
+ * Every colour the debugger paints with, in one place.
+ * <p>
+ * The structural half of it is public and the syntax colours are not, which is the line worth
+ * keeping: what a window's headings, its muted text and its running-or-stopped green are is one
+ * question for the whole control panel, and what colour a branch instruction is drawn in is the
+ * disassembly's alone.
  * <p>
  * The structural ones -- muted text, the accent, selection -- come out of the look and feel, so
  * that the window keeps looking like the rest of the program if the theme ever changes, with a
@@ -58,7 +61,7 @@ public final class Theme {
         return label;
     }
 
-    static Color muted() {
+    public static Color muted() {
         return colour("Label.disabledForeground", Color.GRAY);
     }
 
@@ -73,11 +76,11 @@ public final class Theme {
         return blend(muted, back, 0.55f);
     }
 
-    static Color foreground() {
+    public static Color foreground() {
         return colour("Label.foreground", Color.BLACK);
     }
 
-    static Color background() {
+    public static Color background() {
         return colour("List.background", Color.WHITE);
     }
 
@@ -97,11 +100,11 @@ public final class Theme {
         return BREAKPOINT;
     }
 
-    static Color running() {
+    public static Color running() {
         return RUNNING;
     }
 
-    static Color stopped() {
+    public static Color stopped() {
         return STOPPED;
     }
 

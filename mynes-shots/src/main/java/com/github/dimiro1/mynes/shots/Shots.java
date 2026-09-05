@@ -515,6 +515,11 @@ public final class Shots {
 
         debugger.addBreakpoint(SMB_NMI, Condition.parse(SMB_PLAYING));
 
+        // The meters, which are off until something asks. Nothing is clocking this machine by the
+        // time the picture is taken, so what they show is the loudest each voice was over the run
+        // rather than over the quarter second a running one would report.
+        session.nes().getAPU().setPeakTracking(true);
+
         Debugger.Stop stop = null;
         var frame = played.frame();
 

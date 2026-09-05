@@ -109,6 +109,10 @@ class SaveStateCompletenessTests {
                     "which voices whoever is listening has switched off, which is the Debug menu's"
                             + " ticks rather than anything the chip holds -- the same argument as"
                             + " PPU.backgroundLayerVisible, and the machine cannot tell either way"),
+            Map.entry("APU.peaks",
+                    "the loudest each voice has been since a meter last looked, which is the meter's"
+                            + " rather than the chip's -- and null unless one is being drawn, which"
+                            + " is what keeps it off the mixer's hottest line"),
             Map.entry("CPU.speculating",
                     "true only in the middle of a halted cycle, which is run and then taken back."
                             + " A state is taken between cycles, where it is always false"),
@@ -382,9 +386,11 @@ class SaveStateCompletenessTests {
             var next = counter[0]++;
 
             if (field.getType().isArray() && field.getType().getComponentType().isPrimitive()) {
-                // Only the ones a state is expected to carry. Scrambling the PRG ROM would be
-                // scrambling the cartridge, which no save state claims to put back.
-                if (!isCartridgeROM(name)) {
+                // Only the ones a state is expected to carry, and only where there is one. An array
+                // field holding null is stepped over the way an object field holding null is: it is
+                // a piece of instrumentation nobody has switched on -- APU.peaks is the one -- and
+                // it has to be on the list below to have got here at all.
+                if (!isCartridgeROM(name) && value != null) {
                     for (var i = 0; i < Array.getLength(value); i++) {
                         writeElement(value, i, next + i);
                     }

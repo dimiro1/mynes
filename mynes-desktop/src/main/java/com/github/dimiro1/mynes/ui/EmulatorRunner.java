@@ -105,6 +105,16 @@ public class EmulatorRunner {
      */
     private static final int READOUT_FRAMES = 15;
 
+    /**
+     * How many points of the last frame's sound a readout carries, for the scope to draw.
+     * <p>
+     * A frame is 735 samples on NTSC and this takes every third, which is as much of a waveform as
+     * a couple of hundred pixels can show. Decimated rather than averaged deliberately: a scope is
+     * for seeing the shape of a wave, and averaging is a low pass that would take the corners off
+     * the square one the pulses actually make.
+     */
+    private static final int SCOPE_SAMPLES = 245;
+
     private final NES nes;
     private final ScreenComponent screen;
     private final AudioOutput audio;
@@ -206,6 +216,11 @@ public class EmulatorRunner {
      * frame number: a rewind moves that by two at a time and would step over any multiple.
      */
     private int untilReadout;
+
+    /**
+     * A decimated copy of the last frame's sound, refilled only while somebody is watching.
+     */
+    private final short[] scope = new short[SCOPE_SAMPLES];
 
     /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
@@ -422,6 +437,14 @@ public class EmulatorRunner {
      */
     public void setFrameObserver(final @Nullable Consumer<Readout> observer) {
         this.frameObserver = observer;
+
+        // The meters, which cost the mixer a null check on its hottest line and nothing else while
+        // nobody is looking. Posted rather than set here, so the field the mixer reads is only ever
+        // written by the thread that reads it.
+        var apu = nes.getAPU();
+        var wanted = observer != null;
+
+        post(() -> apu.setPeakTracking(wanted));
     }
 
     /**
@@ -853,7 +876,6 @@ public class EmulatorRunner {
                 // machine somebody is stepping through is not running at all.
                 if (completed) {
                     framesRun++;
-                    observeFrames(1);
                 }
 
                 // Drained up here rather than at the two places below that used to do it, because
@@ -862,6 +884,14 @@ public class EmulatorRunner {
                 // through is left alone, exactly as it was: there is no finished frame of sound in
                 // it, and the APU's own ring holds several frames' worth of slack.
                 var sampleCount = completed ? apu.drainSamples(samples) : 0;
+
+                // After the drain, because the readout carries a slice of exactly the sound this
+                // frame produced -- and the drain is not a clock, so the machine is still standing
+                // where the frame left it.
+                if (completed) {
+                    fillScope(sampleCount);
+                    observeFrames(1);
+                }
 
                 // Every frame that finished, wherever it finished -- stepped, halted, fast
                 // forwarded. One place, above everything below that might skip the rest of the
@@ -1090,10 +1120,36 @@ public class EmulatorRunner {
         untilReadout = READOUT_FRAMES;
 
         // Built here and handed over whole. A lambda that read the machine on the other thread
-        // would be reading a running one, which is the whole thing Readout exists to avoid.
-        var readout = Readout.of(nes);
+        // would be reading a running one, which is the whole thing Readout exists to avoid -- and
+        // the scope is cloned for the same reason: this thread refills its own next frame.
+        var readout = Readout.of(nes, scope.clone());
+
+        // The meters' window starts again here rather than inside the reading, so that the
+        // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
+        nes.getAPU().clearPeaks();
 
         SwingUtilities.invokeLater(() -> observer.accept(readout));
+    }
+
+    /**
+     * Takes every third sample of the frame that has just finished, or leaves the last frame's
+     * where it is when there is nothing to take -- a stepped frame drains no sound.
+     * <p>
+     * Only while somebody is watching, which is the {@link #frameObserver} rule: nothing here runs
+     * for a panel that is closed.
+     */
+    private void fillScope(final int count) {
+        if (frameObserver == null || count == 0) {
+            return;
+        }
+
+        var step = Math.max(1, count / SCOPE_SAMPLES);
+
+        for (var i = 0; i < SCOPE_SAMPLES; i++) {
+            var at = i * step;
+
+            scope[i] = at < count ? samples[at] : 0;
+        }
     }
 
     private void runPendingCommands() {

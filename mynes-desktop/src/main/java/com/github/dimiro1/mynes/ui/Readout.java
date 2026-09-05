@@ -1,7 +1,12 @@
 package com.github.dimiro1.mynes.ui;
 
+import com.github.dimiro1.mynes.APU;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.NES;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The machine at a frame boundary: the third way anything in the front end reads one, and the one
@@ -46,6 +51,12 @@ import com.github.dimiro1.mynes.NES;
  * @param frameIRQInhibited whether $4017 bit 6 is holding its interrupt off.
  * @param pad1      which buttons player one is holding, as the {@code BUTTON_} flags.
  * @param pad2      the same for player two, which nothing puts anything in yet.
+ * @param voices    what each of the APU's five is doing, in {@link APUChannel} order.
+ * @param peaks     the loudest each of them has been since the last readout, which is a quarter of
+ *                  a second: 0 to 15, or 0 to 127 for the DMC.
+ * @param scope     a decimated slice of the last frame's mixed output, or empty where there is no
+ *                  sound card to have drained one. Handed over rather than shared -- whoever built
+ *                  it must not write to it again.
  */
 public record Readout(
         CPU.State cpu,
@@ -64,14 +75,40 @@ public record Readout(
         boolean fiveStep,
         boolean frameIRQInhibited,
         int pad1,
-        int pad2) {
+        int pad2,
+        List<APU.VoiceState> voices,
+        int[] peaks,
+        short[] scope) {
+
+    /**
+     * What a readout taken anywhere but the emulation loop has for a scope: nothing. The samples
+     * belong to the thread feeding the sound card, and a machine stopped at a breakpoint is not
+     * feeding one.
+     */
+    public static final short[] NO_SCOPE = new short[0];
 
     /**
      * Reads the machine. Only ever called on the thread that clocks it, at a frame boundary.
      */
     public static Readout of(final NES nes) {
+        return of(nes, NO_SCOPE);
+    }
+
+    /**
+     * The same, with a slice of what the sound card was given -- which only the loop that drained it
+     * has.
+     */
+    public static Readout of(final NES nes, final short[] scope) {
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
+        var voices = new ArrayList<APU.VoiceState>(APUChannel.values().length);
+        var peaks = new int[APUChannel.values().length];
+
+        for (var channel : APUChannel.values()) {
+            voices.add(apu.voice(channel));
+        }
+
+        apu.peaks(peaks);
 
         return new Readout(
                 nes.getCPU().getState(),
@@ -90,7 +127,27 @@ public record Readout(
                 apu.isFiveStepFrameCounter(),
                 apu.isFrameIRQInhibited(),
                 nes.getController1().getButtons(),
-                nes.getController2().getButtons());
+                nes.getController2().getButtons(),
+                List.copyOf(voices),
+                peaks,
+                scope);
+    }
+
+    /**
+     * What one voice is doing, by name rather than by position.
+     */
+    public APU.VoiceState voice(final APUChannel channel) {
+        return voices.get(channel.ordinal());
+    }
+
+    /**
+     * How loud that voice has been since the last readout, as a fraction of the loudest it could
+     * be: 15 for the four that come off an envelope or a sequencer, 127 for the DMC's level.
+     */
+    public double peak(final APUChannel channel) {
+        var top = channel == APUChannel.DMC ? 127.0 : 15.0;
+
+        return Math.min(1, peaks[channel.ordinal()] / top);
     }
 
     /**

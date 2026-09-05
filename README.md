@@ -145,6 +145,9 @@ file is where they live.
 - A nametable view with the scroll window drawn over all four tables, a sprite view of all
   sixty-four with their attributes, a palette view over the thirty-two bytes the whole picture is
   coloured through, and a tile view of character memory.
+- A sound view of all five voices: the period the game wrote, the frequency it comes out as on the
+  console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
+  each and a scope of the mix.
 - Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
   and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels

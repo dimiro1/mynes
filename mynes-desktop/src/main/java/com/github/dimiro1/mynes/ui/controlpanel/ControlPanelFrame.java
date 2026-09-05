@@ -15,6 +15,7 @@ import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerPanel;
+import com.github.dimiro1.mynes.ui.sound.SoundPanel;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.AbstractAction;
@@ -296,26 +297,29 @@ public final class ControlPanelFrame extends JFrame {
             NametableViewerPanel nametables,
             OAMViewerPanel sprites,
             PaletteViewerPanel palette,
-            CHRViewerPanel tiles) {
+            CHRViewerPanel tiles,
+            SoundPanel sound) {
 
         private Instruments(final NES nes, final Cart cart, final NESPalette colours) {
             this(
                     new NametableViewerPanel(nes, colours),
                     new OAMViewerPanel(nes.getPPU(), colours),
                     new PaletteViewerPanel(nes.getPPU(), colours),
-                    new CHRViewerPanel(cart, nes.getPPU(), colours));
+                    new CHRViewerPanel(cart, nes.getPPU(), colours),
+                    new SoundPanel());
         }
 
         /**
-         * The pictures first and the tiles last, which is the order the questions come in: what is
-         * on the screen, what is over it, what colours both are drawn through, and only then what
-         * the game has to draw with.
+         * The pictures in the order the questions come in -- what is on the screen, what is over
+         * it, what colours both are drawn through, and only then what the game has to draw with --
+         * and the half of the machine that has no picture at the end.
          */
         void addTo(final JTabbedPane pane) {
             pane.addTab("Nametables", fixed(nametables));
             pane.addTab("Sprites", filling(sprites));
             pane.addTab("Palette", fixed(palette));
             pane.addTab("Tiles", fixed(tiles));
+            pane.addTab("Sound", filling(sound));
         }
 
         void setPalette(final NESPalette colours) {
@@ -323,6 +327,10 @@ public final class ControlPanelFrame extends JFrame {
             sprites.setPalette(colours);
             palette.setPalette(colours);
             tiles.setPalette(colours);
+        }
+
+        void show(final Readout readout) {
+            sound.show(readout);
         }
     }
 
@@ -390,6 +398,10 @@ public final class ControlPanelFrame extends JFrame {
      */
     public void describe(final Readout readout) {
         dashboard.show(readout);
+
+        if (instruments != null) {
+            instruments.show(readout);
+        }
 
         if (debugger != null) {
             debugger.readout(readout);

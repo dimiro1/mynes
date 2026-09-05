@@ -2,6 +2,9 @@ package com.github.dimiro1.mynes;
 
 import com.github.dimiro1.mynes.mappers.IRQHandler;
 import com.github.dimiro1.mynes.state.StateIO;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 /**
  * APU implements the audio unit built into the CPU: the 2A03 of the NTSC NES, or the 2A07 of the
@@ -170,6 +173,15 @@ public class APU {
     private final Triangle triangle = new Triangle();
     private final Noise noise = new Noise();
     private final DMC dmc = new DMC();
+
+    /**
+     * The loudest each voice has been since anybody last asked, or null while nobody is asking.
+     * <p>
+     * Null is the point of it: {@link #mix()} runs on every CPU cycle, and a machine nobody has a
+     * meter pointed at pays one null check there and nothing else. Not part of a save state -- it
+     * belongs to whoever is watching rather than to the machine, the same as the channel mutes.
+     */
+    private int @Nullable [] peaks;
     private final FrameCounter frameCounter = new FrameCounter();
 
     /**
@@ -358,13 +370,36 @@ public class APU {
      * really share.
      */
     private double mix() {
-        var pulses = audible(APUChannel.PULSE_1, pulse1.output())
-                + audible(APUChannel.PULSE_2, pulse2.output());
-        var rest = 3 * audible(APUChannel.TRIANGLE, triangle.output())
-                + 2 * audible(APUChannel.NOISE, noise.output())
-                + audible(APUChannel.DMC, dmc.output);
+        var one = pulse1.output();
+        var two = pulse2.output();
+        var tri = triangle.output();
+        var noi = noise.output();
+        var delta = dmc.output;
+
+        // Before the mute rather than after, so a voice somebody has switched off still moves its
+        // meter. Null unless a meter is being drawn, which is the whole of what this costs.
+        var kept = peaks;
+
+        if (kept != null) {
+            keep(kept, APUChannel.PULSE_1, one);
+            keep(kept, APUChannel.PULSE_2, two);
+            keep(kept, APUChannel.TRIANGLE, tri);
+            keep(kept, APUChannel.NOISE, noi);
+            keep(kept, APUChannel.DMC, delta);
+        }
+
+        var pulses = audible(APUChannel.PULSE_1, one) + audible(APUChannel.PULSE_2, two);
+        var rest = 3 * audible(APUChannel.TRIANGLE, tri)
+                + 2 * audible(APUChannel.NOISE, noi)
+                + audible(APUChannel.DMC, delta);
 
         return PULSE_TABLE[pulses] + TND_TABLE[rest];
+    }
+
+    private static void keep(final int[] peaks, final APUChannel channel, final int level) {
+        if (level > peaks[channel.ordinal()]) {
+            peaks[channel.ordinal()] = level;
+        }
     }
 
     /**
@@ -598,6 +633,125 @@ public class APU {
         }
 
         return status;
+    }
+
+    /**
+     * One voice, as something looking at the chip sees it.
+     * <p>
+     * Here rather than in the front end because it is the machine's answer rather than a window's
+     * question: the five voices are private classes with no getters, and a REPL {@code voices}
+     * command wants exactly this. One record for all five rather than five, because what anybody
+     * does with them is put them in a table -- so the fields that belong to one channel say so, and
+     * are -1 or false everywhere else.
+     *
+     * @param channel   which voice this is.
+     * @param playing   whether it has anything left to play, which is its bit of $4015: a length
+     *                  counter above zero, or bytes left for the DMC. Not the same as audible --
+     *                  a pulse between notes is still playing.
+     * @param length    what is left in the length counter, 0 to 254. Always 0 for the DMC, which
+     *                  has none.
+     * @param period    the divider period as the registers hold it, which is what a game writes and
+     *                  so what a watchpoint would catch.
+     * @param hertz     what that period comes out as: the note for the two pulses and the triangle,
+     *                  the shift rate for the noise, and the sample rate for the DMC. What the
+     *                  period would sound like rather than what is being heard -- a channel between
+     *                  notes still says what it is tuned to, which is often the answer to why it
+     *                  stopped. Zero only where the period makes no note at all: one the sweep unit
+     *                  mutes, or one above hearing.
+     * @param level     what the channel is putting into the mixer this instant, 0 to 15 -- or 0 to
+     *                  127 for the DMC, whose level is its whole output.
+     * @param volume    what the envelope is asking for, 0 to 15, before the sequencer gates it. -1
+     *                  for the triangle, which has no volume control at all, and for the DMC.
+     * @param constant  whether the volume is the constant one rather than the decaying envelope.
+     *                  False where there is no envelope.
+     * @param loop      the length counter's halt bit, which the two pulses and the noise share with
+     *                  the envelope's loop and the triangle calls its control bit. The DMC's is its
+     *                  own loop flag, which restarts the sample rather than holding a counter.
+     * @param duty      which of the four pulse duty cycles, 0 to 3. -1 on the other three.
+     * @param shortMode whether the noise is tapping its register six bits along rather than one,
+     *                  which is the difference between a pitch and a hiss. False elsewhere.
+     * @param linear    what is left in the triangle's linear counter, which gates it as well as the
+     *                  length counter does and is the usual answer to why one has gone quiet with a
+     *                  length still loaded. -1 on the other four, which have none.
+     * @param address   where the DMC is reading from now, or -1 elsewhere.
+     * @param bytesLeft how much of the sample is left to play, or -1 elsewhere.
+     */
+    public record VoiceState(
+            APUChannel channel,
+            boolean playing,
+            int length,
+            int period,
+            double hertz,
+            int level,
+            int volume,
+            boolean constant,
+            boolean loop,
+            int duty,
+            boolean shortMode,
+            int linear,
+            int address,
+            int bytesLeft) {
+    }
+
+    /**
+     * What one of the five voices is doing.
+     * <p>
+     * Reads and works nothing out that the chip does not already hold, so it is safe to ask as
+     * often as anybody likes -- and unlike {@link #readStatus()} it acknowledges nothing.
+     */
+    public VoiceState voice(final APUChannel channel) {
+        return switch (channel) {
+            case PULSE_1 -> pulse1.state(APUChannel.PULSE_1, region);
+            case PULSE_2 -> pulse2.state(APUChannel.PULSE_2, region);
+            case TRIANGLE -> triangle.state(region);
+            case NOISE -> noise.state(region);
+            case DMC -> dmc.state(region);
+        };
+    }
+
+    /**
+     * Starts or stops keeping the loudest each voice has been since the last time anybody asked.
+     * <p>
+     * Off until something asks, which is the rule the debugger's bus hooks keep: a machine nobody
+     * is watching pays one null check on the mixer's hottest line and nothing else. Only ever
+     * called on the thread that clocks the chip, which is what keeps that field plain.
+     */
+    public void setPeakTracking(final boolean tracking) {
+        peaks = tracking ? new int[APUChannel.values().length] : null;
+    }
+
+    /**
+     * The loudest each voice has been since {@link #clearPeaks()} was last called.
+     * <p>
+     * Taken before the mute is applied, so a voice somebody has switched off still shows a meter:
+     * "this is playing and you cannot hear it" is a different answer from "this is not playing",
+     * and telling them apart is most of what the mute is for.
+     * <p>
+     * <b>Reading them does not clear them</b>, which is the same rule the rest of this class keeps
+     * for {@code peek}. It has to be: the debugger's stop snapshot reads a machine through exactly
+     * the same record as the meters do, and a read that reset would mean whichever of the two
+     * looked first quietly emptied the other.
+     *
+     * @param into filled with one level per {@link APUChannel}, zeroed if nothing is being tracked.
+     */
+    public void peaks(final int[] into) {
+        var kept = peaks;
+
+        for (var i = 0; i < into.length; i++) {
+            into[i] = kept == null ? 0 : kept[i];
+        }
+    }
+
+    /**
+     * Starts the peaks counting again, which is how a meter says where its window begins. Whoever
+     * is drawing one owns this; anybody else reading them is a bystander.
+     */
+    public void clearPeaks() {
+        var kept = peaks;
+
+        if (kept != null) {
+            Arrays.fill(kept, 0);
+        }
     }
 
     /**
@@ -1455,6 +1609,29 @@ public class APU {
             return envelope.volume();
         }
 
+        /**
+         * The sequencer runs at one step every {@code period + 1} APU cycles and there are eight of
+         * them, so a whole wave is sixteen CPU cycles' worth of that. Zero while the sweep unit is
+         * muting the channel, since there is no note to name.
+         */
+        private VoiceState state(final APUChannel channel, final Region region) {
+            return new VoiceState(
+                    channel,
+                    lengthCounter.value > 0,
+                    lengthCounter.value,
+                    period,
+                    isMuted() ? 0 : region.cpuClockHz() / (16.0 * (period + 1)),
+                    output(),
+                    envelope.volume(),
+                    envelope.constantVolume,
+                    lengthCounter.halt,
+                    duty,
+                    false,
+                    -1,
+                    -1,
+                    -1);
+        }
+
         private void setEnabled(final boolean enabled) {
             lengthCounter.setEnabled(enabled);
         }
@@ -1568,6 +1745,32 @@ public class APU {
             return SEQUENCE[sequencerStep];
         }
 
+        /**
+         * Thirty-two steps at one CPU cycle's worth of divider each, so an octave below a pulse
+         * written with the same period -- which is why a bass line and its melody are written a
+         * period apart rather than an octave.
+         * <p>
+         * A period below two is a wave above 15kHz that the chip turns into a steady half level
+         * rather than a note, so it is reported as no pitch at all.
+         */
+        private VoiceState state(final Region region) {
+            return new VoiceState(
+                    APUChannel.TRIANGLE,
+                    lengthCounter.value > 0,
+                    lengthCounter.value,
+                    period,
+                    period >= 2 ? region.cpuClockHz() / (32.0 * (period + 1)) : 0,
+                    output(),
+                    -1,
+                    false,
+                    control,
+                    -1,
+                    false,
+                    linearCounter,
+                    -1,
+                    -1);
+        }
+
         private void resetSequencer() {
             sequencerStep = 0;
         }
@@ -1672,6 +1875,33 @@ public class APU {
             return envelope.volume();
         }
 
+        /**
+         * How fast the shift register is being clocked rather than a note: what comes out is a
+         * pseudo-random sequence 32767 steps long, or 93 in short mode, so the pitch anybody hears
+         * is that rate divided by the sequence rather than the rate itself.
+         * <p>
+         * The divider counts APU cycles, which is every other CPU cycle, and holds one less than
+         * the count -- so a period of 15 is 32 CPU cycles and 55.9kHz, which is the figure every
+         * table of these prints.
+         */
+        private VoiceState state(final Region region) {
+            return new VoiceState(
+                    APUChannel.NOISE,
+                    lengthCounter.value > 0,
+                    lengthCounter.value,
+                    period,
+                    region.cpuClockHz() / (2.0 * (period + 1)),
+                    output(),
+                    envelope.volume(),
+                    envelope.constantVolume,
+                    lengthCounter.halt,
+                    -1,
+                    shortMode,
+                    -1,
+                    -1,
+                    -1);
+        }
+
         private void setEnabled(final boolean enabled) {
             lengthCounter.setEnabled(enabled);
         }
@@ -1715,6 +1945,30 @@ public class APU {
          * The level itself, seven bits of it, which is what reaches the mixer.
          */
         private int output;
+
+        /**
+         * How fast bytes are being turned into deltas, which is the sample rate: 33143Hz at the top
+         * of the table and 4182Hz at the bottom. Where it is reading from is the address that moves
+         * as the sample plays, not the one $4012 was written with, since that is the question
+         * anybody watching a sample play is asking.
+         */
+        private VoiceState state(final Region region) {
+            return new VoiceState(
+                    APUChannel.DMC,
+                    bytesRemaining > 0,
+                    0,
+                    period,
+                    period > 0 ? region.cpuClockHz() / period : 0,
+                    output,
+                    -1,
+                    false,
+                    loop,
+                    -1,
+                    false,
+                    -1,
+                    currentAddress,
+                    bytesRemaining);
+        }
 
         /**
          * Where the sample starts and how long it is, as $4012 and $4013 spell them: the address

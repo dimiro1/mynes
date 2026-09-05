@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.debugger.Theme;
+import com.github.dimiro1.mynes.ui.sound.Notes;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.BorderFactory;
@@ -140,8 +141,7 @@ final class Dashboard extends JPanel {
         var voices = new ArrayList<String>();
 
         for (var channel : APUChannel.values()) {
-            voices.add(
-                    (sounding(readout.apuStatus(), channel) ? "● " : "○ ") + channel.label());
+            voices.add(describe(readout, channel));
         }
 
         var parts = new ArrayList<String>();
@@ -169,8 +169,24 @@ final class Dashboard extends JPanel {
         return "APU  " + String.join(GAP, parts);
     }
 
-    private static boolean sounding(final int status, final APUChannel channel) {
-        return (status & (1 << channel.ordinal())) != 0;
+    /**
+     * One voice: whether it has anything left to play, its name, and -- for the three that make a
+     * pitch -- the note it is making. The note is the whole reason to look at this line rather than
+     * at the Sound tab, which has the same thing in eight columns.
+     */
+    private static String describe(final Readout readout, final APUChannel channel) {
+        var mark = (readout.apuStatus() & (1 << channel.ordinal())) != 0 ? "● " : "○ ";
+        var voice = readout.voice(channel);
+
+        if (channel == APUChannel.NOISE || channel == APUChannel.DMC) {
+            return mark + channel.label();
+        }
+
+        // Only while it is playing, unlike the Sound tab: this line is a glance, and the note a
+        // silent channel happens to be tuned to is detail rather than news.
+        var note = voice.playing() && voice.hertz() > 0 ? Notes.nameOf(voice.hertz()) : null;
+
+        return mark + channel.label() + (note == null ? "" : " " + note);
     }
 
     /**
