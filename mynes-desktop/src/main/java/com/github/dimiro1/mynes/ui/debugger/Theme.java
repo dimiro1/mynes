@@ -8,7 +8,9 @@ import java.awt.Font;
 import java.util.Locale;
 
 /**
- * Every colour the debugger paints with, in one place.
+ * Every colour the debugger paints with, in one place -- and, for the one thing that is not a
+ * colour, the heading over a panel, which the control panel's own column borrows so that the two
+ * halves of one window are lettered the same.
  * <p>
  * The structural ones -- muted text, the accent, selection -- come out of the look and feel, so
  * that the window keeps looking like the rest of the program if the theme ever changes, with a
@@ -20,7 +22,7 @@ import java.util.Locale;
  * place, and the same red for a breakpoint wherever one is drawn -- the gutter, the points table,
  * the byte a watchpoint caught.
  */
-final class Theme {
+public final class Theme {
     /**
      * The one font every listing in the window uses, so that columns line up across panels.
      */
@@ -46,7 +48,7 @@ final class Theme {
      * because five boxes with lines round them is what the old window looked like and the lines
      * were most of what made it look old.
      */
-    static JLabel heading(final String text) {
+    public static JLabel heading(final String text) {
         var label = new JLabel(text.toUpperCase(Locale.ROOT));
 
         label.setFont(label.getFont().deriveFont(Font.BOLD, 11f));

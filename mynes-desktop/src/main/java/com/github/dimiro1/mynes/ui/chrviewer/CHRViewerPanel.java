@@ -3,11 +3,9 @@ package com.github.dimiro1.mynes.ui.chrviewer;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
 import com.github.dimiro1.mynes.ui.Sweep;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.awt.*;
@@ -62,16 +60,7 @@ public final class CHRViewerPanel extends JPanel {
      */
     private NESPalette palette;
 
-    /**
-     * @param pause the Pause tick to put at the far end of the options row, or null where whatever
-     *              holds this view owns the one tick over the machine.
-     */
-    public CHRViewerPanel(
-            final Cart cart,
-            final PPU ppu,
-            final NESPalette palette,
-            final @Nullable PauseBox pause) {
-
+    public CHRViewerPanel(final Cart cart, final PPU ppu, final NESPalette palette) {
         this.cart = cart;
         this.ppu = ppu;
         this.palette = palette;
@@ -80,12 +69,12 @@ public final class CHRViewerPanel extends JPanel {
         this.selectedTile = new TileComponent(
                 selectedTileNumber, baseAddress, 272, 272, cart.mapper());
 
-        init(pause);
+        init();
 
         Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final @Nullable PauseBox pause) {
+    private void init() {
         setLayout(new BorderLayout());
 
         tilesViewer.addChangeListener(tile -> {
@@ -106,22 +95,12 @@ public final class CHRViewerPanel extends JPanel {
         options.add(getPaletteJComboBox());
         options.add(getMode8x16JCheckBox());
 
-        // Pause at the far end, away from the controls that only change what is drawn: this one
-        // changes the machine, which is a different kind of thing to be clicking.
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        controls.add(options, BorderLayout.WEST);
-
-        if (pause != null) {
-            controls.add(pause, BorderLayout.EAST);
-        }
-
         selectedLabel.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
         updateSelectedLabel();
 
         add(selectedLabel, BorderLayout.NORTH);
         add(tiles, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
+        add(options, BorderLayout.SOUTH);
     }
 
     /**

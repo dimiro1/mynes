@@ -51,7 +51,7 @@ class PPUViewerPanelTests {
 
     @Test
     void theNametableViewerBuildsAndDrawsAllFour() {
-        var view = new NametableViewerPanel(nes, Palettes.defaultPalette(), null);
+        var view = new NametableViewerPanel(nes, Palettes.defaultPalette());
 
         view.setPalette(Palettes.defaultPalette());
         view.refresh();
@@ -60,7 +60,7 @@ class PPUViewerPanelTests {
 
     @Test
     void theOAMViewerBuildsAndDrawsEverySprite() {
-        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette());
 
         view.setPalette(Palettes.defaultPalette());
         view.refresh();
@@ -74,7 +74,7 @@ class PPUViewerPanelTests {
      */
     @Test
     void thePaletteViewerBuildsAndDrawsEveryCell() {
-        var view = new PaletteViewerPanel(nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new PaletteViewerPanel(nes.getPPU(), Palettes.defaultPalette());
 
         view.setPalette(Palettes.defaultPalette());
         Views.paint(view);
@@ -118,7 +118,7 @@ class PPUViewerPanelTests {
      */
     @Test
     void theOAMViewerGroupsTheSpritesAndPicksOneWithAClick() {
-        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette());
 
         var table = Views.find(view, JTable.class);
         var grouped = checkBox(view, "Group");
@@ -162,7 +162,7 @@ class PPUViewerPanelTests {
      */
     @Test
     void theOAMViewerCanLeaveOutTheSpritesParkedBelowThePicture() {
-        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette());
 
         var table = Views.find(view, JTable.class);
         var onScreenOnly = checkBox(view, "On screen only");
@@ -191,8 +191,7 @@ class PPUViewerPanelTests {
     }
 
     /**
-     * A tick by its label rather than whichever checkbox the walk reaches first, which is now a
-     * question worth asking: the view has two of them.
+     * A tick by its label rather than whichever checkbox the walk reaches first: the view has two.
      */
     private static JCheckBox checkBox(final Container root, final String label) {
         for (var child : root.getComponents()) {
@@ -239,7 +238,7 @@ class PPUViewerPanelTests {
         nes.getPPU().write(0, 0x20);
 
         try {
-            Views.paint(new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette(), null));
+            Views.paint(new OAMViewerPanel(nes.getPPU(), Palettes.defaultPalette()));
         } finally {
             nes.getPPU().write(0, 0x00);
         }

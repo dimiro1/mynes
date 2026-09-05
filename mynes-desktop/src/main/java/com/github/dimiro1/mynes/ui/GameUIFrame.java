@@ -20,12 +20,8 @@ import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
-import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
-import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
+import com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
-import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerFrame;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
@@ -168,14 +164,11 @@ public class GameUIFrame extends JFrame {
     private final Switches switches = new Switches();
 
     /**
-     * The one item in the Hacks menu that needs a cartridge. The menu as a whole is deliberately not
-     * gated, because everything else in it is a remembered preference with something to change before
-     * a ROM is open -- and a code is written for one particular game, so there is nothing to type
-     * until there is a game to type it for.
+     * The five things the control panel offers a button for, shared with the menu items that offer
+     * the same five. Beside the switches rather than among them; see {@link Commands}.
      */
-    private final JMenuItem debugMenuTrace = new JMenuItem("Start Trace...");
-    private final JMenuItem debugMenuStopTrace = new JMenuItem("Stop Trace");
-    private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
+    private final Commands commands = new Commands();
+
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
 
     /**
@@ -199,7 +192,6 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem machineMenuStopRecording = new JMenuItem("Stop Recording");
     private final JMenuItem machineMenuPlay = new JMenuItem("Play Movie...");
     private final JMenuItem machineMenuStopPlayback = new JMenuItem("Stop Playback");
-    private final JMenuItem machineMenuPowerCycle = new JMenuItem("Power Cycle", KeyEvent.VK_C);
 
     /**
      * The games somebody has opened before. Built afresh each time the File menu is pulled down
@@ -261,11 +253,13 @@ public class GameUIFrame extends JFrame {
         }
     };
 
-    private CHRViewerFrame chrViewerFrame;
-    private NametableViewerFrame nametableViewerFrame;
-    private OAMViewerFrame oamViewerFrame;
-    private PaletteViewerFrame paletteViewerFrame;
-    private DebuggerFrame debuggerFrame;
+    /**
+     * The one debug window there is, or null while nobody has asked for it. Built with the machine
+     * that is running and repointed at whatever runs next, rather than closed: it carries the
+     * breakpoints, the address somebody was looking at and the size they gave the window, and a
+     * power cycle is exactly when they want all three back.
+     */
+    private ControlPanelFrame controlPanel;
 
     /**
      * The trace being written, or null when none is. Not kept across cartridges: a file of one
@@ -476,13 +470,8 @@ public class GameUIFrame extends JFrame {
         machineMenu.setMnemonic(KeyEvent.VK_M);
         machineMenu.setEnabled(false);
 
-        JMenuItem machineMenuReset = new JMenuItem("Reset", KeyEvent.VK_R);
-        machineMenuReset.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, command));
-        machineMenu.add(machineMenuReset);
-
-        machineMenuPowerCycle.setAccelerator(
-                KeyStroke.getKeyStroke(KeyEvent.VK_R, command | InputEvent.SHIFT_DOWN_MASK));
-        machineMenu.add(machineMenuPowerCycle);
+        machineMenu.add(new JMenuItem(commands.reset()));
+        machineMenu.add(new JMenuItem(commands.powerCycle()));
 
         machineMenu.add(regionMenu());
 
@@ -540,30 +529,18 @@ public class GameUIFrame extends JFrame {
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
 
-        JMenuItem debugMenuDebugger = new JMenuItem("Debugger", KeyEvent.VK_D);
-        debugMenu.add(debugMenuDebugger);
-
-        JMenuItem debugMenuCHRViewer = new JMenuItem("CHR Viewer", KeyEvent.VK_C);
-        debugMenu.add(debugMenuCHRViewer);
-
-        JMenuItem debugMenuNametableViewer = new JMenuItem("Nametable Viewer", KeyEvent.VK_N);
-        debugMenu.add(debugMenuNametableViewer);
-
-        JMenuItem debugMenuOAMViewer = new JMenuItem("OAM Viewer", KeyEvent.VK_O);
-        debugMenu.add(debugMenuOAMViewer);
-
-        JMenuItem debugMenuPaletteViewer = new JMenuItem("Palette Viewer", KeyEvent.VK_P);
-        debugMenu.add(debugMenuPaletteViewer);
+        // One door. There were five items here, one per window, and the windows are one window
+        // now -- so what is left is the way in, and the tabs inside it are the list of what is
+        // there. The two ticks and the voices below stay: they are switches on the machine rather
+        // than things to look at, and the same switches are in the panel's own column.
+        JMenuItem debugMenuControlPanel = new JMenuItem("Control Panel", KeyEvent.VK_C);
+        debugMenuControlPanel.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_D, command));
+        debugMenu.add(debugMenuControlPanel);
 
         debugMenu.addSeparator();
 
-        // Its own item rather than a tick, because starting one asks where it should go and stopping
-        // one does not -- the shape of Record Movie... in the Machine menu, and for the same reason.
-        debugMenuTrace.setMnemonic(KeyEvent.VK_T);
-        debugMenu.add(debugMenuTrace);
-
-        debugMenuStopTrace.setEnabled(false);
-        debugMenu.add(debugMenuStopTrace);
+        debugMenu.add(new JMenuItem(commands.startTrace()));
+        debugMenu.add(new JMenuItem(commands.stopTrace()));
 
         debugMenu.addSeparator();
 
@@ -581,9 +558,11 @@ public class GameUIFrame extends JFrame {
         hacksMenu.add(tick(switches.unlimitedSprites()));
         hacksMenu.add(overclockMenu());
 
-        hacksMenuGameGenie.setMnemonic(KeyEvent.VK_G);
-        hacksMenuGameGenie.setEnabled(false);
-        hacksMenu.add(hacksMenuGameGenie);
+        // The one item in the Hacks menu that needs a cartridge. The menu as a whole is
+        // deliberately not gated, because everything else in it is a remembered preference with
+        // something to change before a ROM is open -- and a code is written for one particular
+        // game, so there is nothing to type until there is a game to type it for.
+        hacksMenu.add(new JMenuItem(commands.gameGenie()));
 
         JMenu settingsMenu = new JMenu("Settings");
         settingsMenu.setMnemonic(KeyEvent.VK_S);
@@ -671,20 +650,8 @@ public class GameUIFrame extends JFrame {
                     config.setPalette(currentRegion(), chosen);
                     screen.setPalette(chosen);
 
-                    if (chrViewerFrame != null) {
-                        chrViewerFrame.setPalette(chosen);
-                    }
-
-                    if (nametableViewerFrame != null) {
-                        nametableViewerFrame.setPalette(chosen);
-                    }
-
-                    if (oamViewerFrame != null) {
-                        oamViewerFrame.setPalette(chosen);
-                    }
-
-                    if (paletteViewerFrame != null) {
-                        paletteViewerFrame.setPalette(chosen);
+                    if (controlPanel != null) {
+                        controlPanel.setPalette(chosen);
                     }
 
                     saveConfig();
@@ -731,19 +698,18 @@ public class GameUIFrame extends JFrame {
         });
 
         // The reset button on the console: memory survives, the CPU restarts through its reset
-        // vector. Posted rather than called because only the emulation thread touches the NES.
-        machineMenuReset.addActionListener(e -> {
+        // vector. Through the runner rather than posted straight at the machine, because a movie
+        // being recorded has to be told about a reset before the machine sees it -- and one posted
+        // command is the only way to be sure of that order.
+        commands.reset().onRun(() -> {
             if (runner != null) {
-                // Through the runner rather than posted straight at the machine, because a movie
-                // being recorded has to be told about a reset before the machine sees it -- and one
-                // posted command is the only way to be sure of that order.
                 runner.reset();
             }
         });
 
         // Pulling the power instead: a brand new machine, built from the cartridge already in
         // the slot.
-        machineMenuPowerCycle.addActionListener(e -> {
+        commands.powerCycle().onRun(() -> {
             if (cart != null) {
                 startMachine(cart);
             }
@@ -805,7 +771,7 @@ public class GameUIFrame extends JFrame {
         // keep it. The whole list goes over on every change and is replayed onto the device, which
         // keeps the rule about what two codes for one address mean in the device rather than
         // agreed between two.
-        hacksMenuGameGenie.addActionListener(e ->
+        commands.gameGenie().onRun(() ->
                 new GameGenieDialog(this, genieCodes, updated -> {
                     genieCodes = updated;
 
@@ -819,96 +785,10 @@ public class GameUIFrame extends JFrame {
                     }
                 }).setVisible(true));
 
-        // The viewer reads the mapper's character memory and the PPU's palette RAM from this
-        // thread while the emulation thread runs. Deliberately unsynchronised: reading an array
-        // element cannot tear, so the worst case is a debug window showing a tile a frame out of
-        // date.
-        debugMenuCHRViewer.addActionListener(
-                e -> {
-                    if (cart == null) {
-                        logger.log(Level.ERROR, "cartridge is not loaded");
-                        JOptionPane.showMessageDialog(
-                                this,
-                                "Cartridge is not loaded",
-                                "Error",
-                                JOptionPane.ERROR_MESSAGE
-                        );
-                        return;
-                    }
+        commands.startTrace().onRun(this::startTrace);
+        commands.stopTrace().onRun(this::stopTrace);
 
-                    if (chrViewerFrame == null) {
-                        chrViewerFrame = new CHRViewerFrame(
-                                this,
-                                cart,
-                                nes.getPPU(),
-                                config.palette(currentRegion()),
-                                pauseControl);
-                    }
-
-                    chrViewerFrame.setVisible(true);
-                }
-        );
-
-        debugMenuNametableViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (nametableViewerFrame == null) {
-                nametableViewerFrame = new NametableViewerFrame(
-                        this, nes, config.palette(currentRegion()), pauseControl);
-            }
-
-            nametableViewerFrame.setVisible(true);
-        });
-
-        debugMenuOAMViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (oamViewerFrame == null) {
-                oamViewerFrame = new OAMViewerFrame(
-                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
-            }
-
-            oamViewerFrame.setVisible(true);
-        });
-
-        debugMenuPaletteViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (paletteViewerFrame == null) {
-                paletteViewerFrame = new PaletteViewerFrame(
-                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
-            }
-
-            paletteViewerFrame.setVisible(true);
-        });
-
-        debugMenuTrace.addActionListener(e -> startTrace());
-        debugMenuStopTrace.addActionListener(e -> stopTrace());
-
-        debugMenuDebugger.addActionListener(e -> {
-            if (cart == null) {
-                logger.log(Level.ERROR, "cartridge is not loaded");
-                JOptionPane.showMessageDialog(
-                        this,
-                        "Cartridge is not loaded",
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE
-                );
-                return;
-            }
-
-            if (debuggerFrame == null) {
-                debuggerFrame = new DebuggerFrame(this, nes, runner, debugger);
-            }
-
-            debuggerFrame.setVisible(true);
-        });
+        debugMenuControlPanel.addActionListener(e -> openControlPanel());
 
         helpMenuAbout.addActionListener(e -> JOptionPane.showMessageDialog(
                 this,
@@ -939,6 +819,11 @@ public class GameUIFrame extends JFrame {
                 // And a trace holds up to sixty-four kilobytes of instructions that have not reached
                 // the disk yet, which is the end of whatever the file was opened to look at.
                 stopTrace();
+
+                // Last, because it writes the config file and everything above may have changed
+                // something else in it. Asked of the window here rather than tracked as it is
+                // dragged: a divider being pulled about fires on every pixel it passes.
+                rememberControlPanel();
             }
 
             // Cmd-tabbing away in the middle of a jump would otherwise leave the button held down
@@ -2260,8 +2145,9 @@ public class GameUIFrame extends JFrame {
         machineMenuPlay.setEnabled(cart != null && !busy);
         machineMenuStopPlayback.setEnabled(moviePlaying);
 
-        machineMenuPowerCycle.setEnabled(!busy);
-        hacksMenuGameGenie.setEnabled(cart != null && !busy);
+        commands.reset().setEnabled(runner != null);
+        commands.powerCycle().setEnabled(cart != null && !busy);
+        commands.gameGenie().setEnabled(cart != null && !busy);
 
         switches.region().setEnabled(!busy);
         switches.overclock().setEnabled(!busy);
@@ -2648,12 +2534,6 @@ public class GameUIFrame extends JFrame {
             runner.stop();
         }
 
-        // The old viewers are watching the old machine's memory and palettes; they would keep
-        // showing them forever. Closed rather than repointed, since they are debug windows whose
-        // contents are entirely derived from the machine.
-        destroyCHRViewerFrame();
-        destroyPPUViewerFrames();
-
         // And a trace of one machine with another machine's instructions appended is a file nobody
         // can read. Stopped here rather than at the new machine, so the last few thousand buffered
         // lines are on disk before anything else happens.
@@ -2666,7 +2546,6 @@ public class GameUIFrame extends JFrame {
 
         if (!sameCartridge) {
             debugger.clear();
-            destroyDebuggerFrame();
 
             // And the codes go with it, for the stronger version of the same reason: a breakpoint on
             // the wrong game is merely useless, where a code written for one cartridge is an
@@ -2794,8 +2673,8 @@ public class GameUIFrame extends JFrame {
             keyboardInput.setLatching(true);
         }
 
-        if (debuggerFrame != null) {
-            debuggerFrame.setMachine(nes, runner);
+        if (controlPanel != null) {
+            controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
         }
 
         // Posted before the thread exists, so they are the first things that run on it: a machine
@@ -2808,6 +2687,11 @@ public class GameUIFrame extends JFrame {
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
         fileMenuCopyScreenshot.setEnabled(true);
+
+        // A trace is per machine and the last one was stopped as this one was built, so this is the
+        // one place the item comes back on.
+        commands.startTrace().setEnabled(true);
+
         updateMovieItems();
         describeMachine();
     }
@@ -2986,8 +2870,8 @@ public class GameUIFrame extends JFrame {
 
         logger.log(Level.INFO, "tracing to " + path.getFileName());
 
-        debugMenuTrace.setEnabled(false);
-        debugMenuStopTrace.setEnabled(true);
+        commands.startTrace().setEnabled(false);
+        commands.stopTrace().setEnabled(true);
         describeMachine();
     }
 
@@ -3017,8 +2901,8 @@ public class GameUIFrame extends JFrame {
             finishTrace(stopping, path);
         }
 
-        debugMenuTrace.setEnabled(true);
-        debugMenuStopTrace.setEnabled(false);
+        commands.startTrace().setEnabled(runner != null);
+        commands.stopTrace().setEnabled(false);
         describeMachine();
     }
 
@@ -3079,47 +2963,47 @@ public class GameUIFrame extends JFrame {
         } else {
             runner.resume();
 
-            if (debuggerFrame != null) {
-                debuggerFrame.running();
+            if (controlPanel != null) {
+                controlPanel.running();
             }
         }
 
         describeMachine();
     }
 
-    private void destroyCHRViewerFrame() {
-        if (chrViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing chrViewerFrame");
-            chrViewerFrame.dispose();
-            chrViewerFrame = null;
+    /**
+     * Opens the one debug window, or brings it back to the front if it is already open.
+     * <p>
+     * Built with whatever is running rather than empty, because every instrument in it is a view of
+     * a machine and the Debug menu is greyed out until there is one. Where it opens and how it was
+     * arranged come out of the config file, which is the only thing in there the program writes
+     * rather than somebody.
+     */
+    private void openControlPanel() {
+        if (noCartridge()) {
+            return;
         }
+
+        if (controlPanel == null) {
+            controlPanel = new ControlPanelFrame(
+                    this, switches, commands, pauseControl, config.debugLayout());
+            controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
+        }
+
+        controlPanel.setVisible(true);
+        controlPanel.toFront();
     }
 
-    private void destroyPPUViewerFrames() {
-        if (nametableViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing nametableViewerFrame");
-            nametableViewerFrame.dispose();
-            nametableViewerFrame = null;
-        }
-
-        if (oamViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing oamViewerFrame");
-            oamViewerFrame.dispose();
-            oamViewerFrame = null;
-        }
-
-        if (paletteViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing paletteViewerFrame");
-            paletteViewerFrame.dispose();
-            paletteViewerFrame = null;
-        }
-    }
-
-    private void destroyDebuggerFrame() {
-        if (debuggerFrame != null) {
-            logger.log(Level.DEBUG, "closing debuggerFrame");
-            debuggerFrame.dispose();
-            debuggerFrame = null;
+    /**
+     * Writes down where the panel was left, on the way out of the program.
+     * <p>
+     * Asked of the window rather than tracked as it is dragged: a divider being pulled about fires
+     * on every pixel, and the config file is rewritten whole every time it is saved.
+     */
+    private void rememberControlPanel() {
+        if (controlPanel != null) {
+            config.setDebugLayout(controlPanel.currentLayout());
+            saveConfig();
         }
     }
 
@@ -3136,8 +3020,8 @@ public class GameUIFrame extends JFrame {
         keyboardInput.releaseAll();
         describeMachine();
 
-        if (debuggerFrame != null) {
-            debuggerFrame.stopped(stop);
+        if (controlPanel != null) {
+            controlPanel.stopped(stop);
         }
     }
 }

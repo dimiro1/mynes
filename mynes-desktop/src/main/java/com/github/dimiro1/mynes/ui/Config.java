@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.Region;
+import com.github.dimiro1.mynes.ui.controlpanel.Layout;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
@@ -8,6 +9,7 @@ import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import org.jetbrains.annotations.Nullable;
 
+import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -67,6 +69,8 @@ public final class Config {
     private static final String LATENCY_KEY = "audio.latency-ms";
     private static final String UNLIMITED_SPRITES_KEY = "hacks.unlimited-sprites";
     private static final String OVERCLOCK_KEY = "hacks.overclock";
+    private static final String DEBUG_BOUNDS_KEY = "debug.bounds";
+    private static final String DEBUG_TAB_KEY = "debug.tab";
     private static final String REWIND_SECONDS_KEY = "rewind.seconds";
     private static final String REWIND_KEY_KEY = "rewind.key";
     private static final String RECENT_KEY_PREFIX = "recent.";
@@ -238,6 +242,14 @@ public final class Config {
             # the machine's timing and so what the game does.
             """;
 
+    private static final String DEBUG_HEADER = """
+            # Where the control panel was and which instrument was in front, which is the one thing
+            # in this file the program writes rather than somebody: bounds as x,y,width,height, and
+            # the tab by name. Deleting both opens it at the default size in the middle of the
+            # display, which is also what happens to bounds that land on no screen there is any
+            # more.
+            """;
+
     private static final String REWIND_HEADER = """
             # Holding the rewind key runs the game backwards through the last few seconds of it.
             # rewind.seconds is how many of them to keep -- 0 switches the whole thing off, and
@@ -290,6 +302,12 @@ public final class Config {
     private int rewindKey;
 
     /**
+     * Not a setting anybody chooses, unlike everything above: it is where a window was left, which
+     * the window writes as it closes. See {@link Layout}.
+     */
+    private Layout debugLayout;
+
+    /**
      * Most recently opened first, each game once. Immutable and replaced wholesale rather than
      * edited, so the menu being built from it never sees half of a change.
      */
@@ -318,6 +336,7 @@ public final class Config {
             final OverclockSetting overclock,
             final int rewindSeconds,
             final int rewindKey,
+            final Layout debugLayout,
             final List<RecentRom> recent) {
         this.keyBindings = keyBindings;
         this.palette = palette;
@@ -341,6 +360,7 @@ public final class Config {
         this.overclock = overclock;
         this.rewindSeconds = rewindSeconds;
         this.rewindKey = rewindKey;
+        this.debugLayout = debugLayout;
         this.recent = recent;
     }
 
@@ -395,7 +415,56 @@ public final class Config {
                         properties.getProperty(REWIND_KEY_KEY),
                         DEFAULT_REWIND_KEY,
                         REWIND_KEY_KEY),
+                debugLayoutFrom(properties),
                 recentFrom(properties));
+    }
+
+    /**
+     * Where the control panel was left, or the default for anything the file does not answer for.
+     * <p>
+     * Nothing here is worth a warning when it will not parse. Every field is allowed to say nothing
+     * already, so a line somebody has broken lands on the same default an absent line does, and the
+     * window opens where it would have opened on a fresh install.
+     */
+    private static Layout debugLayoutFrom(final Properties properties) {
+        return new Layout(
+                boundsFrom(properties.getProperty(DEBUG_BOUNDS_KEY)),
+                properties.getProperty(DEBUG_TAB_KEY));
+    }
+
+    private static @Nullable Rectangle boundsFrom(final @Nullable String text) {
+        if (text == null) {
+            return null;
+        }
+
+        var parts = text.trim().split(",");
+
+        if (parts.length != 4) {
+            return null;
+        }
+
+        var width = intFrom(parts[2], 0);
+        var height = intFrom(parts[3], 0);
+
+        // A window of no size is not somewhere to put one back, and is what a truncated or
+        // half-written line comes out as.
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+
+        return new Rectangle(intFrom(parts[0], 0), intFrom(parts[1], 0), width, height);
+    }
+
+    private static int intFrom(final @Nullable String text, final int fallback) {
+        if (text == null) {
+            return fallback;
+        }
+
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     /**
@@ -810,6 +879,32 @@ public final class Config {
                 .append(overclock.id())
                 .append("\n\n");
 
+        text.append(DEBUG_HEADER);
+
+        if (debugLayout.bounds() != null) {
+            var bounds = debugLayout.bounds();
+
+            text.append(DEBUG_BOUNDS_KEY)
+                    .append('=')
+                    .append(bounds.x)
+                    .append(',')
+                    .append(bounds.y)
+                    .append(',')
+                    .append(bounds.width)
+                    .append(',')
+                    .append(bounds.height)
+                    .append('\n');
+        }
+
+        if (debugLayout.tab() != null) {
+            text.append(DEBUG_TAB_KEY)
+                    .append('=')
+                    .append(debugLayout.tab())
+                    .append('\n');
+        }
+
+        text.append('\n');
+
         text.append(REWIND_HEADER)
                 .append(REWIND_SECONDS_KEY)
                 .append('=')
@@ -867,6 +962,18 @@ public final class Config {
         Files.writeString(path, text, StandardCharsets.ISO_8859_1);
 
         logger.log(Level.INFO, "saved settings to " + path);
+    }
+
+    /**
+     * Where the control panel was left. Never null; {@link Layout#DEFAULT} is what a file that has
+     * never seen one answers.
+     */
+    public Layout debugLayout() {
+        return debugLayout;
+    }
+
+    public void setDebugLayout(final Layout debugLayout) {
+        this.debugLayout = debugLayout;
     }
 
     public KeyBindings keyBindings() {

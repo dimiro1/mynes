@@ -2,9 +2,7 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
 import com.github.dimiro1.mynes.ui.Sweep;
-import org.jetbrains.annotations.Nullable;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -123,13 +121,7 @@ public final class OAMViewerPanel extends JPanel {
     private NESPalette palette;
     private int height = 8;
 
-    /**
-     * @param pause the Pause tick to put at the far end of the options row, or null where whatever
-     *              holds this view owns the one tick over the machine.
-     */
-    public OAMViewerPanel(
-            final PPU ppu, final NESPalette palette, final @Nullable PauseBox pause) {
-
+    public OAMViewerPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.palette = palette;
         this.field = new SpriteFieldPanel(sprites, ppu, palette);
@@ -144,12 +136,12 @@ public final class OAMViewerPanel extends JPanel {
         // sixteen pixels shorter, and every one of those pixels comes off the bottom of the field
         // beside the table.
         refresh();
-        init(pause);
+        init();
 
         Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final @Nullable PauseBox pause) {
+    private void init() {
         setLayout(new BorderLayout());
 
         machine.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
@@ -180,28 +172,26 @@ public final class OAMViewerPanel extends JPanel {
         var listing = new JScrollPane(table);
         listing.setPreferredSize(new java.awt.Dimension(490, PPU.SCREEN_HEIGHT * 2));
 
+        // The field is pinned to the top of its own strip rather than added east directly, because
+        // east is stretched to whatever height the panel has and the field draws the screen across
+        // the whole of the component it is given: in a window packed around it the two were the
+        // same, and in a tab a foot taller the game came out stretched. The table beside it is the
+        // half of this that is worth making taller, and does.
+        var beside = new JPanel(new BorderLayout());
+        beside.add(field, BorderLayout.NORTH);
+
         var body = new JPanel(new BorderLayout(8, 0));
         body.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
         body.add(listing, BorderLayout.CENTER);
-        body.add(field, BorderLayout.EAST);
+        body.add(beside, BorderLayout.EAST);
 
         var options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
         options.add(grouped);
         options.add(onScreenOnly);
 
-        // Pause at the far end, away from the ticks that only change what is drawn: this one
-        // changes the machine, which is a different kind of thing to be clicking.
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        controls.add(options, BorderLayout.WEST);
-
-        if (pause != null) {
-            controls.add(pause, BorderLayout.EAST);
-        }
-
         add(machine, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
+        add(options, BorderLayout.SOUTH);
     }
 
     /**

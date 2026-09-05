@@ -2,9 +2,7 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
 import com.github.dimiro1.mynes.ui.Sweep;
-import org.jetbrains.annotations.Nullable;
 
 import javax.swing.BorderFactory;
 import javax.swing.JLabel;
@@ -52,24 +50,18 @@ public final class PaletteViewerPanel extends JPanel {
     private final JLabel machine = new JLabel();
     private final JLabel pointer = new JLabel();
 
-    /**
-     * @param pause the Pause tick to put at the far end of the controls row, or null where whatever
-     *              holds this view owns the one tick over the machine.
-     */
-    public PaletteViewerPanel(
-            final PPU ppu, final NESPalette palette, final @Nullable PauseBox pause) {
-
+    public PaletteViewerPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.cells = new PaletteRAMPanel(ppu, palette);
         this.use = new PaletteUsePanel(ppu, palette);
 
-        init(pause);
+        init();
         refresh();
 
         Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final @Nullable PauseBox pause) {
+    private void init() {
         setLayout(new BorderLayout());
 
         machine.setBorder(BorderFactory.createEmptyBorder(8, 12, 4, 12));
@@ -104,16 +96,8 @@ public final class PaletteViewerPanel extends JPanel {
         body.add(swatches, BorderLayout.WEST);
         body.add(use, BorderLayout.CENTER);
 
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 12, 8, 12));
-
-        if (pause != null) {
-            controls.add(pause, BorderLayout.EAST);
-        }
-
         add(header, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
 
         describeMachine();
 

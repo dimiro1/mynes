@@ -215,11 +215,22 @@ public final class DebuggerPanel extends JPanel {
         this.runner = runner;
 
         // What is on show describes a machine that no longer exists. The points stay -- they are the
-        // user's, and keeping them is the whole reason this window is repointed rather than closed --
+        // user's, and keeping them is the whole reason this view is repointed rather than closed --
         // but the listing and the memory are emptied rather than left to be believed.
         disassembly.clear();
         memory.clear();
         stack.clear();
+
+        // Read again rather than left alone, because a new cartridge is the one machine change that
+        // clears them: the points are the user's while the game is the same game, and a list of
+        // breakpoints that are no longer set would be the worst kind of stale.
+        var breaks = Set.copyOf(debugger.breakpoints());
+        var conditions = Map.copyOf(debugger.conditions());
+
+        knownBreakpoints = breaks;
+
+        points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
+        disassembly.setBreakpoints(breaks, conditions);
 
         running();
     }

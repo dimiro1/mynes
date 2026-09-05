@@ -271,8 +271,25 @@ public final class Switches {
             putValue(SELECTED_KEY, on);
         }
 
+        /**
+         * Moves the tick and says so, which is what a click does.
+         * <p>
+         * For an accelerator bound straight on a window rather than on a menu item, where there is
+         * no button in the way to flip the tick first. {@code doClick} on a control somewhere in
+         * the window would do both, and holds the event dispatch thread for the length of the
+         * keypress it is pretending to make -- which is a frame and a bit of a game not being drawn.
+         */
+        public void press() {
+            set(!isOn());
+            fire();
+        }
+
         @Override
         public void actionPerformed(final ActionEvent e) {
+            fire();
+        }
+
+        private void fire() {
             if (onChange != null) {
                 onChange.accept(isOn());
             }

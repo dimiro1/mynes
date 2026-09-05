@@ -1,7 +1,7 @@
 package com.github.dimiro1.mynes.ui;
 
-import javax.swing.JComponent;
 import javax.swing.Timer;
+import java.awt.Component;
 import java.awt.event.HierarchyEvent;
 
 /**
@@ -17,7 +17,9 @@ import java.awt.event.HierarchyEvent;
  * behind another tab at any moment -- so the timer follows {@code isShowing} itself, which is the
  * one question both of those were really asking. It is false for a tab that is not in front, for a
  * window that is minimised or closed, and for a panel that was built into an image and never shown
- * at all, which is how a test gets a panel that polls nothing.
+ * at all, which is how a test gets a panel that polls nothing. A window is a {@link Component}
+ * too, which is what lets the control panel sweep on being open rather than on some piece of
+ * itself.
  */
 public final class Sweep {
     private Sweep() {
@@ -32,7 +34,7 @@ public final class Sweep {
      * @param showing whose being on screen decides whether the work is worth doing, which is
      *                normally the panel {@code work} refreshes.
      */
-    public static void every(final int millis, final JComponent showing, final Runnable work) {
+    public static void every(final int millis, final Component showing, final Runnable work) {
         var timer = new Timer(millis, e -> work.run());
 
         showing.addHierarchyListener(event -> {

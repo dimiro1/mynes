@@ -45,7 +45,7 @@ class CHRViewerPanelTests {
 
     @Test
     void theViewBuildsAndDrawsEveryTileOfEveryBank() {
-        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette());
         var banks = combos(view).getFirst();
 
         assertEquals(2, banks.getItemCount(), "8KB of character memory is two 4KB banks");
@@ -63,7 +63,7 @@ class CHRViewerPanelTests {
      */
     @Test
     void theTilesAreDrawnThroughWhicheverPaletteIsChosen() {
-        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette());
         var palettes = palettes(view);
 
         for (var choice = 0; choice < palettes.getItemCount(); choice++) {
@@ -75,11 +75,11 @@ class CHRViewerPanelTests {
 
     /**
      * Tall sprites, which pair the tiles up two at a time and so lay the whole sheet out
-     * differently. The only tick in the view, with the Pause one left out.
+     * differently. The only tick in the view.
      */
     @Test
     void theTilesArePairedUpForTallSprites() {
-        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette(), null);
+        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette());
 
         Views.find(view, JCheckBox.class).doClick();
         Views.paint(view);

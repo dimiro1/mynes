@@ -2,9 +2,7 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
 import com.github.dimiro1.mynes.ui.Sweep;
-import org.jetbrains.annotations.Nullable;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -44,24 +42,17 @@ public final class NametableViewerPanel extends JPanel {
     private final JLabel machine = new JLabel();
     private final JLabel pointer = new JLabel();
 
-    /**
-     * @param pause the Pause tick to put at the far end of the options row, or null where whatever
-     *              holds this view owns the one tick over the machine. The view neither makes one
-     *              nor refreshes it -- see {@link PauseBox} -- it only says where one goes.
-     */
-    public NametableViewerPanel(
-            final NES nes, final NESPalette palette, final @Nullable PauseBox pause) {
-
+    public NametableViewerPanel(final NES nes, final NESPalette palette) {
         this.nes = nes;
         this.nametables = new NametablePanel(nes.getPPU(), palette);
 
-        init(pause);
+        init();
         refresh();
 
         Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final @Nullable PauseBox pause) {
+    private void init() {
         setLayout(new BorderLayout());
 
         machine.setBorder(BorderFactory.createEmptyBorder(8, 12, 4, 12));
@@ -96,19 +87,9 @@ public final class NametableViewerPanel extends JPanel {
         options.add(grid);
         options.add(scroll);
 
-        // Pause at the far end, away from the ticks that only change what is drawn: this one
-        // changes the machine, which is a different kind of thing to be clicking.
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        controls.add(options, BorderLayout.WEST);
-
-        if (pause != null) {
-            controls.add(pause, BorderLayout.EAST);
-        }
-
         add(header, BorderLayout.NORTH);
         add(nametables, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
+        add(options, BorderLayout.SOUTH);
 
         describeMachine();
         pointer.setText(" ");

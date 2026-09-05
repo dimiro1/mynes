@@ -485,6 +485,53 @@ at sixty hertz in anyway, which is what `ResamplerTests` holds it to.
 amplitude, because a fader that moved it linearly would do all of its audible work in the top tenth
 of its travel. There is no zero -- Mute already is one, and it remembers the volume to come back to.
 
+### One window for the debugging, and every lever on it
+
+**Debug > Control Panel** (`Cmd+D`) is the whole of the front end's debugging. There were five
+windows -- the debugger, the nametable, OAM and palette viewers and the CHR viewer -- and they are
+five tabs of one now, with a fixed column beside them holding every switch the Machine, Debug and
+Hacks menus reach. The Debug menu is the way in, the two layer ticks and the voices; there is no
+item per instrument any more, because the tabs are that list.
+
+**One instrument at a time, rather than the debugger beside one.** Side by side was tried first and
+the shapes refuse it: the debugger elides its own buttons below about a thousand pixels, the widest
+instrument wants five hundred, and the column wants two hundred and twenty. Seventeen hundred and
+fifty is wider than a laptop, so side by side is a layout that is right on a desk and broken in a
+bag -- and a default that depends on which screen somebody opened it on is not a default. The
+debugger is still the main view: it is the first tab and the one that is up.
+
+**Every switch is one `javax.swing.Action`, in `Switches`, and every command is one in `Commands`.**
+The menu item and the column's control are built from the same object, so the two cannot disagree,
+`setEnabled(false)` greys both, and the movie gating on Overclock and the Game Genie stays one line
+each. `Toggle.set` and `Choice.select` move a tick without telling anybody -- which is how a switch
+*follows* a machine -- where a click, `Toggle.press` and `Choice.choose` say so. That distinction is
+the whole of the class: `startMachine` replaying a new machine, and `pause` bringing the tick into
+line after a breakpoint, must not be taken for somebody asking for anything.
+
+**A window of its own, and one `Cmd+P` in it.** `KeyboardInput.dispatchKeyEvent` returns early
+while the game window is not active, which is the line that stops typing `$C000` into a debugger
+from pressing Select -- so docking this into the game window would mean rebuilding that rule by
+focus owner. Every `WHEN_IN_FOCUSED_WINDOW` binding in a window shares one map, so the instruments
+carry none of their own; the debugger's F5, F8, F9 and F10 are the only per-instrument keys, and
+there is only ever one debugger.
+
+**`Sweep.every(millis, component, work)` is every refresh timer in the front end**, and it runs only
+while the component is on screen. That one question stands in for the two the windows used to ask --
+a `dispose` that stopped the timer, and an `isShowing` guard inside the tick -- and it is false for a
+tab that is not in front, for a window that is closed, and for a panel built into an image by a test,
+which is what keeps a test from clocking a machine nobody asked it to.
+
+Everything in the window is a `JPanel` and builds without a display, so `PPUViewerPanelTests`,
+`DebuggerPanelTests`, `CHRViewerPanelTests` and the column's half of `ControlPanelTests` run
+wherever the build runs. Only `ControlPanelFrame` itself needs a peer. `ui/Views` in the test tree
+is what paints a panel that is not in a window: `Container.validate` lays nothing out without a
+native peer, so it walks `doLayout` down the tree itself first.
+
+Where the window was and which tab was in front go to `debug.bounds` and `debug.tab` in
+`config.properties` -- the only two entries in that file the program writes rather than somebody.
+Bounds that land on no screen there is any more are dropped, since a window nobody can reach looks
+exactly like one that failed to open.
+
 ### The window fills the screen, and stops when you look away
 
 Two more things nothing headless has, since neither is about a machine.
@@ -841,10 +888,15 @@ mynes-headless/       depends on core, patch and archive
 
 mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and MigLayout live
                       here
-  mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger, and
-                      the sound card: the line, the volume, and the half a percent of resampling
-                      that holds its queue where it was put
-  mynes/ui/ppuviewer/ the three windows over what the PPU is drawing from: the four nametables
+  mynes/ui/           the Swing window, Main, the key bindings, every switch and command in the
+                      program as an Action, and the sound card: the line, the volume, and the half
+                      a percent of resampling that holds its queue where it was put
+  mynes/ui/controlpanel/
+                      the one debug window: the tabs, the column of switches down its side, and
+                      where it was left
+  mynes/ui/debugger/  the debugger and the five panels in it
+  mynes/ui/chrviewer/ the tiles a game has
+  mynes/ui/ppuviewer/ the three views of what the PPU is drawing from: the four nametables
                       with the scroll window over them, the sixty four sprites with their
                       attributes, and the thirty two bytes of palette RAM everything is coloured
                       through
@@ -910,17 +962,16 @@ at all but the matching background cells, which is why setting a sprite palette'
 the screen's background, and $3F04, $3F08 and $3F0C are memory the chip never draws. `PaletteCells`
 is that arithmetic, kept free of Swing so it can be tested where there is no display.
 
-**All four debug windows carry the Machine menu's Pause tick**, and the shortcut with it. A viewer
-is watching something that will not hold still, and stopping it used to mean finding the game
-window, pausing there and coming back -- by which time whatever was worth looking at had been drawn
-over. `PauseBox` is the tick and `PauseControl` is the handle it holds. It is a handle rather than
-the `EmulatorRunner` itself because pausing properly means three more things than setting a flag:
-releasing whatever buttons were held when the game froze, bringing the Machine menu's own tick into
-line, and telling the debugger that what it was waiting for is off. All of that lives in
-`GameUIFrame.pause`, so a viewer asks rather than does. The tick **follows the machine rather than
-remembering what it was last told** -- Pause is reachable from six places now -- which each window's
-refresh timer does for it once a quarter second. `PauseControl.NONE` is how a test and the camera
-say nobody is clocking the machine, and a window handed it draws the tick greyed out.
+**The Pause tick is in the control panel's column, and it follows the machine rather than
+remembering what it was last told.** Pause is reachable from six places, and a machine stops and
+starts for reasons that are nobody's tick: a breakpoint, the debugger's own Run button, a movie
+ending. So the panel sweeps it once a quarter second through `PauseControl`, which is a handle
+rather than the `EmulatorRunner` itself because pausing properly means three more things than
+setting a flag: releasing whatever buttons were held when the game froze, bringing the Machine
+menu's own tick into line, and telling the debugger that what it was waiting for is off. All of
+that lives in `GameUIFrame.pause`, so the panel asks rather than does. `PauseControl.NONE` is how a
+test and the camera say nobody is clocking the machine, and a panel handed it draws the tick greyed
+out.
 
 **Two of the three answer "where" by dimming the frame rather than by drawing on it.** Both draw
 **all 240 lines**, where `ScreenComponent` draws the 224 in front of a television's bezel -- so the

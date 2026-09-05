@@ -110,7 +110,7 @@ file is where they live.
   and it plays on from there.
 - Fast forward at 2x, 4x, 8x or unlimited.
 - Pause when the window goes behind another application, under **Machine > Pause in Background**.
-  The emulator's own windows don't count, so the debugger and the viewers keep the game running.
+  The emulator's own windows don't count, so the control panel keeps the game running.
 - Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
   video, so it is a few kilobytes a minute and replays byte for byte.
 - Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip
@@ -131,18 +131,18 @@ file is where they live.
 
 **Debugging**
 
+- One **Control Panel** (`Cmd/Ctrl+D`), with every instrument as a tab and every switch on the
+  machine in a column down the side — pause, speed, layers, volume, the five sound channels, the
+  overclock, the Game Genie and the tracer, without going back to the game window for any of them.
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
-- A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, an OAM
-  viewer showing all sixty-four sprites, and a palette viewer over the thirty-two bytes the whole
-  picture is coloured through.
-- Both of the last two answer *where*: point at a palette and the screen dims everywhere it is not
-  drawing, and the OAM viewer guesses which sprites are one character so a click outlines all of
-  them.
-- Every one of those windows has Pause in it, so stopping the machine to look at something does not
-  mean going back to the game window first.
+- A nametable view with the scroll window drawn over all four tables, a sprite view of all
+  sixty-four with their attributes, a palette view over the thirty-two bytes the whole picture is
+  coloured through, and a tile view of character memory.
+- Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
+  and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels
   out of the mixer (`--mute pulse1,dmc` headless).
 
@@ -176,6 +176,13 @@ The palette's colours laid down between the lines of a 480-line raster, with the
 Every selection applies the moment it is made, so the game behind the dialog is the comparison.
 
 ![The palette dialog over a running game](shots/palette-dialog.png)
+
+### The control panel
+
+Every instrument as a tab and every switch on the machine beside them, stopped on a conditional
+breakpoint at Super Mario Bros.' NMI handler.
+
+![The control panel](shots/control-panel.png)
 
 ### The nametable viewer
 
