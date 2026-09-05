@@ -5,15 +5,12 @@ import org.junit.jupiter.api.Test;
 import javax.swing.JComponent;
 import javax.swing.JRootPane;
 import javax.swing.KeyStroke;
-import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
-import java.awt.GraphicsEnvironment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * The Pause tick the debug windows carry, which has one job beyond looking like a checkbox: it has
@@ -93,15 +90,12 @@ class PauseBoxTests {
 
     @Test
     void theMachineMenusShortcutWorksInTheWindowItIsPutIn() {
-        assumeFalse(GraphicsEnvironment.isHeadless(), "no toolkit to ask for the shortcut key");
-
         var root = new JRootPane();
         var box = new PauseBox(new Machine());
 
         box.installIn(root);
 
-        var stroke = KeyStroke.getKeyStroke(
-                KeyEvent.VK_P, Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx());
+        var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_P, MenuKey.mask());
         var name = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).get(stroke);
 
         assertNotNull(name, "the shortcut is not bound");
@@ -110,14 +104,11 @@ class PauseBoxTests {
 
     @Test
     void aWindowOverNothingGetsNoShortcutEither() {
-        assumeFalse(GraphicsEnvironment.isHeadless(), "no toolkit to ask for the shortcut key");
-
         var root = new JRootPane();
 
         new PauseBox(PauseControl.NONE).installIn(root);
 
-        var stroke = KeyStroke.getKeyStroke(
-                KeyEvent.VK_P, Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx());
+        var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_P, MenuKey.mask());
 
         assertEquals(
                 null,

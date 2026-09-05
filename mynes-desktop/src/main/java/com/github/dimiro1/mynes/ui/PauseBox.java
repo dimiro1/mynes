@@ -4,7 +4,6 @@ import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JRootPane;
 import javax.swing.KeyStroke;
-import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 
@@ -19,11 +18,18 @@ import java.awt.event.KeyEvent;
  * <p>
  * <b>It follows the machine rather than remembering what it was last told.</b> Pause is reachable
  * from the Machine menu, from four debug windows and from every breakpoint the debugger has, so a
- * tick that only moved when it was clicked would be wrong within a minute. Each window's refresh
- * timer calls {@link #refresh()} instead, which is the same quarter second everything else in those
- * windows runs on.
+ * tick that only moved when it was clicked would be wrong within a minute. So it keeps its own
+ * {@link Sweep} rather than being refreshed by whatever it was put in: following the machine is the
+ * whole of its job, and a tick that only did it where somebody had remembered to ask would be the
+ * bug it exists to prevent.
  */
 public final class PauseBox extends JCheckBox {
+    /**
+     * The same quarter second the debug views sweep on, and for the same reason: fast enough that
+     * the tick is never visibly behind the machine, and two reads of a boolean either way.
+     */
+    private static final int REFRESH_MILLIS = 250;
+
     private final PauseControl control;
 
     public PauseBox(final PauseControl control) {
@@ -36,6 +42,8 @@ public final class PauseBox extends JCheckBox {
         addActionListener(e -> control.setPaused(isSelected()));
 
         refresh();
+
+        Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
     /**
@@ -61,8 +69,7 @@ public final class PauseBox extends JCheckBox {
             return;
         }
 
-        var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
-        var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_P, command);
+        var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_P, MenuKey.mask());
 
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(stroke, "mynes.pause");
         root.getActionMap().put("mynes.pause", new javax.swing.AbstractAction() {
@@ -72,7 +79,6 @@ public final class PauseBox extends JCheckBox {
             }
         });
 
-        setToolTipText("Stop the machine where it is ("
-                + KeyEvent.getModifiersExText(command) + "+P)");
+        setToolTipText("Stop the machine where it is (" + MenuKey.text() + "+P)");
     }
 }

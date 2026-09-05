@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 /**
  * Builds the dialog, empty and full.
  * <p>
- * Nothing here asserts on what it looks like, the same as {@code DebuggerFrameTests}. What it catches
+ * Nothing here asserts on what it looks like, the same as {@code DebuggerPanelTests}. What it catches
  * is the class of mistake that only shows up when the thing is actually built: a MigLayout constraint
  * that does not parse, a list renderer that throws on its first row. Both compile perfectly and fail
  * the moment somebody opens the menu.
