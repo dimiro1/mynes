@@ -941,8 +941,8 @@ public class GameUIFrame extends JFrame {
             }
         });
 
-        switches.background().onChange(on -> onPPU(ppu -> ppu.setBackgroundLayerVisible(on)));
-        switches.sprites().onChange(on -> onPPU(ppu -> ppu.setSpriteLayerVisible(on)));
+        switches.background().onChange(on -> onPicture(ppu -> ppu.setBackgroundLayerVisible(on)));
+        switches.sprites().onChange(on -> onPicture(ppu -> ppu.setSpriteLayerVisible(on)));
 
         for (var channel : APUChannel.values()) {
             switches.channel(channel).onChange(on -> {
@@ -959,7 +959,7 @@ public class GameUIFrame extends JFrame {
             saveConfig();
             updateStatusBar();
 
-            onPPU(ppu -> ppu.setUnlimitedSprites(on));
+            onPicture(ppu -> ppu.setUnlimitedSprites(on));
         });
 
         switches.warp().onChange(on -> {
@@ -1078,6 +1078,28 @@ public class GameUIFrame extends JFrame {
      * inside the posted work: that would read it on the emulation thread whenever the queue got
      * round to it, which is neither this thread's machine nor safe to ask for.
      */
+    /**
+     * The same, for the three switches that change what the chip <em>draws</em> rather than what it
+     * does: Show Background, Show Sprites and Unlimited Sprites.
+     * <p>
+     * They take part where a pixel is composed, so the picture only moves when a frame is rendered
+     * -- which a machine somebody has paused or stopped at a breakpoint is not doing, and which is
+     * exactly when somebody reaches for them. So the frame is drawn again. See
+     * {@link EmulatorRunner#redrawPicture()}, which does nothing at all while the machine is
+     * running, since a running one draws the next frame in a moment anyway.
+     * <p>
+     * The palette, the two filters, the crops and the aspect are not among these: those change what
+     * is done with the colour indices rather than what the chip put in them, and
+     * {@link ScreenComponent} has always redrawn from the frame it kept.
+     */
+    private void onPicture(final Consumer<PPU> change) {
+        onPPU(change);
+
+        if (runner != null) {
+            runner.redrawPicture();
+        }
+    }
+
     private void onPPU(final Consumer<PPU> change) {
         if (runner == null) {
             return;

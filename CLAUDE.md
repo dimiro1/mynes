@@ -710,6 +710,25 @@ times a second would be the thing that broke the game it was pointed at. `Readou
 that by clocking the machine afterwards, since a real `$4015` read does not clear the flag there and
 then -- it arms the clear for the next cycle.
 
+**Show Background, Show Sprites and Unlimited Sprites redraw a stopped machine, and that costs a
+whole frame of emulation.** They take part where the PPU *composes* a pixel, and what the
+framebuffer keeps is what came out of that -- the background under a sprite is simply not in it --
+so there is no redrawing the picture without rendering it again. That is what separates these three
+from the palette, the two filters, the crops and the aspect, which `ScreenComponent` redraws from
+the colour indices it kept and which have always worked while paused.
+
+So `EmulatorRunner.redrawPicture` takes a save state, goes through **two** frame boundaries -- to
+the end of whatever frame the machine was standing in, then one whole one, since a partial frame
+would leave the top of the picture as it was -- presents that, and puts the state back. The machine
+comes back byte for byte, which is the same claim the rewind rests on and is what
+`EmulatorRunnerTests` holds it to. Two things are swept up afterwards: the frames run
+`Debugger.unwatched`, because a write watchpoint that latched during one would report itself on the
+next real instruction as a stop nobody asked for, and the samples they made are drained and dropped,
+because `APU.sampleRing` is deliberately not in a state. **The picture ends up one frame ahead of
+the one it replaced** and there is no way for it not to be -- the machine has not moved, so what
+that costs is a frame of animation. Nothing happens at all while the machine is running, since a
+running one draws the next frame within about seventeen milliseconds anyway.
+
 **Every switch is one `javax.swing.Action`, in `Switches`, and every command is one in `Commands`.**
 The menu item and the column's control are built from the same object, so the two cannot disagree,
 `setEnabled(false)` greys both, and the movie gating on Overclock and the Game Genie stays one line

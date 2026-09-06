@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.MovieRecorder;
@@ -11,6 +12,8 @@ import com.github.dimiro1.mynes.state.Rewind;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.SwingUtilities;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -414,6 +417,38 @@ public class EmulatorRunner {
             command.run();
             audio.flush();
         });
+    }
+
+    /**
+     * Draws the frame again with whatever the picture switches now say, for a machine that is not
+     * running and so would not draw one by itself.
+     * <p>
+     * <b>Why this cannot be a redraw.</b> Show Background, Show Sprites and Unlimited Sprites take
+     * part where the PPU <em>composes</em> a pixel, and what the framebuffer keeps is what came out
+     * of that -- so the background under a sprite is not in it, and no amount of looking at the
+     * picture again will produce one without the sprites. The frame has to be rendered a second
+     * time. That is the difference between these three and the palette, the filters and the two
+     * crops, which {@link ScreenComponent} redraws from the colour indices it kept and which have
+     * always worked while paused.
+     * <p>
+     * <b>So the machine is run, and then put back.</b> A state is taken, two frame boundaries are
+     * gone through -- to the end of whatever frame the machine was standing in, then one whole one,
+     * since a partial frame would leave the top of the picture as it was -- the picture is handed
+     * over, and the state goes back. The machine ends byte-identical, which is the same claim the
+     * rewind rests on. What it costs is about seven milliseconds, once, on a click.
+     * <p>
+     * Two things have to be swept up after it. The frames are run {@link Debugger#unwatched}, since
+     * a watchpoint that latched during one would report itself on the next real instruction as a
+     * stop nobody asked for. And the samples they made are drained and dropped: the state puts the
+     * chip back but the ring between it and the sound card is deliberately not in a state, so they
+     * would otherwise be played.
+     * <p>
+     * <b>The picture is one frame ahead of the one it replaces</b>, and there is no way for it not
+     * to be. It is the same scene -- the machine has not moved -- so the difference is a frame of
+     * animation, which is what "the same picture without the sprites" costs.
+     */
+    public void redrawPicture() {
+        post(this::renderTheFrameAgain);
     }
 
     /**
@@ -1264,6 +1299,59 @@ public class EmulatorRunner {
             var at = i * step;
 
             into[i] = at < count ? from[at] : 0;
+        }
+    }
+
+    /**
+     * See {@link #redrawPicture()}, which is where all of the reasoning is.
+     */
+    void renderTheFrameAgain() {
+        // A running machine draws the next frame within about seventeen milliseconds anyway, and
+        // it will draw it with the new setting. This is only for one that has stopped.
+        if (!paused) {
+            return;
+        }
+
+        var ppu = nes.getPPU();
+        var taken = new ByteArrayOutputStream();
+
+        try {
+            SaveState.write(nes, taken);
+        } catch (IOException e) {
+            logger.log(Level.WARNING, "could not redraw the picture", e);
+            return;
+        }
+
+        debugger.unwatched(() -> {
+            runToFrameBoundary();
+            runToFrameBoundary();
+        });
+
+        screen.present(ppu.getFrameBuffer(), ppu.getFramePhase());
+
+        try {
+            SaveState.read(nes, new ByteArrayInputStream(taken.toByteArray()));
+        } catch (IOException e) {
+            // Nothing to be done about it here, and saying so matters: the machine has just been
+            // run two frames further than anybody asked and cannot be put back.
+            logger.log(Level.ERROR, "could not put the machine back after redrawing", e);
+        }
+
+        // The chip is back where it was, but the queue between it and the card is not in a state --
+        // see APU.sampleRing in SaveStateCompletenessTests -- so those two frames are still in it.
+        nes.getAPU().drainSamples(samples);
+    }
+
+    /**
+     * Clocks the machine until the frame counter moves, which is the only signal the PPU gives that
+     * a frame is over -- the same do-while the main loop's fast path uses.
+     */
+    private void runToFrameBoundary() {
+        var ppu = nes.getPPU();
+        var was = ppu.getFrame();
+
+        while (ppu.getFrame() == was) {
+            nes.tick();
         }
     }
 

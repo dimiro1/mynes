@@ -442,6 +442,13 @@ public class CPU {
     }
 
     /**
+     * The same, so that a caller who has to take it off for a moment can put back what was there.
+     */
+    public InterruptListener interruptListener() {
+        return interruptListener;
+    }
+
+    /**
      * Stop notifying one.
      * <p>
      * Not called from inside {@link CPUEventListener#onStep}: the list is walked while it notifies,

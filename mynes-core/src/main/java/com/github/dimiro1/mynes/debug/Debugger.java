@@ -624,6 +624,38 @@ public final class Debugger {
     }
 
     /**
+     * Clocks the machine with nothing watching, and puts the watching back afterwards.
+     * <p>
+     * For a caller that has to run the machine for a reason of its own rather than to play the
+     * game -- redrawing the picture with a layer switched off, which cannot be done without
+     * rendering a frame, since the switches take part where the pixel is composed and the
+     * framebuffer keeps only what came out. Those frames are not the game doing anything, so
+     * nothing here should think they were: a write watchpoint that latched during one would report
+     * itself on the next real instruction, which is a stop nobody asked for and nothing to explain
+     * it.
+     * <p>
+     * The hooks come off rather than the results being thrown away afterwards, because a pending
+     * hit and a real one are the same field, and telling them apart after the fact means guessing.
+     */
+    public void unwatched(final Runnable work) {
+        var reads = memory.readListener();
+        var writes = memory.writeListener();
+        var interrupts = cpu.interruptListener();
+
+        memory.setReadListener(null);
+        memory.setWriteListener(null);
+        cpu.setInterruptListener(null);
+
+        try {
+            work.run();
+        } finally {
+            memory.setReadListener(reads);
+            memory.setWriteListener(writes);
+            cpu.setInterruptListener(interrupts);
+        }
+    }
+
+    /**
      * Forgets every breakpoint and watchpoint. What a new cartridge deserves.
      * <p>
      * Not the event sink, which belongs to a window that is still open rather than to the cartridge

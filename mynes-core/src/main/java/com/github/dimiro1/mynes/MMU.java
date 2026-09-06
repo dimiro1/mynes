@@ -785,6 +785,14 @@ public class MMU {
     }
 
     /**
+     * Whoever is on the write hook, so that a caller who has to take it off for a moment can put
+     * back whatever was there rather than guessing.
+     */
+    public MemoryWriteListener writeListener() {
+        return writeListener;
+    }
+
+    /**
      * Watches every byte the CPU reads, or stops watching when given null.
      * <p>
      * One listener rather than a list, for the reason the write side keeps one -- and here the hot
@@ -794,6 +802,13 @@ public class MMU {
      */
     public void setReadListener(final MemoryReadListener listener) {
         this.readListener = listener;
+    }
+
+    /**
+     * The same for the read hook.
+     */
+    public MemoryReadListener readListener() {
+        return readListener;
     }
 
     /**
