@@ -45,6 +45,11 @@ public final class EventsPanel extends JPanel {
     private static final String NOTHING = "—";
 
     /**
+     * The separator between one fact and the next, as the dashboard spells it.
+     */
+    private static final String GAP = "  ·  ";
+
+    /**
      * The filters, and which kinds each one covers.
      * <p>
      * Five rather than seven, because a filter answers a question: what is the picture doing, what
@@ -109,11 +114,18 @@ public final class EventsPanel extends JPanel {
 
         setLayout(new MigLayout("insets 10, gapy 4, wrap 1", "[]", ""));
 
+        // The panel is as wide as its raster, and the two lines whose text changes four times a
+        // second get no vote in it. Without the cap the summary was the widest thing here, so
+        // every readout resized the panel -- and a panel centred in its tab that resizes is a tab
+        // whose whole contents jump sideways while somebody is trying to read them. Capping is
+        // insurance rather than the fix: both lines are written to fit, see describe below.
+        var width = "wmax " + raster.getPreferredSize().width;
+
         add(header(), "gapbottom 2");
         add(controls(onReadsChanged), "gapbottom 4");
         add(raster);
-        add(hovered, "gaptop 6");
-        add(summary);
+        add(hovered, "gaptop 6, " + width);
+        add(summary, width);
 
         reads.setToolTipText(
                 "Also record what the game reads. The hook this needs sees every instruction the"
@@ -180,7 +192,7 @@ public final class EventsPanel extends JPanel {
         }
 
         raster.show(showing);
-        summary.setText(describe(frame, showing.size()));
+        summary.setText(describe(frame, showing.size(), reads.isSelected()));
     }
 
     private boolean isShown(final Debugger.EventKind kind) {
@@ -196,30 +208,71 @@ public final class EventsPanel extends JPanel {
     /**
      * What the frame was made of, which is the half of this a screenshot keeps: hovering says what
      * one mark is and a picture of the window cannot show that.
+     * <p>
+     * <b>Written to fit under the raster, and written to keep its shape.</b> It said things like
+     * "24 audio read · 11 audio write" and dropped whichever kinds were absent, which made it both
+     * the widest thing in the panel and a different width every readout -- so the panel resized
+     * four times a second and everything in the tab jumped sideways. All five groups are always
+     * named now, in short form, so what moves is a digit rather than a column; and the worst case
+     * fits, because the counts sum to at most what the log holds and so only one of them can ever
+     * be four digits.
+     * <p>
+     * The read halves appear only while reads are being recorded. That is a change of shape, but
+     * it happens when somebody clicks the tick rather than on its own -- the same rule the Sound
+     * tab's Split keeps -- and a pair of zeroes that can never be anything else is worse than a
+     * line that answers to one click.
      */
-    private static String describe(final Readout.Events frame, final int showing) {
-        if (frame.events().isEmpty()) {
-            return frame.dropped() > 0
-                    ? "nothing shown, and " + frame.dropped() + " more than the log holds"
-                    : "nothing touched this frame";
+    private static String describe(
+            final Readout.Events frame, final int showing, final boolean reads) {
+
+        if (frame.events().isEmpty() && frame.dropped() == 0) {
+            // Which covers both "nothing is recording" and "a frame in which nothing happened",
+            // and they are the same picture: on a running game the interrupt alone is an event, so
+            // an empty frame means nobody is watching.
+            return "nothing recorded";
         }
 
         var parts = new ArrayList<String>();
 
-        for (var kind : Debugger.EventKind.values()) {
-            var count = frame.count(kind);
+        parts.add(showing + " of " + frame.events().size() + " shown");
+        parts.add(group("PPU", frame, reads,
+                Debugger.EventKind.PPU_READ, Debugger.EventKind.PPU_WRITE));
+        parts.add(group("audio", frame, reads,
+                Debugger.EventKind.AUDIO_READ, Debugger.EventKind.AUDIO_WRITE));
+        parts.add(group("mapper", frame, reads, null, Debugger.EventKind.CARTRIDGE_WRITE));
+        parts.add("NMI " + frame.count(Debugger.EventKind.NMI));
+        parts.add("IRQ " + frame.count(Debugger.EventKind.IRQ));
 
-            if (count > 0) {
-                parts.add(count + " " + kind.label());
-            }
+        if (frame.dropped() > 0) {
+            parts.add(frame.dropped() + " lost");
         }
 
-        var text = showing + " of " + frame.events().size() + " shown  ·  "
-                + String.join("  ·  ", parts);
+        return String.join(GAP, parts);
+    }
 
-        return frame.dropped() > 0
-                ? text + "  ·  " + frame.dropped() + " more than the log holds"
-                : text;
+    /**
+     * One group of the summary: its reads and its writes, or only its writes while reads are not
+     * being recorded, in which case the {@code r}/{@code w} suffixes say nothing worth the room.
+     */
+    private static String group(
+            final String name,
+            final Readout.Events frame,
+            final boolean reads,
+            final @Nullable Debugger.EventKind read,
+            final Debugger.EventKind write) {
+
+        if (!reads) {
+            return name + " " + frame.count(write);
+        }
+
+        // The cartridge has no read of its own -- a read above $8000 is the program being fetched
+        // -- but it still says w beside the others, since a column that dropped its unit would read
+        // as a different kind of number.
+        if (read == null) {
+            return name + " " + frame.count(write) + "w";
+        }
+
+        return name + " " + frame.count(read) + "r " + frame.count(write) + "w";
     }
 
     /**
@@ -237,7 +290,7 @@ public final class EventsPanel extends JPanel {
         var value = event.value() < 0 ? "" : String.format(" = $%02X", event.value());
 
         hovered.setText(
-                where + "  ·  " + what + value + String.format("  ·  pc $%04X", event.pc()));
+                where + GAP + what + value + String.format(GAP + "pc $%04X", event.pc()));
     }
 
     private void clear() {

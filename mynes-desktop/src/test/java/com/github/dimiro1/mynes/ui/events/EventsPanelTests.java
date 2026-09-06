@@ -101,8 +101,13 @@ class EventsPanelTests {
         var text = String.join(" ", labels(panel));
 
         assertTrue(text.contains("3 of 3 shown"), text);
-        assertTrue(text.contains("2 PPU write"), text);
-        assertTrue(text.contains("1 NMI"), text);
+        assertTrue(text.contains("PPU 2"), text);
+        assertTrue(text.contains("NMI 1"), text);
+
+        // Named even where there were none, so that what moves between one readout and the next is
+        // a digit rather than a column.
+        assertTrue(text.contains("mapper 0"), text);
+        assertTrue(text.contains("IRQ 0"), text);
     }
 
     /**
@@ -135,12 +140,12 @@ class EventsPanelTests {
      * anything yet.
      */
     @Test
-    void anEmptyFrameSaysNothingWasTouched() {
+    void anEmptyFrameSaysNothingWasRecorded() {
         var panel = new EventsPanel(Region.NTSC, reads -> { });
 
         panel.show(readout(Readout.Events.NONE));
 
-        assertTrue(String.join(" ", labels(panel)).contains("nothing touched this frame"));
+        assertTrue(String.join(" ", labels(panel)).contains("nothing recorded"));
     }
 
     @Test
@@ -151,8 +156,44 @@ class EventsPanelTests {
                 List.of(event(Debugger.EventKind.PPU_READ, 30)), 900)));
 
         assertTrue(
-                String.join(" ", labels(panel)).contains("900 more than the log holds"),
+                String.join(" ", labels(panel)).contains("900 lost"),
                 "a frame that overflowed is the frame worth looking at");
+    }
+
+    /**
+     * What the user asked for after watching it run: the summary line said things like
+     * "24 audio read · 11 audio write", dropped whichever kinds a frame happened not to have, and
+     * was the widest thing in the panel -- so every readout resized it, and a panel centred in its
+     * tab that resizes is a tab whose contents jump sideways four times a second.
+     */
+    @Test
+    void whatTheFrameHeldDoesNotChangeHowWideThePanelIs() {
+        var panel = new EventsPanel(Region.NTSC, reads -> { });
+
+        panel.show(readout(Readout.Events.NONE));
+
+        var empty = panel.getPreferredSize().width;
+
+        panel.show(readout(frame(event(Debugger.EventKind.PPU_WRITE, 114))));
+
+        var one = panel.getPreferredSize().width;
+
+        // Every kind at once, with the counts as long as they can be: the log holds 4096 and the
+        // counts sum to what it holds, so this is as wide as the line is ever going to get.
+        var many = new ArrayList<Debugger.Event>();
+
+        for (var kind : Debugger.EventKind.values()) {
+            for (var i = 0; i < 700; i++) {
+                many.add(event(kind, i % 240));
+            }
+        }
+
+        panel.show(readout(new Readout.Events(List.copyOf(many), 900)));
+
+        var crowded = panel.getPreferredSize().width;
+
+        assertEquals(empty, one, "a frame with something in it is no wider than one without");
+        assertEquals(empty, crowded, "and neither is the busiest frame the log can hold");
     }
 
     /**
