@@ -40,12 +40,15 @@ final class PadView extends JComponent {
     private static final int CORNER = 10;
 
     /**
-     * The cross: where its centre is, how long an arm is from that centre, and how wide one is.
+     * The cross: where its centre is, how long an arm is from that centre, and how thick one is.
+     * <p>
+     * Thickness rather than width, because it is the width of the two upright arms and the height
+     * of the two lying down.
      */
     private static final int PAD_X = 52;
     private static final int PAD_Y = 44;
     private static final int ARM = 24;
-    private static final int ARM_WIDTH = 16;
+    private static final int ARM_THICKNESS = 16;
 
     /**
      * Select and Start: the size of one, and where the left edge of each sits.
@@ -114,15 +117,15 @@ final class PadView extends JComponent {
      * the middle is left in the unlit colour, because nothing is pressing it.
      */
     private void cross(final Graphics2D canvas) {
-        var half = ARM_WIDTH / 2;
+        var half = ARM_THICKNESS / 2;
 
-        arm(canvas, PAD_X - half, PAD_Y - ARM, ARM_WIDTH, ARM - half, Controller.BUTTON_UP);
-        arm(canvas, PAD_X - half, PAD_Y + half, ARM_WIDTH, ARM - half, Controller.BUTTON_DOWN);
-        arm(canvas, PAD_X - ARM, PAD_Y - half, ARM - half, ARM_WIDTH, Controller.BUTTON_LEFT);
-        arm(canvas, PAD_X + half, PAD_Y - half, ARM - half, ARM_WIDTH, Controller.BUTTON_RIGHT);
+        arm(canvas, PAD_X - half, PAD_Y - ARM, ARM_THICKNESS, ARM - half, Controller.BUTTON_UP);
+        arm(canvas, PAD_X - half, PAD_Y + half, ARM_THICKNESS, ARM - half, Controller.BUTTON_DOWN);
+        arm(canvas, PAD_X - ARM, PAD_Y - half, ARM - half, ARM_THICKNESS, Controller.BUTTON_LEFT);
+        arm(canvas, PAD_X + half, PAD_Y - half, ARM - half, ARM_THICKNESS, Controller.BUTTON_RIGHT);
 
         canvas.setColor(Theme.dim());
-        canvas.fillRect(PAD_X - half, PAD_Y - half, ARM_WIDTH, ARM_WIDTH);
+        canvas.fillRect(PAD_X - half, PAD_Y - half, ARM_THICKNESS, ARM_THICKNESS);
     }
 
     private void arm(

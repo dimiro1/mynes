@@ -18,9 +18,9 @@ import java.util.List;
  * <p>
  * The other two are still right for what they do. The PPU viewers poll on a Swing timer without
  * synchronising, which is fine because what they read is <em>arrays</em> -- an element cannot tear,
- * so the worst case is a tile a frame out of date. The debugger takes a {@link
- * com.github.dimiro1.mynes.ui.debugger.MachineSnapshot} inside the stop callback, which is exact,
- * once, with the machine halted.
+ * so the worst case is a tile a frame out of date. The debugger takes a {@code MachineSnapshot}
+ * inside the stop callback, which is exact, once, with the machine halted -- spelled rather than
+ * linked because that record is package private to the debugger and this cannot see it.
  * <p>
  * Neither works for a dashboard. What a dashboard shows is <em>scalars</em> -- $2000, the scroll,
  * the frame number, which voices are sounding -- and a dozen of them read one at a time off a

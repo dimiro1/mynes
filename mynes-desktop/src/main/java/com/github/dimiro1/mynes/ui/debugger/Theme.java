@@ -61,6 +61,22 @@ public final class Theme {
         return label;
     }
 
+    /**
+     * The line under a heading that says what the thing below it is: the same muted colour, at the
+     * ordinary weight and size, so that it reads as an aside rather than as another label.
+     * <p>
+     * Here rather than in each panel because three of them wanted one and each had written its own,
+     * which is three places for the same three lines to drift apart in.
+     */
+    public static JLabel note(final String text) {
+        var label = new JLabel(text);
+
+        label.setForeground(muted());
+        label.setFont(label.getFont().deriveFont(11f));
+
+        return label;
+    }
+
     public static Color muted() {
         return colour("Label.disabledForeground", Color.GRAY);
     }

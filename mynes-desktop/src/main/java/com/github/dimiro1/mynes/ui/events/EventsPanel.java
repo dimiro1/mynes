@@ -146,13 +146,9 @@ public final class EventsPanel extends JPanel {
 
     private static JPanel header() {
         var row = new JPanel(new MigLayout("insets 0, gapx 14", "", ""));
-        var note = new JLabel(
-                "a mark wherever the machine was touched, at the line and dot it was");
-
-        note.setForeground(Theme.muted());
 
         row.add(Theme.heading("One frame"));
-        row.add(note);
+        row.add(Theme.note("a mark wherever the machine was touched, at the line and dot it was"));
 
         return row;
     }

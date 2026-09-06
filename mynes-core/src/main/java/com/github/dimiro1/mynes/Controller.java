@@ -46,7 +46,7 @@ public interface Controller {
      * that writes $02 to work an expansion port has not asked this pad anything.
      * <p>
      * <b>Both pads answer with the same number</b>, because one write to $4016 drives the latch
-     * line of both ports. What tells the two apart is {@link #getReads()}, since $4016 and $4017
+     * line of both ports. What tells them apart is {@link #getBitsRead()}, since $4016 and $4017
      * are read separately -- a game with no two player mode latches this pad every frame and never
      * reads a bit out of it.
      * <p>

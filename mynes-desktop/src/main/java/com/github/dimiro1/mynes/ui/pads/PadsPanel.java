@@ -62,7 +62,7 @@ public final class PadsPanel extends JPanel {
         two.addTo(this);
 
         add(Theme.heading("Reading the pad"), "gaptop 20");
-        add(note("a frame with no $4016 read in it is a frame whose main loop did not finish"));
+        add(Theme.note("a frame with no $4016 read in it is a frame whose main loop did not finish"));
         add(strip, "gaptop 6, h " + strip.getPreferredSize().height + "!");
         add(lag, "gaptop 2");
     }
@@ -159,14 +159,6 @@ public final class PadsPanel extends JPanel {
 
             return text.isEmpty() ? NOTHING : text.toString();
         }
-    }
-
-    private static JLabel note(final String text) {
-        var label = new JLabel(text);
-
-        label.setForeground(Theme.muted());
-
-        return label;
     }
 
     private static JLabel value() {

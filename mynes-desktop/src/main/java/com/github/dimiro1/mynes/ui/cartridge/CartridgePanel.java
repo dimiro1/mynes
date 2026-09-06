@@ -37,7 +37,6 @@ public final class CartridgePanel extends JPanel {
 
     private static final String NOTHING = "—";
 
-    private final JLabel board = new JLabel();
     private final JLabel[] prg = new JLabel[Mapper.Banks.PRG_WINDOWS];
     private final JLabel[] chr = new JLabel[Mapper.Banks.CHR_WINDOWS];
     private final JLabel mirroring = value();
@@ -47,8 +46,9 @@ public final class CartridgePanel extends JPanel {
     public CartridgePanel(final Cart cart) {
         setLayout(new MigLayout("insets 10, gapx 10, gapy 3", "[92][]", ""));
 
-        board.setText(describe(cart));
-        add(board, "span, wrap, gapbottom 10");
+        // A local rather than a field: what a board is never changes, so nothing ever has to find
+        // this label again.
+        add(new JLabel(describe(cart)), "span, wrap, gapbottom 10");
 
         add(Theme.heading("Program"), "span, wrap");
         add(new JLabel(), "");
