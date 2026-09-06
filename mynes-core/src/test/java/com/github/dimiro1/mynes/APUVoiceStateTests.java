@@ -172,6 +172,56 @@ class APUVoiceStateTests {
     }
 
     /**
+     * The noise's number is a shift rate rather than a pitch, and in one of its two modes it does
+     * divide down into one.
+     * <p>
+     * In the usual mode the register runs a sequence 32767 steps long and what comes out is hiss
+     * with no pitch at all. Tap it six bits along instead of one and the sequence is 93 steps, which
+     * repeats fast enough to be heard -- and 4811.2Hz for the shortest period is the first entry of
+     * the table every reference prints for this channel, which is what makes it a check rather than
+     * a restatement of the code.
+     *
+     * @see <a href="https://www.nesdev.org/wiki/APU_Noise">NESdev: APU noise</a>
+     */
+    @Test
+    void theNoiseHasAPitchOnlyInShortMode() {
+        var apu = new APU(line -> { }, line -> { });
+
+        apu.write(0x4015, 0x0F);
+        apu.write(0x400C, 0x3F);
+        apu.write(0x400E, 0x00);                // long mode, the shortest period
+        apu.write(0x400F, 0x08);
+
+        var hiss = apu.voice(APUChannel.NOISE);
+
+        assertFalse(hiss.shortMode());
+        assertEquals(0, hiss.pitch(), "a sequence of 32767 steps is not a note");
+        assertTrue(hiss.hertz() > 0, "though the register is being clocked all the same");
+
+        apu.write(0x400E, 0x80);                // the same period, short mode
+
+        var tone = apu.voice(APUChannel.NOISE);
+
+        assertTrue(tone.shortMode());
+        assertEquals(hiss.hertz(), tone.hertz(), 0.01, "the rate is the rate either way");
+        assertEquals(4811.2, tone.pitch(), 0.1, "and 93 steps of it is the note that comes out");
+    }
+
+    /**
+     * The DMC never has one, whatever it is playing: the pitch of a sample is a fact about the bytes
+     * in it rather than about the chip.
+     */
+    @Test
+    void theDMCNeverHasAPitch() {
+        var apu = new APU(line -> { }, line -> { });
+
+        apu.write(0x4015, 0x1F);
+        apu.write(0x4010, 0x0F);
+
+        assertEquals(0, apu.voice(APUChannel.DMC).pitch());
+    }
+
+    /**
      * A voice somebody has switched off still moves its meter, which is what tells "this is playing
      * and you cannot hear it" from "this is not playing".
      */

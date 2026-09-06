@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A frequency named the way a musician would name it.
@@ -17,6 +18,41 @@ class NotesTests {
      * The NTSC processor's clock, which is what turns a period into a frequency.
      */
     private static final double NTSC = 1789772.7272;
+
+    /**
+     * The keyboard is drawn from these, so what matters is that the numbering is the standard one
+     * -- a keyboard laid out against a different origin would put every note in the wrong place and
+     * still look like a keyboard.
+     */
+    @Test
+    void theKeyNumbersAreTheOnesAPianoUses() {
+        assertEquals(69, Notes.keyOf(440), "A4 is 69, as MIDI has it");
+        assertEquals(60, Notes.keyOf(261.63), "middle C is 60");
+        assertEquals(Notes.LOWEST_KEY, Notes.keyOf(27.5), "A0 is the bottom of a piano");
+        assertEquals(Notes.HIGHEST_KEY, Notes.keyOf(4186.01), "and C8 is the top");
+    }
+
+    /**
+     * The two ends of what the chip can play, which is why a piano's eighty-eight is the right
+     * keyboard to draw rather than a rounding of one.
+     */
+    @Test
+    void theChipsLowestAndHighestNotesAreOnAPiano() {
+        var triangle = NTSC / (32 * (2047 + 1.0));
+
+        assertEquals(Notes.LOWEST_KEY, Notes.keyOf(triangle),
+                "the triangle at its longest period is A0, at " + triangle + "Hz");
+
+        assertTrue(Notes.keyOf(triangle) >= Notes.LOWEST_KEY);
+    }
+
+    @Test
+    void aFrequencyWithNoNoteHasNoKeyEither() {
+        assertEquals(Notes.NO_KEY, Notes.keyOf(0), "a stopped channel");
+        assertEquals(Notes.NO_KEY, Notes.keyOf(12), "below anything anybody hears as a pitch");
+        assertEquals(Notes.NO_KEY, Notes.keyOf(12429), "a pulse at its shortest period");
+        assertNull(Notes.nameOf(12429), "and the two agree about it");
+    }
 
     @Test
     void concertAIsA4() {

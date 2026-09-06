@@ -12,6 +12,7 @@ import javax.swing.JCheckBox;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -59,7 +60,9 @@ class SoundPanelTests {
     @Test
     void splittingTheVoicesDrawsOneTraceEach() {
         var panel = new SoundPanel();
-        var split = Views.find(panel, JCheckBox.class);
+        // By label rather than by being the first one found: there are two ticks on this panel now
+        // and which of them comes first is a layout decision that has already changed once.
+        var split = box(panel, "Split the voices");
 
         assertNotNull(split);
 
@@ -107,6 +110,65 @@ class SoundPanelTests {
         quiet.getAPU().trace(APUChannel.PULSE_1, trace, trace.length);
 
         assertTrue(loudest(trace) == 0, "nothing was kept");
+    }
+
+    /**
+     * One keyboard per voice by default, and one for all of them on a tick -- the same shape the
+     * traces below have, and for the same reason: separate parts are easier to follow, together is
+     * where an octave, a third and a semitone of accidental dissonance stop looking alike.
+     */
+    @Test
+    void theKeyboardsAreOneEachUntilSomebodyAsksForOne() {
+        var panel = new SoundPanel();
+
+        panel.show(readout());
+        Views.paint(panel);
+
+        var keyboards = all(panel, Piano.class);
+
+        assertEquals(5, keyboards.size(), "four voices with a note, plus the one they share");
+        assertEquals(
+                4,
+                keyboards.stream().filter(java.awt.Component::isVisible).count(),
+                "one each to begin with");
+
+        var one = box(panel, "All four on one keyboard");
+
+        assertNotNull(one);
+        one.doClick();
+
+        assertEquals(
+                1,
+                keyboards.stream().filter(java.awt.Component::isVisible).count(),
+                "and one between them after that");
+
+        Views.paint(panel);
+    }
+
+    private static JCheckBox box(final java.awt.Container root, final String label) {
+        for (var found : all(root, JCheckBox.class)) {
+            if (label.equals(found.getText())) {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static <T> java.util.List<T> all(final java.awt.Container root, final Class<T> type) {
+        var found = new java.util.ArrayList<T>();
+
+        for (var child : root.getComponents()) {
+            if (type.isInstance(child)) {
+                found.add(type.cast(child));
+            }
+
+            if (child instanceof java.awt.Container inner) {
+                found.addAll(all(inner, type));
+            }
+        }
+
+        return found;
     }
 
     private static Readout readout() {

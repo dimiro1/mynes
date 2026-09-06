@@ -189,13 +189,12 @@ final class Dashboard extends JPanel {
         var mark = (readout.apuStatus() & (1 << channel.ordinal())) != 0 ? "● " : "○ ";
         var voice = readout.voice(channel);
 
-        if (channel == APUChannel.NOISE || channel == APUChannel.DMC) {
-            return mark + channel.label();
-        }
-
         // Only while it is playing, unlike the Sound tab: this line is a glance, and the note a
-        // silent channel happens to be tuned to is detail rather than news.
-        var note = voice.playing() && voice.hertz() > 0 ? Notes.nameOf(voice.hertz()) : null;
+        // silent channel happens to be tuned to is detail rather than news. Through pitch() rather
+        // than through the channel, so that this line and the tab cannot come to disagree about
+        // which voices have a note -- the noise has one in short mode and none otherwise, and two
+        // places deciding that separately is exactly how they would drift apart.
+        var note = voice.playing() && voice.pitch() > 0 ? Notes.nameOf(voice.pitch()) : null;
 
         return mark + channel.label() + (note == null ? "" : " " + note);
     }

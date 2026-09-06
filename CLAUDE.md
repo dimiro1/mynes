@@ -543,6 +543,34 @@ one, so the same period written to both is an octave apart -- which is why game 
 with the bass a period lower rather than an octave lower. The noise's number is a shift rate rather
 than a pitch, and the DMC's is a sample rate.
 
+**The keyboards are the same three ways of saying it, laid out where a musician would look.** One
+per voice by default and all of them on one under a tick -- the same shape the scope's Split has,
+and the same reason: separate parts are easier to follow, and together is where an octave, a third
+and a semitone of accidental dissonance stop looking alike. A0 to C8 rather than some arbitrary
+window, because that is exactly the range the chip has -- the triangle at its longest period is
+27.3Hz, which is A0 to within a few cents, and the pulses run out at the top where the sweep unit
+silences them anyway.
+
+**The noise has a keyboard, and that is not a mistake.** `APU.VoiceState.pitch()` is what decides
+who gets one, and it is a different question from `hertz()` for exactly one voice: the noise's hertz
+is how fast its shift register is being clocked, and its pitch is that over the length of the
+sequence it is running round. In the usual mode that sequence is 32767 steps and there is no pitch
+at all, so the keyboard stays empty -- which is itself the answer to "is this a note or a hiss". In
+short mode it is 93 steps, which repeats fast enough to be heard, and games use it for metallic
+effects and occasionally for bass. 4811.2Hz for the shortest period is the first entry of the table
+every reference prints for this channel, which is what `APUVoiceStateTests` holds it to. The DMC is
+the one voice that can never have a keyboard: its rate is a sample rate, and what pitch a sample
+comes out at is a fact about the bytes in it. **The Sound tab's note column and the dashboard both
+go through `pitch()`** rather than deciding for themselves, since two places deciding which voices
+have a note is exactly how they came to disagree about `playing` once already.
+
+**What a keyboard shows that is not a measurement is the trail.** A readout is four times a second
+and a melody is faster than that, so a keyboard lit only by what is held at the instant of the
+readout would blink and miss half the tune. Each key keeps a mark for two readouts after the voice
+leaves it, and that mark is a bar across the key's foot rather than a fainter version of the fill:
+"this is sounding" and "this was sounding a moment ago" are different answers, and one colour at two
+opacities would blur them into a guess.
+
 **The meters are peaks, and reading them does not clear them.** A level sampled four times a second
 off a wave oscillating hundreds of times a second is a random number, so what is kept is the loudest
 each voice has been since `APU.clearPeaks()` -- which the runner calls after building a readout, and

@@ -691,6 +691,39 @@ public class APU {
             int linear,
             int address,
             int bytesLeft) {
+
+        /**
+         * How many shifts the noise's register takes to come back round in short mode.
+         * <p>
+         * In its usual mode the sequence is 32767 steps and what comes out is hiss; tap the register
+         * six bits along instead of one and it is 93, which repeats fast enough to be heard as a
+         * metallic pitch. So the noise is the one voice here whose {@link #hertz} is a rate and
+         * whose pitch is that rate divided by something.
+         *
+         * @see <a href="https://www.nesdev.org/wiki/APU_Noise">NESdev: APU noise</a>
+         */
+        private static final int SHORT_SEQUENCE = 93;
+
+        /**
+         * The frequency anybody would hear as a note, or 0 where there is none to hear.
+         * <p>
+         * Not the same question as {@link #hertz}, and the difference is the whole reason this
+         * exists. For the two pulses and the triangle they are the same number. For the noise
+         * {@code hertz} is how fast the shift register is being clocked, and the pitch is that
+         * over the length of the sequence it is running round -- so a noise channel in short mode
+         * has a note, which is a real thing games use for metallic effects and occasionally for
+         * bass, and one in its usual mode has none at all.
+         * <p>
+         * The DMC never has one: its rate is a sample rate, and what pitch a sample comes out at is
+         * a fact about the bytes in it rather than about the chip playing them.
+         */
+        public double pitch() {
+            return switch (channel) {
+                case PULSE_1, PULSE_2, TRIANGLE -> hertz;
+                case NOISE -> shortMode ? hertz / SHORT_SEQUENCE : 0;
+                case DMC -> 0;
+            };
+        }
     }
 
     /**

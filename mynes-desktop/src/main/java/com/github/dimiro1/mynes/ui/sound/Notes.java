@@ -33,6 +33,25 @@ public final class Notes {
     private static final int SEMITONES = 12;
 
     /**
+     * Which key of a piano A4 is, numbered the way MIDI numbers them. The eighty-eight of a full
+     * keyboard run from {@link #LOWEST_KEY} to {@link #HIGHEST_KEY}.
+     */
+    private static final int A4_KEY = 69;
+
+    /**
+     * A0 and C8, the ends of a piano -- and, as it happens, of what the chip can play as a note.
+     * The triangle at its longest period is 27.3Hz, which is A0 to within a few cents; the pulses
+     * at their shortest are up past 12kHz, where the sweep unit silences them anyway.
+     */
+    public static final int LOWEST_KEY = 21;
+    public static final int HIGHEST_KEY = 108;
+
+    /**
+     * What {@link #keyOf} answers where there is no note to point at.
+     */
+    public static final int NO_KEY = -1;
+
+    /**
      * The range worth naming: below this a period is a rumble nobody hears as a pitch, and above it
      * the pulse channels are into the range the sweep unit mutes anyway.
      */
@@ -56,6 +75,26 @@ public final class Notes {
         var octave = 4 + Math.floorDiv(semitones + A_ABOVE_C, SEMITONES);
 
         return NAMES[index] + octave;
+    }
+
+    /**
+     * Which key of a piano the nearest note is, numbered as MIDI numbers them: A0 is 21, middle C
+     * is 60 and C8 is 108.
+     * <p>
+     * A number rather than a name because a keyboard is drawn from positions rather than read from
+     * text, and because two voices on the same note have to come out as the same number for the
+     * drawing to say so.
+     *
+     * @return the key, or {@link #NO_KEY} where there is no pitch to point at. It can land outside
+     *         a piano's eighty-eight at either end -- {@link #LOWEST} is below A0 -- so whatever
+     *         draws one has to decide what to do with a note that is off the end of it.
+     */
+    public static int keyOf(final double hertz) {
+        if (hertz < LOWEST || hertz > HIGHEST) {
+            return NO_KEY;
+        }
+
+        return (int) Math.round(semitonesAboveA4(hertz)) + A4_KEY;
     }
 
     /**
