@@ -74,6 +74,12 @@ final class ControlsColumn extends JPanel {
         add(Theme.heading("Trace"), GROUP);
         add(buttons(new JButton(commands.startTrace()), new JButton(commands.stopTrace())));
 
+        // Under its own heading rather than beside the trace, which writes down what the processor
+        // did: this writes down what the sound chip played, and the two are read by different
+        // people in different programs.
+        add(Theme.heading("Music"), GROUP);
+        add(buttons(new JButton(commands.startMusic()), new JButton(commands.stopMusic())));
+
     }
 
     /**

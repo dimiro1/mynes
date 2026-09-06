@@ -143,6 +143,9 @@ file is where they live.
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
+- **Start Music...** writes what the sound chip plays to a MIDI file — one part per pulse and one
+  for the triangle, read a frame at a time so nothing in the melody is missed, with the tempo set so
+  a tick lasts exactly one frame of the console it came from.
 - A nametable view with the scroll window drawn over all four tables, a sprite view of all
   sixty-four with their attributes, a palette view over the thirty-two bytes the whole picture is
   coloured through, and a tile view of character memory.

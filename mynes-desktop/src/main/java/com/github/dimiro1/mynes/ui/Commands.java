@@ -41,6 +41,13 @@ public final class Commands {
 
     private final Command stopTrace = new Command("Stop Trace", KeyEvent.VK_UNDEFINED, null);
 
+    /**
+     * The same shape again, for the tune rather than for the instructions.
+     */
+    private final Command startMusic = new Command("Start Music...", KeyEvent.VK_M, null);
+
+    private final Command stopMusic = new Command("Stop Music", KeyEvent.VK_UNDEFINED, null);
+
     public Command reset() {
         return reset;
     }
@@ -59,6 +66,14 @@ public final class Commands {
 
     public Command stopTrace() {
         return stopTrace;
+    }
+
+    public Command startMusic() {
+        return startMusic;
+    }
+
+    public Command stopMusic() {
+        return stopMusic;
     }
 
     private static KeyStroke shortcut(final int key) {

@@ -129,6 +129,7 @@ public class GameUIFrame extends JFrame {
      * traces are being kept in rather than wherever a ROM was last opened from.
      */
     private final SystemFileChooser traceChooser;
+    private final SystemFileChooser musicChooser;
 
     private final ScreenComponent screen = new ScreenComponent();
     private final StatusBar statusBar = new StatusBar();
@@ -275,6 +276,12 @@ public class GameUIFrame extends JFrame {
     private Tracer tracer;
 
     private Path tracePath;
+
+    /**
+     * Where the music being recorded is going, or null when none is. The recorder itself belongs to
+     * the emulation thread; this side keeps only the name it was promised.
+     */
+    private Path musicPath;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -387,6 +394,11 @@ public class GameUIFrame extends JFrame {
         traceChooser = new SystemFileChooser();
         traceChooser.addChoosableFileFilter(traceFilter);
         traceChooser.setFileFilter(traceFilter);
+
+        var musicFilter = new SystemFileChooser.FileNameExtensionFilter("MIDI file", "mid");
+        musicChooser = new SystemFileChooser();
+        musicChooser.addChoosableFileFilter(musicFilter);
+        musicChooser.setFileFilter(musicFilter);
 
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
@@ -548,6 +560,8 @@ public class GameUIFrame extends JFrame {
 
         debugMenu.add(new JMenuItem(commands.startTrace()));
         debugMenu.add(new JMenuItem(commands.stopTrace()));
+        debugMenu.add(new JMenuItem(commands.startMusic()));
+        debugMenu.add(new JMenuItem(commands.stopMusic()));
 
         debugMenu.addSeparator();
 
@@ -794,6 +808,8 @@ public class GameUIFrame extends JFrame {
 
         commands.startTrace().onRun(this::startTrace);
         commands.stopTrace().onRun(this::stopTrace);
+        commands.startMusic().onRun(this::startMusic);
+        commands.stopMusic().onRun(this::stopMusic);
 
         debugMenuControlPanel.addActionListener(e -> openControlPanel());
 
@@ -826,6 +842,10 @@ public class GameUIFrame extends JFrame {
                 // And a trace holds up to sixty-four kilobytes of instructions that have not reached
                 // the disk yet, which is the end of whatever the file was opened to look at.
                 stopTrace();
+
+                // A recording holds all of itself until it is stopped, so closing the window on one
+                // would throw away the whole tune rather than the tail of it.
+                stopMusic();
 
                 // Last, because it writes the config file and everything above may have changed
                 // something else in it. Asked of the window here rather than tracked as it is
@@ -1078,6 +1098,16 @@ public class GameUIFrame extends JFrame {
      * inside the posted work: that would read it on the emulation thread whenever the queue got
      * round to it, which is neither this thread's machine nor safe to ask for.
      */
+    private void onPPU(final Consumer<PPU> change) {
+        if (runner == null) {
+            return;
+        }
+
+        var ppu = nes.getPPU();
+
+        runner.post(() -> change.accept(ppu));
+    }
+
     /**
      * The same, for the three switches that change what the chip <em>draws</em> rather than what it
      * does: Show Background, Show Sprites and Unlimited Sprites.
@@ -1098,16 +1128,6 @@ public class GameUIFrame extends JFrame {
         if (runner != null) {
             runner.redrawPicture();
         }
-    }
-
-    private void onPPU(final Consumer<PPU> change) {
-        if (runner == null) {
-            return;
-        }
-
-        var ppu = nes.getPPU();
-
-        runner.post(() -> change.accept(ppu));
     }
 
     /**
@@ -2576,6 +2596,10 @@ public class GameUIFrame extends JFrame {
         // lines are on disk before anything else happens.
         stopTrace();
 
+        // The same for the music, and more so: two games' tunes in one file share a clock and come
+        // out as one piece that neither of them plays.
+        stopMusic();
+
         // A new cartridge deserves a clean slate, but a power cycle does not: the breakpoints are
         // the reason somebody cycles the power. Asked before the field is reassigned, since that is
         // the whole of the difference between the two.
@@ -2728,6 +2752,7 @@ public class GameUIFrame extends JFrame {
         // A trace is per machine and the last one was stopped as this one was built, so this is the
         // one place the item comes back on.
         commands.startTrace().setEnabled(true);
+        commands.startMusic().setEnabled(true);
 
         updateMovieItems();
         describeMachine();
@@ -3008,6 +3033,78 @@ public class GameUIFrame extends JFrame {
                     "Error",
                     JOptionPane.ERROR_MESSAGE));
         }
+    }
+
+    /**
+     * Starts writing down what the sound chip plays.
+     * <p>
+     * Asks where it should go first, the way Start Trace... and Record Movie... do: a recording
+     * that chose its own name would be one more file to find afterwards, and this is the shape
+     * every other thing here that writes one already has.
+     */
+    private void startMusic() {
+        if (runner == null || musicPath != null) {
+            return;
+        }
+
+        musicChooser.setSelectedFile(defaultMusicPath().toFile());
+
+        if (musicChooser.showSaveDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        musicPath = musicChooser.getSelectedFile().toPath();
+
+        runner.startMusic(currentRegion());
+
+        logger.log(Level.INFO, "recording music to " + musicPath.getFileName());
+
+        commands.startMusic().setEnabled(false);
+        commands.stopMusic().setEnabled(true);
+        describeMachine();
+    }
+
+    /**
+     * Stops, and writes the file.
+     * <p>
+     * The writing happens on the emulation thread, which is the thread the notes were collected on
+     * -- see {@link EmulatorRunner#stopMusic}. What comes back here is how many frames went into
+     * it, or -1 for a recording with nothing in it, which is worth saying out loud: a game whose
+     * music had not started yet is the commonest way to end up with an empty one.
+     */
+    private void stopMusic() {
+        if (musicPath == null) {
+            return;
+        }
+
+        var path = musicPath;
+
+        musicPath = null;
+
+        commands.startMusic().setEnabled(runner != null);
+        commands.stopMusic().setEnabled(false);
+        describeMachine();
+
+        if (runner == null) {
+            return;
+        }
+
+        runner.stopMusic(path, frames -> {
+            if (frames < 0) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Nothing was playing, so no music was written.",
+                        "No music",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+    }
+
+    private Path defaultMusicPath() {
+        var name = gamePath().getFileName().toString();
+        var dot = name.lastIndexOf('.');
+
+        return gamePath().resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".mid");
     }
 
     private Path defaultTracePath() {

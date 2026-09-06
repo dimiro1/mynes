@@ -1,8 +1,8 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. Six modules -- `mynes-core`, `mynes-patch`,
-`mynes-archive`, `mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test` at the root
-still runs everything.
+A NES emulator in Java 25, built with Maven. Seven modules -- `mynes-core`, `mynes-patch`,
+`mynes-archive`, `mynes-midi`, `mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test`
+at the root still runs everything.
 
 ## Seeing what the emulator does
 
@@ -578,6 +578,28 @@ leaves it, and that mark is a bar across the key's foot rather than a fainter ve
 "this is sounding" and "this was sounding a moment ago" are different answers, and one colour at two
 opacities would blur them into a guess.
 
+**Debug > Start Music... writes the tune down as a MIDI file**, and it is the Sound tab's reading
+kept rather than watched. `ui/music/MusicRecorder` asks the three pitched voices what note they are
+on **once a frame** -- four times a second, which is what every other gauge here reads at, would
+miss most of a melody -- and turns a change into a note-off and a note-on. Start asks where the file
+goes and Stop writes it, which is the shape Start Trace... and Record Movie... already have.
+
+Four things about it are decisions rather than arithmetic. **It is a recording and not a
+transcription**: nothing works out a key, a time signature or where the bars are, because none of
+that is in the chip. **A tick is a frame**, and the tempo is set to make that exactly true on the
+console that played it -- so the timing is a measurement and the bar lines are furniture, and a PAL
+game comes out at PAL speed rather than twenty per cent fast. **Three parts**, for two different
+reasons: the noise has a pitch only in short mode and its part is percussion, which would mean
+choosing a drum the game never named, and the DMC is playing a recording of something whose pitch is
+a fact about the bytes. And **the nearest semitone, with no pitch bends** -- the chip's periods are
+integers so most notes are a few cents off, and bending each one would be truer to what was heard
+and worse to work with, since the bend range is the receiving synth's opinion and a page of bends is
+what somebody has to delete before they can read the tune.
+
+**A rewind is in the file twice**, unlike a movie, and that is left alone rather than fixed: the
+recorder is fed on the forward path only, so a passage that was played, taken back and played again
+appears twice -- because it was heard twice.
+
 **The meters are peaks, and reading them does not clear them.** A level sampled four times a second
 off a wave oscillating hundreds of times a second is a random number, so what is kept is the loudest
 each voice has been since `APU.clearPeaks()` -- which the runner calls after building a readout, and
@@ -1090,7 +1112,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
-Six Maven modules, and the arrows between them only point one way.
+Seven Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
@@ -1112,11 +1134,14 @@ mynes-patch/          depends on nothing either, core included
 mynes-archive/        depends on nothing either
   mynes/archive/      zip files, unpacked in memory for the one thing inside somebody wanted
 
+mynes-midi/           depends on nothing either
+  mynes/midi/         standard MIDI files, written from notes that came from anywhere
+
 mynes-headless/       depends on core, patch and archive
   mynes/headless/     the command line mode
 
-mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and MigLayout live
-                      here
+mynes-desktop/        depends on core, patch, archive, midi and headless; FlatLaf and MigLayout
+                      live here
   mynes/ui/           the Swing window, Main, the key bindings, every switch and command in the
                       program as an Action, and the sound card: the line, the volume, and the half
                       a percent of resampling that holds its queue where it was put
@@ -1132,6 +1157,7 @@ mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and 
   mynes/ui/sound/     the five voices, their meters and the scope of what they add up to
   mynes/ui/cartridge/ which bank of the cartridge is in each window, and the rest of the board
   mynes/ui/pads/      both controllers, and the strip of frames the game never read one on
+  mynes/ui/music/     what the sound chip played, written down as a MIDI file
   mynes/ui/events/    one frame as a raster, with a mark wherever the machine was touched
 
 mynes-shots/          depends on desktop, and nothing depends on it
@@ -1143,6 +1169,16 @@ patches -- a ROM, a save file, a disk image -- and a patcher that could see a `C
 later be handed one. It is the front ends that join the two together, both by reading the file,
 patching the bytes and handing the result to `Cart.load`. A patch is entitled to rewrite the iNES
 header, so it has to be applied *before* the cartridge is parsed rather than after.
+
+`mynes-midi` is the third of that kind, and the argument is the same one a third time: a standard
+MIDI file is a container from 1983 for note numbers and times, and a writer that could see an `APU`
+would sooner or later be handed one. What joins the two is `ui/music/MusicRecorder`, which watches
+the chip a frame at a time. It is **written by hand rather than through `javax.sound.midi`**, which
+is the one decision in it worth arguing with: the JDK's is perfectly good and lives in
+`java.desktop`, which is a window toolkit that nothing on the headless side is allowed to want, and
+a header chunk plus delta-timed events is a hundred lines. The tests read the files back *with*
+`javax.sound.midi`, which is exactly where a dependency on it is free and where being a separate
+implementation is the point.
 
 `mynes-archive` is beside it for exactly the same reason, and the two are read as a pair: zip is a
 container from 1989 that says nothing about what is in it, so a reader that could see a `Cart` would
@@ -1173,6 +1209,7 @@ Which makes one check worth running when the dependencies change:
 mvn dependency:tree -pl mynes-core       # nothing but the two test artifacts
 mvn dependency:tree -pl mynes-patch      # nothing but JUnit
 mvn dependency:tree -pl mynes-archive    # nothing but JUnit
+mvn dependency:tree -pl mynes-midi       # nothing but JUnit
 mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
 ```
 

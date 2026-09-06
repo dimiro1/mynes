@@ -2,9 +2,11 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.state.SaveState;
+import com.github.dimiro1.mynes.ui.music.MusicRecorder;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.MovieRecorder;
@@ -24,6 +26,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.function.LongConsumer;
 
 /**
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
@@ -245,6 +248,13 @@ public class EmulatorRunner {
     private final PadPolling polling = new PadPolling();
 
     /**
+     * The music being written down, or null when nobody asked for any. Emulation thread only, like
+     * the recorder above it, and for the same reason: it is asked what the chip is playing at a
+     * frame boundary, which is a question only this thread can ask.
+     */
+    private @Nullable MusicRecorder music;
+
+    /**
      * What the machine did to its hardware during the frame now running, in the order it did it.
      * Filled by the debugger's bus hooks and emptied at every boundary.
      */
@@ -416,6 +426,53 @@ public class EmulatorRunner {
         commands.add(() -> {
             command.run();
             audio.flush();
+        });
+    }
+
+    /**
+     * Starts writing down what the sound chip is playing.
+     * <p>
+     * A frame at a time rather than four times a second like everything else the front end reads,
+     * because a melody moves faster than that -- see {@link MusicRecorder}. It costs three voice
+     * reads and three comparisons a frame, paid only while somebody is recording.
+     *
+     * @param region which console this is, since a frame is 16.6ms on one and 20ms on the other.
+     */
+    public void startMusic(final Region region) {
+        post(() -> music = new MusicRecorder(region));
+    }
+
+    /**
+     * Stops, and writes what was played to {@code path}.
+     * <p>
+     * The file is written on this thread rather than handed back, for the reason the movie's is:
+     * the recorder belongs to the thread that filled it, and a caller that took it away would be
+     * reading it while this one was still adding to it.
+     *
+     * @param whenDone told how many frames were written, on the event dispatch thread, or -1 if
+     *                 nothing was playing or the file could not be written.
+     */
+    public void stopMusic(final Path path, final LongConsumer whenDone) {
+        post(() -> {
+            var writing = music;
+
+            music = null;
+
+            if (writing == null || writing.isEmpty()) {
+                logger.log(Level.INFO, "nothing was playing, so no music was written");
+                SwingUtilities.invokeLater(() -> whenDone.accept(-1));
+
+                return;
+            }
+
+            try {
+                writing.writeTo(path);
+                logger.log(Level.INFO, "wrote " + writing.frames() + " frames of music to " + path);
+                SwingUtilities.invokeLater(() -> whenDone.accept(writing.frames()));
+            } catch (IOException e) {
+                logger.log(Level.ERROR, "could not write the music", e);
+                SwingUtilities.invokeLater(() -> whenDone.accept(-1));
+            }
         });
     }
 
@@ -972,6 +1029,7 @@ public class EmulatorRunner {
                 if (completed) {
                     fillScope(sampleCount);
                     notePads();
+                    noteMusic();
                     observeFrames(1);
 
                     // After the readout rather than before it, and that order is the whole of how
@@ -1264,6 +1322,20 @@ public class EmulatorRunner {
         var reads = eventReads;
 
         post(() -> debugger.setEventSink(wanted ? events::record : null, reads));
+    }
+
+    /**
+     * Writes down what the chip was playing on the frame that has just finished.
+     * <p>
+     * Unlike {@link #notePads()} this is not behind the observer: a recording is something somebody
+     * asked for and it must go on whether or not a window is open to watch it. Unlike the movie
+     * recorder it is not fed on the rewind path either, and what that means is written down in
+     * {@link MusicRecorder}: a passage played twice was heard twice.
+     */
+    private void noteMusic() {
+        if (music != null) {
+            music.frame(nes.getAPU());
+        }
     }
 
     /**
