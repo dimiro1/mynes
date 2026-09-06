@@ -114,9 +114,10 @@ final class AccuracyCoinTests {
 
             entry("Address $2004 behavior", "PASS G"),
 
+            // The only failure left, and the reason it is still here is written down where the
+            // number it is arguing with lives: see PPU.MASK_WRITE_DELAY_DOTS.
             entry("BG Serial In", "FAIL 2"),
-            entry("Sprites On Scanline 0", "PASS 1"),
-            entry("$2004 Stress Test", "FAIL 2")
+            entry("Sprites On Scanline 0", "PASS 1")
     );
 
     /**
