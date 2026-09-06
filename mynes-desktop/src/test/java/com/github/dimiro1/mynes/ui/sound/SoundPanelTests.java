@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui.sound;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.Views;
 import org.junit.jupiter.api.BeforeAll;
@@ -186,7 +187,8 @@ class SoundPanelTests {
                 new short[FRAME],
                 List.copyOf(traces),
                 Readout.Pads.NONE,
-                Readout.Events.NONE);
+                Readout.Events.NONE,
+                Usage.Snapshot.NONE);
     }
 
     private static int loudest(final short[] samples) {

@@ -14,6 +14,7 @@ import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.GameUIFrame;
 import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
 import com.github.dimiro1.mynes.ui.Commands;
@@ -504,7 +505,8 @@ public final class Shots {
                     new short[FRAME_SAMPLES],
                     voiceTraces(nes),
                     Readout.Pads.NONE,
-                    Readout.Events.NONE));
+                    Readout.Events.NONE,
+                    Usage.Snapshot.NONE));
             panel[0].setRunning(
                     "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
 

@@ -19,6 +19,7 @@ import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerPanel;
 import com.github.dimiro1.mynes.ui.sound.SoundPanel;
+import com.github.dimiro1.mynes.ui.usage.UsagePanel;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.AbstractAction;
@@ -208,7 +209,8 @@ public final class ControlPanelFrame extends JFrame {
 
         var inFront = tabs.getSelectedIndex();
 
-        instruments = new Instruments(nes, cart, colours, this::recordEventReads);
+        instruments = new Instruments(
+                nes, cart, colours, this::recordEventReads, this::forgetUsage);
 
         tabs.removeAll();
 
@@ -305,13 +307,15 @@ public final class ControlPanelFrame extends JFrame {
             SoundPanel sound,
             CartridgePanel cartridge,
             PadsPanel pads,
+            UsagePanel usage,
             EventsPanel events) {
 
         private Instruments(
                 final NES nes,
                 final Cart cart,
                 final NESPalette colours,
-                final Consumer<Boolean> onEventReads) {
+                final Consumer<Boolean> onEventReads,
+                final Runnable onForgetUsage) {
 
             this(
                     new NametableViewerPanel(nes, colours),
@@ -321,6 +325,7 @@ public final class ControlPanelFrame extends JFrame {
                     new SoundPanel(),
                     new CartridgePanel(cart),
                     new PadsPanel(),
+                    new UsagePanel(onForgetUsage),
                     new EventsPanel(nes.getRegion(), onEventReads));
         }
 
@@ -328,8 +333,10 @@ public final class ControlPanelFrame extends JFrame {
          * The pictures in the order the questions come in -- what is on the screen, what is over
          * it, what colours both are drawn through, and only then what the game has to draw with --
          * and then the three parts of the machine that have no picture at all: what it sounds
-         * like, what it is made of, and what it is being told. Events is last because it is the
-         * only one that is not about the machine as it stands but about what it did.
+         * like, what it is made of, and what it is being told. Then the two that are not about the
+         * machine as it stands at all but about what it has been doing: how hard it is working, and
+         * -- last, because it is the only one that is about a single frame rather than a stretch of
+         * them -- when in that frame it did any of it.
          */
         void addTo(final JTabbedPane pane) {
             pane.addTab("Nametables", fixed(nametables));
@@ -339,6 +346,7 @@ public final class ControlPanelFrame extends JFrame {
             pane.addTab("Sound", filling(sound));
             pane.addTab("Cartridge", filling(cartridge));
             pane.addTab("Pads", filling(pads));
+            pane.addTab("Usage", filling(usage));
             pane.addTab("Events", fixed(events));
         }
 
@@ -353,6 +361,7 @@ public final class ControlPanelFrame extends JFrame {
             sound.show(readout);
             cartridge.show(readout);
             pads.show(readout);
+            usage.show(readout);
             events.show(readout);
         }
     }
@@ -441,6 +450,17 @@ public final class ControlPanelFrame extends JFrame {
     private void recordEventReads(final boolean reads) {
         if (runner != null) {
             runner.setEventReads(reads);
+        }
+    }
+
+    /**
+     * The Usage tab's own button, which reaches the meter the emulation thread owns. Through the
+     * runner for the reason above it: the meter belongs to the thread clocking the machine and this
+     * is the event dispatch thread.
+     */
+    private void forgetUsage() {
+        if (runner != null) {
+            runner.forgetUsage();
         }
     }
 

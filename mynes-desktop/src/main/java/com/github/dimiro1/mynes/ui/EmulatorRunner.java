@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.ui.music.MusicRecorder;
 import com.github.dimiro1.mynes.state.Movie;
@@ -246,6 +247,13 @@ public class EmulatorRunner {
      * has to be counted as the frames go past rather than read off the machine at the end of them.
      */
     private final PadPolling polling = new PadPolling();
+
+    /**
+     * How much of its frame the program is using and how much of the machine's memory, which like
+     * the polling above it is measured as the frames go past rather than read off the machine at
+     * the end of them. Fed from the write hook and at the boundary; see {@link Usage}.
+     */
+    private final Usage usage = new Usage();
 
     /**
      * The music being written down, or null when nobody asked for any. Emulation thread only, like
@@ -569,7 +577,18 @@ public class EmulatorRunner {
 
         post(() -> apu.setPeakTracking(wanted));
 
-        armEventLog();
+        armTheHooks();
+    }
+
+    /**
+     * Starts the memory map again, which is the Usage tab's own button.
+     * <p>
+     * Posted, like every other change to a running machine: the meter belongs to the thread
+     * clocking it and the button is on the event dispatch thread. Only the map is forgotten -- what
+     * the last frame cost is a measurement of that frame and has nothing to be started again.
+     */
+    public void forgetUsage() {
+        post(usage::forget);
     }
 
     /**
@@ -582,7 +601,7 @@ public class EmulatorRunner {
     public void setEventReads(final boolean reads) {
         this.eventReads = reads;
 
-        armEventLog();
+        armTheHooks();
     }
 
     /**
@@ -1029,6 +1048,7 @@ public class EmulatorRunner {
                 if (completed) {
                     fillScope(sampleCount);
                     notePads();
+                    noteUsage();
                     noteMusic();
                     observeFrames(1);
 
@@ -1274,7 +1294,12 @@ public class EmulatorRunner {
         }
 
         var readout = Readout.of(
-                nes, scope.clone(), List.copyOf(traced), polling.snapshot(), events.snapshot());
+                nes,
+                scope.clone(),
+                List.copyOf(traced),
+                polling.snapshot(),
+                events.snapshot(),
+                usage.snapshot(nes.getBus().getMapper().prgRAM().length));
 
         // The meters' window starts again here rather than inside the reading, so that the
         // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
@@ -1307,21 +1332,42 @@ public class EmulatorRunner {
     }
 
     /**
-     * Points the debugger's hooks at the log, or takes them off.
+     * Closes off the frame the program has just had, for the same reason and under the same rules
+     * as {@link #notePads()}: how much of a frame was used is a difference between two boundaries,
+     * so measuring only every fifteenth frame would report fifteen frames of a game as one, and the
+     * frame number is what tells a run of frames from two with a gap between them.
+     * <p>
+     * The writes it is counting arrive on the bus hook in between; this is only the boundary.
+     */
+    private void noteUsage() {
+        if (frameObserver == null) {
+            return;
+        }
+
+        var cpu = nes.getCPU();
+
+        usage.frameEnded(framesRun, cpu.getRunCycles(), cpu.getStalledCycles());
+    }
+
+    /**
+     * Points the debugger's bus hooks at the event log and the usage meter, or takes them off.
      * <p>
      * Posted rather than done here, because the debugger belongs to the thread clocking the machine
      * and both callers are on the event dispatch thread -- the panel being shown, and its reads
      * tick. Off whenever nobody is watching, which is the same rule the readout keeps and is nearly
      * always.
      * <p>
-     * <b>This does not slow the machine down.</b> A sink is not a breakpoint: the driver's fast
-     * loop is untouched, and what it costs is a hook on a bus the game already crosses.
+     * <b>Neither slows the machine down.</b> A sink is not a breakpoint: the driver's fast loop is
+     * untouched, and what the two cost between them is one hook on a bus the game already crosses.
      */
-    private void armEventLog() {
+    private void armTheHooks() {
         var wanted = frameObserver != null;
         var reads = eventReads;
 
-        post(() -> debugger.setEventSink(wanted ? events::record : null, reads));
+        post(() -> {
+            debugger.setEventSink(wanted ? events::record : null, reads);
+            debugger.setUsage(wanted ? usage : null);
+        });
     }
 
     /**
@@ -1412,6 +1458,11 @@ public class EmulatorRunner {
         // The chip is back where it was, but the queue between it and the card is not in a state --
         // see APU.sampleRing in SaveStateCompletenessTests -- so those two frames are still in it.
         nes.getAPU().drainSamples(samples);
+
+        // Nor is the count of cycles a transfer stole, so the processor's executed-cycle count came
+        // back from the state a little short of where it left. Those two frames were not the game
+        // running and there is nothing to measure across them either way.
+        usage.unmeasured();
     }
 
     /**

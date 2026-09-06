@@ -297,6 +297,16 @@ public final class Debugger {
      */
     private boolean eventReads;
 
+    /**
+     * Whoever is measuring how much of its frame the program uses and how much of the machine's
+     * memory, or null when nobody is.
+     * <p>
+     * The second thing to ride on the write hook, and like the first it is deliberately <b>not</b>
+     * part of {@link #isArmed()}: what it measures is a game playing normally, and a gauge that
+     * cost the driver its fast loop would be measuring itself.
+     */
+    private Usage usage;
+
     private Stepping stepping = Stepping.NONE;
     private boolean haltAsked;
 
@@ -427,6 +437,13 @@ public final class Debugger {
 
         if (eventSink != null) {
             recordWrite(address, value);
+        }
+
+        // Every write, unfiltered, where the sink above takes only the ones outside memory: what a
+        // byte going into RAM says is which memory the game uses, and what a stretch of writes that
+        // are all the same write says is that the game has stopped working. See Usage.
+        if (usage != null) {
+            usage.wrote(address, cpu.getPC(), cpu.getRunCycles());
         }
     }
 
@@ -624,6 +641,23 @@ public final class Debugger {
     }
 
     /**
+     * Measures what the program does with its frame and with the machine's memory, or stops
+     * measuring.
+     * <p>
+     * <b>This does not arm the machine either</b>, for the reason above it: it rides on the write
+     * hook, which a game crosses a few thousand times a second and which is already down whenever
+     * anything is being recorded. How much of its frame a game has left over is a question about a
+     * game running at full speed, so a gauge that slowed it down would answer a different one.
+     *
+     * @param usage who to tell, or null to stop.
+     */
+    public void setUsage(final Usage usage) {
+        this.usage = usage;
+
+        wireHooks();
+    }
+
+    /**
      * Clocks the machine with nothing watching, and puts the watching back afterwards.
      * <p>
      * For a caller that has to run the machine for a reason of its own rather than to play the
@@ -738,10 +772,11 @@ public final class Debugger {
     /**
      * Puts the three hooks down or picks them up, according to whether anything is still watching.
      * <p>
-     * Recomputed from the watchpoints and the sink rather than counted, so that a machine attached
-     * to after a point was set gets its hooks and one whose last point has gone loses them, without
-     * any caller having to remember which case it is in. Two things want each hook now and neither
-     * knows about the other, which is exactly the case counting would get wrong.
+     * Recomputed from the watchpoints, the sink and the usage meter rather than counted, so that a
+     * machine attached to after a point was set gets its hooks and one whose last point has gone
+     * loses them, without any caller having to remember which case it is in. Three things want the
+     * write hook now and none of them knows about the others, which is exactly the case counting
+     * would get wrong.
      */
     private void wireHooks() {
         if (memory == null) {
@@ -749,7 +784,7 @@ public final class Debugger {
         }
 
         var reads = eventSink != null && eventReads;
-        var writes = eventSink != null;
+        var writes = eventSink != null || usage != null;
 
         for (var access : watchpoints.values()) {
             reads |= access.reads();

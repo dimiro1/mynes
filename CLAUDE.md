@@ -660,6 +660,66 @@ the panel has been shut for a while. `Readout.Pads.NONE`, with no window at all,
 taken anywhere but the emulation loop carries, and "nobody counted" is said differently from "no
 lag" wherever it shows: on the dashboard the count is simply absent.
 
+**The Usage tab answers *how much is left*, and the Pads tab beside it answers *when it ran out*.**
+A frame with no $4016 read in it is a game that has already missed its turn; a game sitting at
+ninety-five per cent for a second before that is the same event with a warning on it. The two are
+drawn over the same 120 frames so they can be read against each other, and the Overclock switch in
+the column is the one thing in the program that moves the first number without changing the game.
+
+**A 6502 has no idle, so "busy" has to be defined rather than measured.** Nothing here ever executes
+fewer than one instruction per cycle it is given. What a game does with the time it has spare is
+turn over -- spinning on the VBlank flag, or on the byte its NMI handler sets -- so what is measured
+is **the longest stretch of the frame in which the program did nothing new**, and the rest of the
+frame is work.
+
+**"Nothing new" is two things and the second one is not an embellishment.** Storing nothing at all
+is the obvious half, and is what Super Mario Bros., Super Mario Bros. 3 and Metroid do. The other
+half is storing *the same byte of the machine's own memory from the same instruction*, over and
+over, which is a wait loop that also advances a counter or a random seed: Contra sits on $0009 every
+249 cycles, Mega Man 5 on $0090 every 93, Castlevania the same. **Measured on silence alone all
+three read as ninety-nine per cent busy while sitting on a menu**, and measured this way they read
+as 35, 60 and 61. Three things fall out of the rule and all three are wanted -- a fill loop writes a
+different address every pass and so is work; a write to anything that is *not* memory always ends
+the stretch, since there is no telling the hardware the same thing twice by accident; and a wait
+loop that turns over two bytes instead of one is the way this can still be fooled.
+
+**Cycles a transfer stole are neither work nor waiting**, and are reported on their own. A sprite
+DMA is 513 of them and a DMC fetch four, and during those the program is not running at all --
+counting them as a wait would report a game doing more work as doing less. `CPU.getRunCycles()` is
+the frame less those, and it is what the percentage is taken over; `CPU.getStalledCycles()` is the
+other half of the pair, and both are in `NOT_IN_THE_STATE` as instrumentation, the same argument
+`Controller.getPolls()` makes.
+
+**The memory half is one bit per byte, set where the program stored** -- written rather than not
+zero, since zero is a perfectly good thing for a variable to hold. Four areas, split where the
+hardware splits them and no further: the zero page and the stack page are the processor's, the rest
+of the 2KB has no hardware meaning, and $6000-$7FFF is the cartridge's window. That $0200 holds a
+sprite buffer is a *convention*, so it is not an area -- it does not need to be, since a game that
+keeps one draws it as a solid 256 bytes at the left of the third strip. Each area is drawn across
+its own address range at 128 cells, stacked: the grey column is what has ever been written and the
+green inside it is the last quarter second, so a full grey column with a sliver of green is memory
+set up once and left alone.
+
+**Start Again is not a nicety.** Nearly every cartridge clears all 2KB before it does anything else,
+so a map that began when the machine did is a map of that loop: Super Mario Bros. reads as 100% of
+both pages from its first frame to its last. Started again once the game is playing, the same map is
+18% of the zero page and 13% of the work RAM, which is the game.
+
+**Two things about where it watches from.** Cartridge RAM is watched at the *window* rather than at
+the chip, so a board that banks more than 8KB in there shows every bank on top of the others, and a
+write to RAM the board has switched off is still a write -- which is a bug worth seeing rather than
+hiding. And everything outside those two RAMs is deliberately absent, because $2000-$401F and the
+mapper are the machine being *told* something: exactly the split `Debugger.recordWrite` already
+makes for the Events tab, in reverse. `debug/Usage` is where all of it lives -- in core, so a REPL
+`usage` command is trivial later -- and it is the third thing to ride on the write hook and the
+second, after the event sink, that deliberately does **not** arm the machine.
+
+**The Usage tab tracks the viewport's width where every other panel sits at its preferred size.**
+At 128 cells to an area every pixel of width is another byte somebody can see, so `UsagePanel`
+implements `Scrollable` and answers true to `getScrollableTracksViewportWidth`. The height is not
+tracked: a panel stretched to a tall window would spread its rows down it rather than stack them at
+the top.
+
 **The Events tab is the only thing in the program that answers *when*.** Everything else answers
 *what*: which bank, which sprite, which byte. A write to `$2005` is a scroll; the same write a
 hundred and fourteen lines down is a status bar split, and by the time the frame is over there is
@@ -743,10 +803,12 @@ So `EmulatorRunner.redrawPicture` takes a save state, goes through **two** frame
 the end of whatever frame the machine was standing in, then one whole one, since a partial frame
 would leave the top of the picture as it was -- presents that, and puts the state back. The machine
 comes back byte for byte, which is the same claim the rewind rests on and is what
-`EmulatorRunnerTests` holds it to. Two things are swept up afterwards: the frames run
+`EmulatorRunnerTests` holds it to. Three things are swept up afterwards: the frames run
 `Debugger.unwatched`, because a write watchpoint that latched during one would report itself on the
-next real instruction as a stop nobody asked for, and the samples they made are drained and dropped,
-because `APU.sampleRing` is deliberately not in a state. **The picture ends up one frame ahead of
+next real instruction as a stop nobody asked for; the samples they made are drained and dropped,
+because `APU.sampleRing` is deliberately not in a state; and `Usage.unmeasured()` is called, because
+`CPU.stalledCycles` is not in a state either, so the executed-cycle count the load meter measures
+against comes back from the state a little short of where it left. **The picture ends up one frame ahead of
 the one it replaced** and there is no way for it not to be -- the machine has not moved, so what
 that costs is a frame of animation. Nothing happens at all while the machine is running, since a
 running one draws the next frame within about seventeen milliseconds anyway.
@@ -1126,8 +1188,9 @@ mynes-core/           depends on nothing
                       controllers
   mynes/mappers/      mappers 0 to 4
   mynes/state/        save states, battery .sav files, and .mnm session recordings
-  mynes/debug/        the disassembler, the breakpoints and their conditions, and the tracer,
-                      all shared by the window and the REPL
+  mynes/debug/        the disassembler, the breakpoints and their conditions, the tracer, and
+                      the meter that says how much of its frame the program used and which
+                      bytes of memory it has -- all shared by the window and the REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
   mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, the NTSC
                       filter that decodes the signal instead of reading a palette, and the tube
@@ -1163,6 +1226,7 @@ mynes-desktop/        depends on core, patch, archive, midi and headless; FlatLa
   mynes/ui/sound/     the five voices, their meters and the scope of what they add up to
   mynes/ui/cartridge/ which bank of the cartridge is in each window, and the rest of the board
   mynes/ui/pads/      both controllers, and the strip of frames the game never read one on
+  mynes/ui/usage/     how much of its frame the program used, and which bytes of memory it has
   mynes/ui/music/     what the sound chip played, written down as a MIDI file
   mynes/ui/events/    one frame as a raster, with a mark wherever the machine was touched
 

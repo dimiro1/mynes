@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.pads;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.Views;
 import org.junit.jupiter.api.BeforeAll;
@@ -95,7 +96,13 @@ class PadsPanelTests {
     }
 
     private static Readout readout(final Readout.Pads pads) {
-        return Readout.of(nes, Readout.NO_SCOPE, Readout.NO_TRACES, pads, Readout.Events.NONE);
+        return Readout.of(
+                nes,
+                Readout.NO_SCOPE,
+                Readout.NO_TRACES,
+                pads,
+                Readout.Events.NONE,
+                Usage.Snapshot.NONE);
     }
 
     private static List<String> labels(final Container root) {
