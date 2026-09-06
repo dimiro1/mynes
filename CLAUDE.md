@@ -1080,8 +1080,8 @@ build would notice one going missing. And `THIRD-PARTY.md` names the two librari
 carries, which is the file to write in if a third ever earns its place.
 
 Releasing is a tag and nothing else. `.github/workflows/release.yml` refuses one whose name disagrees
-with the pom, so the version moves first and `git tag v<version>` follows it. There are six poms to
-move it in now, which is a job for the tool rather than for six edits:
+with the pom, so the version moves first and `git tag v<version>` follows it. There are seven poms to
+move it in now, which is a job for the tool rather than for seven edits:
 
 ```sh
 mvn -B versions:set -DnewVersion=0.3.0 -DprocessAllModules -DgenerateBackupPoms=false
@@ -1089,6 +1089,12 @@ mvn -B versions:set -DnewVersion=0.3.0 -DprocessAllModules -DgenerateBackupPoms=
 
 The workflow's check reads the root pom, and `help:evaluate` is an aggregator goal, so it still
 answers with one version rather than three.
+
+**Then put `project.build.outputTimestamp` back**, because `versions:set` helpfully rewrites it to
+the second the command ran. That property exists to keep the moment of the build out of the files,
+so a timestamp naming one is the one value it must never hold: the SHA256 published beside the
+release stops being a number anybody else can arrive at. The date of the release at midnight is what
+goes there.
 
 ## House style
 
