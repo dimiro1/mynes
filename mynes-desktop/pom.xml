@@ -48,6 +48,14 @@
         </dependency>
 
         <!-- The same, for File > Open: the chooser takes the zip a collection ships in. -->
+        <!-- Standard MIDI files, for recording what the sound chip played. Beside the console
+             rather than inside it, for the reason the patch and archive modules are. -->
+        <dependency>
+            <groupId>com.github.dimiro1</groupId>
+            <artifactId>mynes-midi</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.github.dimiro1</groupId>
             <artifactId>mynes-archive</artifactId>

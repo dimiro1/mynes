@@ -10,6 +10,11 @@ import java.util.Locale;
 /**
  * Every colour the debugger paints with, in one place.
  * <p>
+ * The structural half of it is public and the syntax colours are not, which is the line worth
+ * keeping: what a window's headings, its muted text and its running-or-stopped green are is one
+ * question for the whole control panel, and what colour a branch instruction is drawn in is the
+ * disassembly's alone.
+ * <p>
  * The structural ones -- muted text, the accent, selection -- come out of the look and feel, so
  * that the window keeps looking like the rest of the program if the theme ever changes, with a
  * plain fallback for a machine that fell back to Metal. The syntax colours are this window's own:
@@ -20,7 +25,7 @@ import java.util.Locale;
  * place, and the same red for a breakpoint wherever one is drawn -- the gutter, the points table,
  * the byte a watchpoint caught.
  */
-final class Theme {
+public final class Theme {
     /**
      * The one font every listing in the window uses, so that columns line up across panels.
      */
@@ -46,7 +51,7 @@ final class Theme {
      * because five boxes with lines round them is what the old window looked like and the lines
      * were most of what made it look old.
      */
-    static JLabel heading(final String text) {
+    public static JLabel heading(final String text) {
         var label = new JLabel(text.toUpperCase(Locale.ROOT));
 
         label.setFont(label.getFont().deriveFont(Font.BOLD, 11f));
@@ -56,7 +61,23 @@ final class Theme {
         return label;
     }
 
-    static Color muted() {
+    /**
+     * The line under a heading that says what the thing below it is: the same muted colour, at the
+     * ordinary weight and size, so that it reads as an aside rather than as another label.
+     * <p>
+     * Here rather than in each panel because three of them wanted one and each had written its own,
+     * which is three places for the same three lines to drift apart in.
+     */
+    public static JLabel note(final String text) {
+        var label = new JLabel(text);
+
+        label.setForeground(muted());
+        label.setFont(label.getFont().deriveFont(11f));
+
+        return label;
+    }
+
+    public static Color muted() {
         return colour("Label.disabledForeground", Color.GRAY);
     }
 
@@ -64,18 +85,18 @@ final class Theme {
      * Fainter than muted, for the bytes column and the zeros in memory: present, but not what
      * anyone is reading.
      */
-    static Color dim() {
+    public static Color dim() {
         var muted = muted();
         var back = background();
 
         return blend(muted, back, 0.55f);
     }
 
-    static Color foreground() {
+    public static Color foreground() {
         return colour("Label.foreground", Color.BLACK);
     }
 
-    static Color background() {
+    public static Color background() {
         return colour("List.background", Color.WHITE);
     }
 
@@ -95,11 +116,11 @@ final class Theme {
         return BREAKPOINT;
     }
 
-    static Color running() {
+    public static Color running() {
         return RUNNING;
     }
 
-    static Color stopped() {
+    public static Color stopped() {
         return STOPPED;
     }
 

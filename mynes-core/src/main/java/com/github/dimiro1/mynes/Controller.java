@@ -28,6 +28,52 @@ public interface Controller {
     void setStrobe(int strobe);
 
     /**
+     * Which buttons are held down, as the eight {@code BUTTON_} flags.
+     * <p>
+     * What the front end last put in rather than what the game has read out: the shift register is
+     * half way through being clocked most of the time, and "what is being held" is the question
+     * anybody looking at a pad is asking.
+     *
+     * @return the button mask.
+     */
+    int getButtons();
+
+    /**
+     * How many times the game has latched this pad since the machine was switched on.
+     * <p>
+     * One per falling edge of the strobe, which is the moment the shift register stops following
+     * the buttons and starts holding them -- so it counts <em>polls</em> rather than writes: a game
+     * that writes $02 to work an expansion port has not asked this pad anything.
+     * <p>
+     * <b>Both pads answer with the same number</b>, because one write to $4016 drives the latch
+     * line of both ports. What tells them apart is {@link #getBitsRead()}, since $4016 and $4017
+     * are read separately -- a game with no two player mode latches this pad every frame and never
+     * reads a bit out of it.
+     * <p>
+     * Instrumentation rather than machine state: nothing in the console can see it, it is not in a
+     * save state, and a frame in which it does not move is a frame the game never looked at the pad
+     * -- which is the honest measure of a main loop that overran its frame.
+     *
+     * @return the count since power on, which only differences are ever taken of.
+     */
+    long getPolls();
+
+    /**
+     * How many bits the game has clocked out of this port since the machine was switched on.
+     * <p>
+     * A poll is eight of them, so a game reading both pads once a frame comes to eight here and
+     * eight on the other one. Sixteen is a game reading the pad twice and comparing the two, which
+     * is the usual guard against a DMC fetch corrupting a read.
+     * <p>
+     * Bits rather than bus cycles, which is the same distinction {@link #peek()} draws: a read that
+     * finds the strobe still low from the read before it clocks nothing and answers with the bit
+     * that is already on the line, so it is one bit read twice rather than two.
+     *
+     * @return the count since power on, which only differences are ever taken of.
+     */
+    long getBitsRead();
+
+    /**
      * Reads the next button state from the controller shift register.
      * Returns 1 if the button is pressed, 0 otherwise.
      *

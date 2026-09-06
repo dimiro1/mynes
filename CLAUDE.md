@@ -1,8 +1,8 @@
 # Working on MyNES
 
-A NES emulator in Java 25, built with Maven. Six modules -- `mynes-core`, `mynes-patch`,
-`mynes-archive`, `mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test` at the root
-still runs everything.
+A NES emulator in Java 25, built with Maven. Seven modules -- `mynes-core`, `mynes-patch`,
+`mynes-archive`, `mynes-midi`, `mynes-headless`, `mynes-desktop`, `mynes-shots` -- and `mvn -B test`
+at the root still runs everything.
 
 ## Seeing what the emulator does
 
@@ -445,7 +445,11 @@ of 0.20 to silence, which is what `HeadlessRunTests` asserts.
 The window has the same five under **Debug > Sound Channels**, ticked when audible, beside Show
 Background and Show Sprites rather than anywhere near Mute. That is the distinction worth keeping:
 Mute and **Machine > Volume** decide how loudly the machine is played and these decide what it is
-playing.
+playing. The control panel's column says it with two headings -- **Sound** over Mute and the volume,
+**Voices** over the five -- because the Sound tab beside them makes the difference visible and
+otherwise inexplicable: the five change the scope's trace, since they happen at the mixer inside the
+chip, and the other two do not, since they happen on the way to the sound card. The scope's heading
+says so too.
 
 ### The sound card is not the same clock
 
@@ -484,6 +488,300 @@ at sixty hertz in anyway, which is what `ResamplerTests` holds it to.
 **Machine > Volume** is the other half of the same class: five steps, squared on their way to the
 amplitude, because a fader that moved it linearly would do all of its audible work in the top tenth
 of its travel. There is no zero -- Mute already is one, and it remembers the volume to come back to.
+
+### One window for the debugging, and every lever on it
+
+**Debug > Control Panel** (`Cmd+D`) is the whole of the front end's debugging. There were five
+windows -- the debugger, the nametable, OAM and palette viewers and the CHR viewer -- and they are
+five tabs of one now, with a fixed column beside them holding every switch the Machine, Debug and
+Hacks menus reach. The Debug menu is the way in, the two layer ticks and the voices; there is no
+item per instrument any more, because the tabs are that list.
+
+**One instrument at a time, rather than the debugger beside one.** Side by side was tried first and
+the shapes refuse it: the debugger elides its own buttons below about a thousand pixels, the widest
+instrument wants five hundred, and the column wants two hundred and twenty. Seventeen hundred and
+fifty is wider than a laptop, so side by side is a layout that is right on a desk and broken in a
+bag -- and a default that depends on which screen somebody opened it on is not a default. The
+debugger is still the main view: it is the first tab and the one that is up.
+
+**Three lines across the top say what the machine is doing**, and they are the third way anything
+in the front end reads a machine. The viewers poll on a Swing timer without synchronising, which is
+right for them: what they read is *arrays*, and an element cannot tear. The debugger takes a
+`MachineSnapshot` inside the stop callback, which is exact, once, halted. Neither works for a
+dashboard, because what a dashboard shows is *scalars* -- $2000, the scroll, which voices are
+sounding -- and a dozen of those read one at a time off a running machine is not a stale picture
+but a machine that never existed. So `EmulatorRunner.setFrameObserver` builds an immutable
+`Readout` **on the emulation thread, at the frame boundary** where nothing is half written, every
+fifteenth frame, and `invokeLater`s it. It holds no reference to the machine, which is what makes
+looking at it later safe. The observer is null while the panel is put away -- the
+`Debugger.isArmed()` rule -- so a closed panel costs one null check a frame.
+
+**The Cartridge tab is `Mapper.banks()`, and that is a default method rather than twelve.** Every
+board here reads with `array[offset]`, so the offset is the half of a read a debugger wants -- and
+pulling it out as `prgOffset`/`charOffset` means `banks()` is worked out from the same arithmetic
+the reads do rather than from whatever each board keeps in its own fields, which is what stops the
+two coming apart. `MapperBanksTests` fills every bank with its own number and reads one byte back
+out of each window, which is the check that catches exactly that.
+
+Normalised to 8KB of program ROM and 1KB of character memory, the smallest window any of these
+switch: a coarser board shows consecutive numbers, which is what it is really doing. `charOffset` is
+free of side effects, and on MMC2 and MMC4 that is a real distinction rather than a formality --
+those boards switch a bank when the beam passes a particular tile, and it is `ppuAddress` that moves
+the latch rather than the read, so asking never changes what is on screen.
+
+**The Sound tab is the one instrument with no picture to draw**, which is why a sound bug is the
+hardest kind to chase: a note that will not stop, a channel that never starts, music a semitone
+flat. So each of the five rows says the same thing three ways -- the period the game *wrote*, which
+is what a watchpoint catches; the frequency that comes out of it *on the console it is running on*;
+and the nearest note with how far off it is in cents. `APU.VoiceState` is the machine's answer and
+lives in core, so a REPL `voices` command is trivial later; `Notes` is the arithmetic that turns a
+frequency into a name.
+
+**A period is not a pitch and the two channels that look alike do not turn one into the other the
+same way.** A pulse's sequencer is eight steps of two CPU cycles and the triangle's is thirty-two of
+one, so the same period written to both is an octave apart -- which is why game music is written
+with the bass a period lower rather than an octave lower. The noise's number is a shift rate rather
+than a pitch, and the DMC's is a sample rate.
+
+**The keyboards are the same three ways of saying it, laid out where a musician would look.** One
+per voice by default and all of them on one under a tick -- the same shape the scope's Split has,
+and the same reason: separate parts are easier to follow, and together is where an octave, a third
+and a semitone of accidental dissonance stop looking alike. A0 to C8 rather than some arbitrary
+window, because that is exactly the range the chip has -- the triangle at its longest period is
+27.3Hz, which is A0 to within a few cents, and the pulses run out at the top where the sweep unit
+silences them anyway.
+
+**Three keyboards and not four: the noise has a pitch and does not get one.** `APU.VoiceState.pitch()`
+is what decides who has a note, and it is a different question from `hertz()` for exactly one voice
+-- the noise's hertz is how fast its shift register is being clocked, and its pitch is that over the
+length of the sequence it is running round. Normally that is 32767 steps and there is no pitch at
+all; tap the register six bits along instead of one and it is 93, which repeats fast enough to be
+heard, and 4811.2Hz for the shortest period is the first entry of the table every reference prints
+for this channel. `APUVoiceStateTests` holds it to that.
+
+**A keyboard for it was built and then taken out, and the reason was measured.** Over an hour of
+play across seven cartridges, Super Mario Bros. spends 64 frames of 3600 in short mode and Mega Man
+5 spends 56, while Super Mario Bros. 3, Castlevania, Battletoads, Contra and Metroid never touch it
+-- and two of Mega Man's three notes are below A0 and off a piano anyway. At four readouts a second
+that is a row of nothing. What the noise keeps is its **note, in the column beside its row**, which
+costs no room and is where anybody reading that row would look; that column had been saying "no
+note" unconditionally, which was wrong for those 64 frames. The DMC could never have had either: its
+rate is a sample rate, and what pitch a sample comes out at is a fact about the bytes in it. **The
+note column and the dashboard both go through `pitch()`** rather than deciding for themselves, since
+two places deciding which voices have a note is exactly how they came to disagree about `playing`
+once already.
+
+**What a keyboard shows that is not a measurement is the trail.** A readout is four times a second
+and a melody is faster than that, so a keyboard lit only by what is held at the instant of the
+readout would blink and miss half the tune. Each key keeps a mark for two readouts after the voice
+leaves it, and that mark is a bar across the key's foot rather than a fainter version of the fill:
+"this is sounding" and "this was sounding a moment ago" are different answers, and one colour at two
+opacities would blur them into a guess.
+
+**Debug > Start Music... writes the tune down as a MIDI file**, and it is the Sound tab's reading
+kept rather than watched. `ui/music/MusicRecorder` asks the three pitched voices what note they are
+on **once a frame** -- four times a second, which is what every other gauge here reads at, would
+miss most of a melody -- and turns a change into a note-off and a note-on. Start asks where the file
+goes and Stop writes it, which is the shape Start Trace... and Record Movie... already have.
+
+Four things about it are decisions rather than arithmetic. **It is a recording and not a
+transcription**: nothing works out a key, a time signature or where the bars are, because none of
+that is in the chip. **A tick is a frame**, and the tempo is set to make that exactly true on the
+console that played it -- so the timing is a measurement and the bar lines are furniture, and a PAL
+game comes out at PAL speed rather than twenty per cent fast. **Three parts**, for two different
+reasons: the noise has a pitch only in short mode and its part is percussion, which would mean
+choosing a drum the game never named, and the DMC is playing a recording of something whose pitch is
+a fact about the bytes. And **the nearest semitone, with no pitch bends** -- the chip's periods are
+integers so most notes are a few cents off, and bending each one would be truer to what was heard
+and worse to work with, since the bend range is the receiving synth's opinion and a page of bends is
+what somebody has to delete before they can read the tune.
+
+**A rewind is in the file twice**, unlike a movie, and that is left alone rather than fixed: the
+recorder is fed on the forward path only, so a passage that was played, taken back and played again
+appears twice -- because it was heard twice.
+
+**The meters are peaks, and reading them does not clear them.** A level sampled four times a second
+off a wave oscillating hundreds of times a second is a random number, so what is kept is the loudest
+each voice has been since `APU.clearPeaks()` -- which the runner calls after building a readout, and
+nobody else does. That separation is load-bearing: the debugger's stop snapshot goes through the
+same `Readout`, and a read that reset would mean whichever of the two looked first quietly emptied
+the other. Peaks are taken *before* the mute, so a voice somebody has switched off still moves its
+meter -- "this is playing and you cannot hear it" is a different answer from "this is not playing",
+and telling them apart is most of what the mute is for. Tracking is off until something asks, which
+costs the mixer's hottest line one null check.
+
+**Split the voices draws each one on its own, above the sum of them.** What a voice's trace shows
+is what it put *into* the mixer -- the level its sequencer and envelope made, before the two ladders
+turn five levels into one and before the mute takes any away -- which is the point of separating
+them: a square wave, a triangle, a hiss and a sampled drum are recognisable at a glance and their
+sum is not. `APU.trace` is where they come from, behind the same null check as the peaks, recorded
+on the same average the mixer took so a voice's trace and the mixed one are the same samples. Each
+is drawn against its own full scale, since the four that come off a sequencer run 0 to 15 and the
+DMC's level is seven bits, and off the floor rather than about the middle, since a level never goes
+below zero.
+
+**The scope is scaled to what a game actually puts out rather than to the sixteen bit range.**
+Fifteen seconds of Super Mario Bros.' first level peaks at 0.20 of full scale and averages 0.02:
+two high passes take the DC out on the way, so what reaches a scope is the swing rather than the
+level, and a trace drawn against the whole range is a flat line. Fixed rather than normalised to
+whatever is in the buffer, which is the important half -- a scope that scaled itself would draw
+silence at full scale the moment the last note ended.
+
+**The Pads tab answers two questions, and the second is why it is a tab.** The first is what is
+being held, drawn as a controller rather than as eight ticks, because the shape is the reading: Up
+and Left together is a diagonal, and Left and Right together -- which a keyboard can send and a
+moulded cross cannot -- is a bug in whatever is feeding the pad. The second is **how often the game
+looks**, and nothing else in the program can see it. A game reads $4016 once a frame, so a frame
+that went by with no poll in it is a frame whose main loop did not finish in time: the game skipped
+a turn and drew the same picture again, which is invisible in a picture, in the sound and in the
+frame counter alike. It is exactly the stutter `--hack overclock` undoes, and the strip of the last
+two seconds under the pads is the before and after for it -- a mark every other frame is a loop
+overrunning by a little, a solid run is a level loading, and one mark every few seconds is the host
+stopping rather than the game.
+
+**The two ports are told apart by their reads rather than by their polls.** `Controller.getPolls()`
+counts the falling edge of the strobe, which is the moment the shift register stops following the
+buttons -- and one write to $4016 drives the latch line of both ports, so both pads always answer
+with the same number. `getBitsRead()` is what differs: a game with no two player mode latches pad
+two every frame and never clocks a bit out of $4017, which is the answer to why a second controller
+does nothing. Both are `long`, both are instrumentation rather than state, and both are in
+`NOT_IN_THE_STATE` with their reason.
+
+**The arithmetic is `ui/PadPolling`, and it runs every forward frame rather than every readout.**
+What it measures is a difference between consecutive frames, so a lag frame seen once every fifteen
+would be fifteen frames of the game reported as one -- it is the one thing in a readout that cannot
+be sampled at the rate the rest of it is. It is still behind the `Debugger.isArmed()` rule, so a
+closed panel counts nothing. **It is not fed from the rewind path**, which is the one place
+`framesRun` moves without a frame being run: nothing is re-emulated going backwards, so the
+counters do not move either and every frame handed back would be counted as a frame the game failed
+to read the pad in. The frame number is what says so -- a call that is not one more than the last
+one starts the window again rather than measuring across the gap, which is also what happens when
+the panel has been shut for a while. `Readout.Pads.NONE`, with no window at all, is what a readout
+taken anywhere but the emulation loop carries, and "nobody counted" is said differently from "no
+lag" wherever it shows: on the dashboard the count is simply absent.
+
+**The Events tab is the only thing in the program that answers *when*.** Everything else answers
+*what*: which bank, which sprite, which byte. A write to `$2005` is a scroll; the same write a
+hundred and fourteen lines down is a status bar split, and by the time the frame is over there is
+nothing anywhere -- not in memory, not in the picture, not in a disassembly -- to say which line it
+landed on. So one frame is drawn as the beam draws it, 341 dots by 262 scanlines with the picture
+area clear and the blanking shaded, and every PPU register, audio register, mapper write and
+interrupt is a mark where it happened. A split on the wrong line, a bank switched mid-picture
+instead of in the blanking, an MMC3 interrupt three lines late, an NMI a game switched off half way
+down: each is a mark in the wrong place and none of them is anything at all in any other view.
+
+**Recording does not arm the machine, and that is the point.** Every other thing the debugger
+watches costs the driver its fast loop, because a breakpoint has to be looked at between
+instructions. This rides on the bus hooks `MMU` already carries, so a game being recorded is a game
+running normally -- which it has to be, since where in the frame a game writes `$2005` is a question
+about a game that is playing properly and a gauge that changed the timing would be measuring itself.
+`Debugger.isArmed()` is deliberately untouched by `setEventSink`.
+
+**Writes always, reads only when asked, and that is a decision at the machine rather than a
+filter.** Recording reads means putting a hook on the line every instruction fetch comes past --
+the same price `watch ... read` pays and for the same reason -- so the Events tab's **Record reads**
+tick reaches through `EmulatorRunner.setEventReads` and onto the bus rather than hiding marks that
+were already collected. What it buys is the polls: `$2002` while a program waits for vblank and
+`$4016` while it reads the pad, which are worth seeing exactly when the question is why a game is
+waiting. The five coloured ticks beside it *are* filters, cost nothing, and are also the legend.
+
+**What is recorded is four ranges and two interrupts, and what is left out is the point.** `$2000`
+to `$3FFF` is the PPU, `$4000` to `$401F` is the sound chip plus the transfer at `$4014` and the
+pads at `$4016`, and a write above `$8000` is a mapper register -- every one of those is the machine
+being *told* something. Work RAM and cartridge RAM are not: a game writes to those thousands of
+times a frame and all of it is the game thinking, which is what a watchpoint and the memory view are
+for. A read outside `$2000-$401F` is never an event either, since above `$8000` it is the program
+being fetched.
+
+**The dot is good to within two and no better.** The machine is clocked a CPU cycle at a time and
+three dots go past in one, so what `PPU.getDot()` answers when a write lands is the last of the
+three the cycle covered -- the same three-dots-per-tick granularity CLAUDE.md already notes for
+scanline 0. The raster is drawn two screen pixels to a dot for that reason as much as for
+legibility: dot-for-dot would be claiming a precision that is not there.
+
+**A frame at a time, where the Pads tab keeps two seconds.** Both are histories rather than states,
+and the difference is what each draws: a rate wants a window, and a raster wants exactly one frame,
+because two frames of marks on one raster is two games drawn on top of each other. `ui/EventLog`
+holds the frame in parallel arrays so that nothing allocates while the machine runs, and
+`EmulatorRunner` calls `startFrame()` **after** the readout is taken -- that order is the whole of
+how the tab gets a frame rather than a fragment. It holds 4096, which is generous for the couple of
+hundred a game means to make and deliberately short of the thousands a `$2002` wait produces with
+reads on; `Readout.Events.dropped` says how many were lost, because the frame that overflows is the
+frame worth looking at.
+
+**`InterruptListener` is the third seam, beside the two memory ones, and it is not about the bus.**
+`CPU` calls it on the cycle the vector is picked, which is the honest moment: an interrupt asserted
+while the I flag was set is not one the processor served, and an NMI that arrived mid-sequence
+hijacks whatever was already pushing, and by that cycle both are settled. **A BRK is not one of
+these** -- it picks its vector through the same code and is deliberately not reported, being an
+instruction the program ran rather than a device interrupting it. The blind spot that leaves is a
+BRK an NMI hijacked, which is an NMI being serviced and still does not arrive; it is documented
+rather than closed, for the reason the watchpoints' DMA hole is.
+
+**`Readout` is also what a `MachineSnapshot` is made of.** The machine's registers are the
+machine's registers, and two shapes for them would be two places to add the next one to; a snapshot
+is a readout plus the things only a stopped machine can afford, which is 64K of address space and
+the processor's trail. That is what lets the debugger's registers panel show the frame boundary
+while the game runs, muted rather than blank, with the frame row saying which frame they came from.
+
+**Nothing the readout reads has a side effect, and three of them nearly do.** `$2002` clears the
+VBlank flag and resets the write latch, `$4015` acknowledges the frame counter's interrupt, and
+`$2007` moves the address on -- so the readout goes through `PPU.peekStatus()` and
+`APU.peekStatus()`, which are the same bytes with none of that. A gauge that fired any of them four
+times a second would be the thing that broke the game it was pointed at. `ReadoutTests` holds it to
+that by clocking the machine afterwards, since a real `$4015` read does not clear the flag there and
+then -- it arms the clear for the next cycle.
+
+**Show Background, Show Sprites and Unlimited Sprites redraw a stopped machine, and that costs a
+whole frame of emulation.** They take part where the PPU *composes* a pixel, and what the
+framebuffer keeps is what came out of that -- the background under a sprite is simply not in it --
+so there is no redrawing the picture without rendering it again. That is what separates these three
+from the palette, the two filters, the crops and the aspect, which `ScreenComponent` redraws from
+the colour indices it kept and which have always worked while paused.
+
+So `EmulatorRunner.redrawPicture` takes a save state, goes through **two** frame boundaries -- to
+the end of whatever frame the machine was standing in, then one whole one, since a partial frame
+would leave the top of the picture as it was -- presents that, and puts the state back. The machine
+comes back byte for byte, which is the same claim the rewind rests on and is what
+`EmulatorRunnerTests` holds it to. Two things are swept up afterwards: the frames run
+`Debugger.unwatched`, because a write watchpoint that latched during one would report itself on the
+next real instruction as a stop nobody asked for, and the samples they made are drained and dropped,
+because `APU.sampleRing` is deliberately not in a state. **The picture ends up one frame ahead of
+the one it replaced** and there is no way for it not to be -- the machine has not moved, so what
+that costs is a frame of animation. Nothing happens at all while the machine is running, since a
+running one draws the next frame within about seventeen milliseconds anyway.
+
+**Every switch is one `javax.swing.Action`, in `Switches`, and every command is one in `Commands`.**
+The menu item and the column's control are built from the same object, so the two cannot disagree,
+`setEnabled(false)` greys both, and the movie gating on Overclock and the Game Genie stays one line
+each. `Toggle.set` and `Choice.select` move a tick without telling anybody -- which is how a switch
+*follows* a machine -- where a click, `Toggle.press` and `Choice.choose` say so. That distinction is
+the whole of the class: `startMachine` replaying a new machine, and `pause` bringing the tick into
+line after a breakpoint, must not be taken for somebody asking for anything.
+
+**A window of its own, and one `Cmd+P` in it.** `KeyboardInput.dispatchKeyEvent` returns early
+while the game window is not active, which is the line that stops typing `$C000` into a debugger
+from pressing Select -- so docking this into the game window would mean rebuilding that rule by
+focus owner. Every `WHEN_IN_FOCUSED_WINDOW` binding in a window shares one map, so the instruments
+carry none of their own; the debugger's F5, F8, F9 and F10 are the only per-instrument keys, and
+there is only ever one debugger.
+
+**`Sweep.every(millis, component, work)` is every refresh timer in the front end**, and it runs only
+while the component is on screen. That one question stands in for the two the windows used to ask --
+a `dispose` that stopped the timer, and an `isShowing` guard inside the tick -- and it is false for a
+tab that is not in front, for a window that is closed, and for a panel built into an image by a test,
+which is what keeps a test from clocking a machine nobody asked it to.
+
+Everything in the window is a `JPanel` and builds without a display, so `PPUViewerPanelTests`,
+`DebuggerPanelTests`, `CHRViewerPanelTests` and the column's half of `ControlPanelTests` run
+wherever the build runs. Only `ControlPanelFrame` itself needs a peer. `ui/Views` in the test tree
+is what paints a panel that is not in a window: `Container.validate` lays nothing out without a
+native peer, so it walks `doLayout` down the tree itself first.
+
+Where the window was and which tab was in front go to `debug.bounds` and `debug.tab` in
+`config.properties` -- the only two entries in that file the program writes rather than somebody.
+Bounds that land on no screen there is any more are dropped, since a window nobody can reach looks
+exactly like one that failed to open.
 
 ### The window fills the screen, and stops when you look away
 
@@ -814,7 +1112,7 @@ The code has a strong voice. Match it rather than the language's defaults.
 
 ## Layout
 
-Six Maven modules, and the arrows between them only point one way.
+Seven Maven modules, and the arrows between them only point one way.
 
 ```
 mynes-core/           depends on nothing
@@ -836,18 +1134,31 @@ mynes-patch/          depends on nothing either, core included
 mynes-archive/        depends on nothing either
   mynes/archive/      zip files, unpacked in memory for the one thing inside somebody wanted
 
+mynes-midi/           depends on nothing either
+  mynes/midi/         standard MIDI files, written from notes that came from anywhere
+
 mynes-headless/       depends on core, patch and archive
   mynes/headless/     the command line mode
 
-mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and MigLayout live
-                      here
-  mynes/ui/           the Swing window, Main, the key bindings, the CHR viewer, the debugger, and
-                      the sound card: the line, the volume, and the half a percent of resampling
-                      that holds its queue where it was put
-  mynes/ui/ppuviewer/ the three windows over what the PPU is drawing from: the four nametables
+mynes-desktop/        depends on core, patch, archive, midi and headless; FlatLaf and MigLayout
+                      live here
+  mynes/ui/           the Swing window, Main, the key bindings, every switch and command in the
+                      program as an Action, and the sound card: the line, the volume, and the half
+                      a percent of resampling that holds its queue where it was put
+  mynes/ui/controlpanel/
+                      the one debug window: the tabs, the column of switches down its side, and
+                      where it was left
+  mynes/ui/debugger/  the debugger and the five panels in it
+  mynes/ui/chrviewer/ the tiles a game has
+  mynes/ui/ppuviewer/ the three views of what the PPU is drawing from: the four nametables
                       with the scroll window over them, the sixty four sprites with their
                       attributes, and the thirty two bytes of palette RAM everything is coloured
                       through
+  mynes/ui/sound/     the five voices, their meters and the scope of what they add up to
+  mynes/ui/cartridge/ which bank of the cartridge is in each window, and the rest of the board
+  mynes/ui/pads/      both controllers, and the strip of frames the game never read one on
+  mynes/ui/music/     what the sound chip played, written down as a MIDI file
+  mynes/ui/events/    one frame as a raster, with a mark wherever the machine was touched
 
 mynes-shots/          depends on desktop, and nothing depends on it
   mynes/shots/        the camera that takes the README's pictures off the real window
@@ -858,6 +1169,16 @@ patches -- a ROM, a save file, a disk image -- and a patcher that could see a `C
 later be handed one. It is the front ends that join the two together, both by reading the file,
 patching the bytes and handing the result to `Cart.load`. A patch is entitled to rewrite the iNES
 header, so it has to be applied *before* the cartridge is parsed rather than after.
+
+`mynes-midi` is the third of that kind, and the argument is the same one a third time: a standard
+MIDI file is a container from 1983 for note numbers and times, and a writer that could see an `APU`
+would sooner or later be handed one. What joins the two is `ui/music/MusicRecorder`, which watches
+the chip a frame at a time. It is **written by hand rather than through `javax.sound.midi`**, which
+is the one decision in it worth arguing with: the JDK's is perfectly good and lives in
+`java.desktop`, which is a window toolkit that nothing on the headless side is allowed to want, and
+a header chunk plus delta-timed events is a hundred lines. The tests read the files back *with*
+`javax.sound.midi`, which is exactly where a dependency on it is free and where being a separate
+implementation is the point.
 
 `mynes-archive` is beside it for exactly the same reason, and the two are read as a pair: zip is a
 container from 1989 that says nothing about what is in it, so a reader that could see a `Cart` would
@@ -888,6 +1209,7 @@ Which makes one check worth running when the dependencies change:
 mvn dependency:tree -pl mynes-core       # nothing but the two test artifacts
 mvn dependency:tree -pl mynes-patch      # nothing but JUnit
 mvn dependency:tree -pl mynes-archive    # nothing but JUnit
+mvn dependency:tree -pl mynes-midi       # nothing but JUnit
 mvn dependency:tree -pl mynes-headless   # no FlatLaf, no MigLayout
 ```
 
@@ -910,17 +1232,16 @@ at all but the matching background cells, which is why setting a sprite palette'
 the screen's background, and $3F04, $3F08 and $3F0C are memory the chip never draws. `PaletteCells`
 is that arithmetic, kept free of Swing so it can be tested where there is no display.
 
-**All four debug windows carry the Machine menu's Pause tick**, and the shortcut with it. A viewer
-is watching something that will not hold still, and stopping it used to mean finding the game
-window, pausing there and coming back -- by which time whatever was worth looking at had been drawn
-over. `PauseBox` is the tick and `PauseControl` is the handle it holds. It is a handle rather than
-the `EmulatorRunner` itself because pausing properly means three more things than setting a flag:
-releasing whatever buttons were held when the game froze, bringing the Machine menu's own tick into
-line, and telling the debugger that what it was waiting for is off. All of that lives in
-`GameUIFrame.pause`, so a viewer asks rather than does. The tick **follows the machine rather than
-remembering what it was last told** -- Pause is reachable from six places now -- which each window's
-refresh timer does for it once a quarter second. `PauseControl.NONE` is how a test and the camera
-say nobody is clocking the machine, and a window handed it draws the tick greyed out.
+**The Pause tick is in the control panel's column, and it follows the machine rather than
+remembering what it was last told.** Pause is reachable from six places, and a machine stops and
+starts for reasons that are nobody's tick: a breakpoint, the debugger's own Run button, a movie
+ending. So the panel sweeps it once a quarter second through `PauseControl`, which is a handle
+rather than the `EmulatorRunner` itself because pausing properly means three more things than
+setting a flag: releasing whatever buttons were held when the game froze, bringing the Machine
+menu's own tick into line, and telling the debugger that what it was waiting for is off. All of
+that lives in `GameUIFrame.pause`, so the panel asks rather than does. `PauseControl.NONE` is how a
+test and the camera say nobody is clocking the machine, and a panel handed it draws the tick greyed
+out.
 
 **Two of the three answer "where" by dimming the frame rather than by drawing on it.** Both draw
 **all 240 lines**, where `ScreenComponent` draws the 224 in front of a television's bezel -- so the

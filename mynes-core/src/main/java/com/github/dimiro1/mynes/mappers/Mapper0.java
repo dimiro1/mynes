@@ -45,13 +45,18 @@ public class Mapper0 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    /**
+     * A 16KB chip is mirrored into both halves of the window, which is what the "NROM-128" half of
+     * the board does with the address line it never connected.
+     */
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
 
-        if (prgROM.length == 0x4000 && offset >= 0x4000) {
-            return Byte.toUnsignedInt(prgROM[offset % 0x4000]);
-        }
-
-        return Byte.toUnsignedInt(prgROM[offset]);
+        return prgROM.length == 0x4000 && offset >= 0x4000 ? offset % 0x4000 : offset;
     }
 
     @Override
@@ -74,7 +79,12 @@ public class Mapper0 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[address & 0x1FFF]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return address & 0x1FFF;
     }
 
     @Override

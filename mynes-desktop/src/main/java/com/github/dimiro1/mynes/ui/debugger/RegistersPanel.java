@@ -1,5 +1,6 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.github.dimiro1.mynes.ui.Readout;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JLabel;
@@ -86,35 +87,53 @@ final class RegistersPanel extends JPanel {
         row("patterns", "span 3");
     }
 
-    void show(final MachineSnapshot snapshot) {
-        var cpu = snapshot.cpu();
+    void show(final Readout machine) {
+        fill(machine);
+
+        values.values().forEach(label -> label.setForeground(Theme.foreground()));
+        paintChips(false);
+    }
+
+    /**
+     * The machine as it was at the end of a frame, while it goes on running.
+     * <p>
+     * Filled in but muted, which is the two things there are to say at once: these are real numbers
+     * rather than a blank panel, and they are not where the machine is <em>now</em> -- the frame row
+     * says which frame they are from. Before this the panel simply greyed out and kept whatever it
+     * had been showing when the machine last stopped, which was a picture of a moment that could be
+     * an hour old.
+     */
+    void live(final Readout machine) {
+        fill(machine);
+        stale();
+    }
+
+    private void fill(final Readout machine) {
+        var cpu = machine.cpu();
 
         set("PC", String.format("$%04X", cpu.pc()), Integer.toString(cpu.pc()));
         set("A", String.format("$%02X", cpu.a()), decimalAndBinary(cpu.a()));
         set("X", String.format("$%02X", cpu.x()), decimalAndBinary(cpu.x()));
         set("Y", String.format("$%02X", cpu.y()), decimalAndBinary(cpu.y()));
-        set("SP", String.format("$%02X", cpu.sp()), String.format("stack top $%04X", snapshot.stackTop()));
-        set("P", String.format("$%02X", cpu.p()), snapshot.flags());
+        set("SP", String.format("$%02X", cpu.sp()), String.format("stack top $%04X", machine.stackTop()));
+        set("P", String.format("$%02X", cpu.p()), machine.flags());
         set("cycles", Long.toString(cpu.cycles()), null);
 
-        set("frame", Long.toString(snapshot.frame()), null);
-        set("beam", snapshot.scanline() + " : " + snapshot.dot(), "scanline : dot");
-        set("v", String.format("$%04X", snapshot.v()), "the VRAM address the beam is reading");
-        set("t", String.format("$%04X", snapshot.t()), "the address the next frame starts from");
-        set("fine x", Integer.toString(snapshot.fineX()), null);
-        set("latch", snapshot.writeLatch() ? "second write" : "first write",
+        set("frame", Long.toString(machine.frame()), null);
+        set("beam", machine.scanline() + " : " + machine.dot(), "scanline : dot");
+        set("v", String.format("$%04X", machine.v()), "the VRAM address the beam is reading");
+        set("t", String.format("$%04X", machine.t()), "the address the next frame starts from");
+        set("fine x", Integer.toString(machine.fineX()), null);
+        set("latch", machine.writeLatch() ? "second write" : "first write",
                 "which half of a $2005/$2006 pair comes next");
-        set("render", snapshot.renderingEnabled() ? "on" : "off", "$2001 bits 3 and 4");
+        set("render", machine.renderingEnabled() ? "on" : "off", "$2001 bits 3 and 4");
         set("patterns", String.format(
                         "bg $%04X  spr $%04X",
-                        snapshot.backgroundPatternTable(), snapshot.spritePatternTable()),
+                        machine.backgroundPatternTable(), machine.spritePatternTable()),
                 "$2000 bits 4 and 3");
-        set("sprites", "8x" + snapshot.spriteHeight(), "$2000 bit 5");
+        set("sprites", "8x" + machine.spriteHeight(), "$2000 bit 5");
 
         p = cpu.p();
-
-        values.values().forEach(label -> label.setForeground(Theme.foreground()));
-        paintChips(false);
     }
 
     /**

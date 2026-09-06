@@ -4,14 +4,16 @@ import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
+import com.github.dimiro1.mynes.ui.MenuKey;
+import com.github.dimiro1.mynes.ui.Readout;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
 import javax.swing.JComponent;
-import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JRootPane;
 import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
@@ -21,18 +23,15 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
-import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
-import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * A window over a stopped machine: where it is, what it was about to do, and what is in memory.
+ * A view of a stopped machine: where it is, what it was about to do, and what is in memory.
  * <p>
  * Everything here happens on the event dispatch thread, and the rule it keeps is stricter than the
- * CHR viewer's rather than looser. That window shows <em>memory</em>, where a stale element is a
+ * CHR viewer's rather than looser. That one shows <em>memory</em>, where a stale element is a
  * tile a frame out of date and visibly harmless. This one shows <em>a machine at a moment in its
  * execution</em>, where values read at different instants would not be a slightly stale picture but
  * a machine that never existed -- and being believed is the whole of its job. So:
@@ -45,15 +44,16 @@ import java.util.Set;
  *   <li>everything that changes the machine or the debugger is posted onto the emulation thread,
  *       which is what lets {@link Debugger} have no synchronisation in it at all.</li>
  * </ol>
- * There is deliberately no refresh timer. The CHR viewer's poll is exactly the wrong idea here: it
- * would be polling a running machine, and what came back could not be trusted.
+ * There is deliberately no {@link com.github.dimiro1.mynes.ui.Sweep}. The CHR viewer's poll is
+ * exactly the wrong idea here: it would be polling a running machine, and what came back could not
+ * be trusted.
  * <p>
  * The panes are split rather than fixed because no two questions want the same shape of window: a
  * raster bug wants the registers, a corrupted table wants the memory, a lost jump wants the listing
  * and nothing else. The dividers remember nothing between sessions, which is deliberate for now --
- * a window that opened at a size chosen for the last bug is a small trap.
+ * a view that opened at a size chosen for the last bug is a small trap.
  */
-public final class DebuggerFrame extends JFrame {
+public final class DebuggerPanel extends JPanel {
     private final Debugger debugger;
 
     private final DisassemblyPanel disassembly = new DisassemblyPanel(new Listing());
@@ -73,7 +73,7 @@ public final class DebuggerFrame extends JFrame {
     private EmulatorRunner runner;
 
     /**
-     * Whether the machine is stopped because of something done in this window, which is what decides
+     * Whether the machine is stopped because of something done in this view, which is what decides
      * whether closing it should let the machine go again.
      */
     private boolean stoppedByUs;
@@ -85,26 +85,22 @@ public final class DebuggerFrame extends JFrame {
     private Set<Integer> knownBreakpoints = Set.of();
 
     /**
-     * A breakpoint this window put down for Run to Here and owes the debugger back, or -1.
+     * A breakpoint this view put down for Run to Here and owes the debugger back, or -1.
      */
     private int runToAddress = -1;
 
-    public DebuggerFrame(
-            final Component parent,
-            final NES nes,
-            final EmulatorRunner runner,
-            final Debugger debugger) {
+    public DebuggerPanel(
+            final NES nes, final EmulatorRunner runner, final Debugger debugger) {
 
         this.nes = nes;
         this.runner = runner;
         this.debugger = debugger;
         this.points = new PointsPanel(new Editing());
 
-        init(parent);
+        init();
     }
 
-    private void init(final Component parent) {
-        setTitle("Debugger");
+    private void init() {
         setLayout(new MigLayout("fill, insets 0, gap 0", "[grow,fill]", "[][grow,fill][]"));
 
         run.addActionListener(e -> resume());
@@ -155,11 +151,6 @@ public final class DebuggerFrame extends JFrame {
         add(body, "wrap");
         add(strip);
 
-        bindKeys();
-
-        setSize(1120, 780);
-        setMinimumSize(new Dimension(900, 620));
-        setLocationRelativeTo(parent);
         running();
     }
 
@@ -179,29 +170,29 @@ public final class DebuggerFrame extends JFrame {
      * The keys, spelled for the platform: {@code ⌘G} here, {@code Ctrl+G} elsewhere.
      */
     private static String hints() {
-        var shortcut = InputEvent.getModifiersExText(
-                Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx());
-
-        return "F5 Run   F10 Step   F8 Step Frame   F9 Breakpoint   " + shortcut + "G Go to";
+        return "F5 Run   F10 Step   F8 Step Frame   F9 Breakpoint   " + MenuKey.text() + "G Go to";
     }
 
     /**
      * The same four actions as the buttons, on the keys a debugger usually puts them on.
      * <p>
+     * Handed to the window rather than taken, because a {@code WHEN_IN_FOCUSED_WINDOW} binding is
+     * the window's to give: whatever ends up holding this view holds one input map, and a view that
+     * bound four function keys on it unasked would be one of several competing for them. There is
+     * only ever one debugger, which is why these four can be asked for at all.
+     * <p>
      * No clash with the game window's F5 and F7 quick save and load: those are bound on that window,
      * and the keyboard dispatcher ignores everything while it is not the active one -- which is also
      * what stops typing a hex address in here from pressing Select.
      */
-    private void bindKeys() {
-        bind("F5", this::resume);
-        bind("F8", this::stepOneFrame);
-        bind("F9", this::toggleBreakpointAtSelection);
-        bind("F10", this::stepInstruction);
+    public void installKeysIn(final JRootPane root) {
+        bind(root, "F5", this::resume);
+        bind(root, "F8", this::stepOneFrame);
+        bind(root, "F9", this::toggleBreakpointAtSelection);
+        bind(root, "F10", this::stepInstruction);
     }
 
-    private void bind(final String key, final Runnable action) {
-        var root = getRootPane();
-
+    private static void bind(final JRootPane root, final String key, final Runnable action) {
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key), key);
         root.getActionMap().put(key, new AbstractAction() {
             @Override
@@ -212,11 +203,11 @@ public final class DebuggerFrame extends JFrame {
     }
 
     /**
-     * Points the window at a new machine, which a power cycle or a region change brings.
+     * Points the view at a new machine, which a power cycle or a region change brings.
      * <p>
      * Repointed rather than closed, which is the opposite of what happens to the CHR viewer, and
-     * deliberately: that window's contents are entirely derived from the machine, so closing it
-     * loses nothing. This one carries the user's own work -- the breakpoints, the address they were
+     * deliberately: that one's contents are entirely derived from the machine, so closing it loses
+     * nothing. This one carries the user's own work -- the breakpoints, the address they were
      * looking at -- and throwing that away on a power cycle would discard the very thing they cycled
      * the power to test.
      */
@@ -225,11 +216,22 @@ public final class DebuggerFrame extends JFrame {
         this.runner = runner;
 
         // What is on show describes a machine that no longer exists. The points stay -- they are the
-        // user's, and keeping them is the whole reason this window is repointed rather than closed --
+        // user's, and keeping them is the whole reason this view is repointed rather than closed --
         // but the listing and the memory are emptied rather than left to be believed.
         disassembly.clear();
         memory.clear();
         stack.clear();
+
+        // Read again rather than left alone, because a new cartridge is the one machine change that
+        // clears them: the points are the user's while the game is the same game, and a list of
+        // breakpoints that are no longer set would be the worst kind of stale.
+        var breaks = Set.copyOf(debugger.breakpoints());
+        var conditions = Map.copyOf(debugger.conditions());
+
+        knownBreakpoints = breaks;
+
+        points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
+        disassembly.setBreakpoints(breaks, conditions);
 
         running();
     }
@@ -248,7 +250,7 @@ public final class DebuggerFrame extends JFrame {
         knownBreakpoints = breaks;
 
         disassembly.show(snapshot, breaks, conditions);
-        registers.show(snapshot);
+        registers.show(snapshot.machine());
         stack.show(snapshot);
         memory.show(snapshot, stop);
         points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
@@ -273,6 +275,19 @@ public final class DebuggerFrame extends JFrame {
     }
 
     /**
+     * The machine as it was at the end of a frame, while it goes on running.
+     * <p>
+     * Only the registers take it, and only while the machine is actually going: a panel showing a
+     * frame boundary over a machine somebody has stopped at a breakpoint would be describing the
+     * wrong moment, and the stop snapshot is both exact and already there.
+     */
+    public void readout(final Readout machine) {
+        if (!stoppedByUs) {
+            registers.live(machine);
+        }
+    }
+
+    /**
      * The machine is going again, so what is on show is now a photograph rather than a machine.
      */
     public void running() {
@@ -290,18 +305,15 @@ public final class DebuggerFrame extends JFrame {
     }
 
     /**
-     * Lets the machine go on the way out.
+     * Lets the machine go on the way out. Called by whatever is holding this view as it goes.
      * <p>
-     * Without this, closing the window while it has the machine stopped leaves a frozen emulator
+     * Without this, closing the debugger while it has the machine stopped leaves a frozen emulator
      * and the only way out buried in the Machine menu, which looks exactly like a crash.
      */
-    @Override
-    public void dispose() {
+    public void closing() {
         if (stoppedByUs && runner != null) {
             resume();
         }
-
-        super.dispose();
     }
 
     // ================================================================================== internals
@@ -342,7 +354,7 @@ public final class DebuggerFrame extends JFrame {
     private final class Listing implements DisassemblyPanel.Actions {
         @Override
         public void toggleBreakpoint(final int address) {
-            DebuggerFrame.this.toggleBreakpoint(address);
+            DebuggerPanel.this.toggleBreakpoint(address);
         }
 
         /**

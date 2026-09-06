@@ -26,6 +26,20 @@ public interface Mapper {
     int prgRead(int address);
 
     /**
+     * Where in the program ROM a read of {@code address} comes from.
+     * <p>
+     * The offset rather than the byte, which is the same arithmetic {@link #prgRead} does and is
+     * the half of it a debugger wants: "which bank is at $C000" is a question about the board
+     * rather than about the game's code, and it cannot be answered from a byte. Every
+     * {@code prgRead} here is this and a load, which is what stops the two coming to disagree.
+     * <p>
+     * Free of side effects, and it has to be: {@link #banks()} asks it four times a second.
+     *
+     * @param address a CPU address in $8000-$FFFF.
+     */
+    int prgOffset(int address);
+
+    /**
      * Writes to $8000-$FFFF.
      * <p>
      * There is no RAM there to write to: on almost every board this is how the mapper's registers
@@ -79,6 +93,19 @@ public interface Mapper {
      * @param address an address in $0000-$1FFF.
      */
     int charRead(int address);
+
+    /**
+     * Where in character memory a read of {@code address} comes from, for the reason
+     * {@link #prgOffset} exists.
+     * <p>
+     * Free of side effects. On MMC2 and MMC4 that is a real distinction rather than a formality:
+     * those boards switch a bank when the beam passes a particular tile, and it is
+     * {@link #ppuAddress} that moves the latch rather than the read -- so asking this never changes
+     * which bank is showing.
+     *
+     * @param address a PPU address in $0000-$1FFF.
+     */
+    int charOffset(int address);
 
     /**
      * Writes a single byte into the given address on CHAR ROM/RAM.
@@ -137,4 +164,81 @@ public interface Mapper {
      * registers can change the answer between one access and the next.
      */
     Mirroring mirroring();
+
+    /**
+     * Which bank of the cartridge each window of the address space is showing.
+     * <p>
+     * Normalised to the smallest window any board here switches -- 8KB of program ROM and 1KB of
+     * character memory -- so that one table can describe an NROM, a UxROM that swaps 16KB at a time
+     * and an MMC3 that swaps six pieces of pattern table separately. A board with a coarser window
+     * simply shows consecutive numbers, which is what it is really doing.
+     * <p>
+     * Worked out from {@link #prgOffset} and {@link #charOffset} rather than from whatever each
+     * board keeps in its own fields, so a mapper gets this for nothing and cannot answer it
+     * differently from the way it answers a read.
+     */
+    default Banks banks() {
+        var prg = new int[Banks.PRG_WINDOWS];
+        var chr = new int[Banks.CHR_WINDOWS];
+
+        for (var window = 0; window < prg.length; window++) {
+            prg[window] = prgOffset(0x8000 + window * Banks.PRG_WINDOW) / Banks.PRG_WINDOW;
+        }
+
+        for (var window = 0; window < chr.length; window++) {
+            chr[window] = charOffset(window * Banks.CHR_WINDOW) / Banks.CHR_WINDOW;
+        }
+
+        return new Banks(prg, chr);
+    }
+
+    /**
+     * Whether the cartridge's RAM is answering at all.
+     * <p>
+     * True unless a board says otherwise, which two of these do: MMC1 and MMC3 can switch the chip
+     * off, and a board with a battery on it does exactly that around anything risky -- so a hex view
+     * of $6000 full of zeroes is usually this rather than a game that has lost its save.
+     */
+    default boolean prgRAMEnabled() {
+        return true;
+    }
+
+    /**
+     * Whether a write to that RAM lands. MMC3 can protect it without switching it off, which is the
+     * other half of the same trick.
+     */
+    default boolean prgRAMWritable() {
+        return true;
+    }
+
+    /**
+     * The scanline counter, on the one board here that has one, or null on the eleven that do not.
+     */
+    default ScanlineIRQ irq() {
+        return null;
+    }
+
+    /**
+     * Which bank is in each window of the two address spaces the cartridge answers.
+     *
+     * @param prg one bank number per 8KB of $8000-$FFFF.
+     * @param chr one bank number per 1KB of $0000-$1FFF.
+     */
+    record Banks(int[] prg, int[] chr) {
+        public static final int PRG_WINDOW = 0x2000;
+        public static final int CHR_WINDOW = 0x0400;
+        public static final int PRG_WINDOWS = 4;
+        public static final int CHR_WINDOWS = 8;
+    }
+
+    /**
+     * MMC3's scanline counter, which is the one piece of cartridge hardware that interrupts the
+     * processor -- and the thing behind most of what looks like a raster bug on those games.
+     *
+     * @param latch   what the counter reloads to.
+     * @param counter where it is now.
+     * @param enabled whether reaching zero actually pulls the line.
+     */
+    record ScanlineIRQ(int latch, int counter, boolean enabled) {
+    }
 }

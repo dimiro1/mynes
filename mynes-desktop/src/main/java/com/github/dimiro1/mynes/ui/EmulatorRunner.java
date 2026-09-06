@@ -2,8 +2,11 @@ package com.github.dimiro1.mynes.ui;
 
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.state.SaveState;
+import com.github.dimiro1.mynes.ui.music.MusicRecorder;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.MovieRecorder;
@@ -11,15 +14,19 @@ import com.github.dimiro1.mynes.state.Rewind;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.SwingUtilities;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.function.LongConsumer;
 
 /**
  * Runs a {@link NES} on its own thread, one frame at a time, and hands the finished frames to a
@@ -58,8 +65,7 @@ import java.util.function.IntSupplier;
  * its execution rather than a picture of memory, and values read at different instants would not be
  * a slightly stale picture -- they would be a machine that never existed.
  *
- * @see com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame
- * @see com.github.dimiro1.mynes.ui.debugger.DebuggerFrame
+ * @see com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame
  */
 public class EmulatorRunner {
     private static final Logger logger = System.getLogger("EMU");
@@ -98,6 +104,23 @@ public class EmulatorRunner {
      * of a game they are about to play differently anyway.
      */
     private static final int REWIND_INTERVAL = 2;
+
+    /**
+     * How many finished frames go by between readouts: a quarter of a second on either console, the
+     * same interval every debug view in the front end sweeps on, and as fast as anybody reads a
+     * number off a screen.
+     */
+    private static final int READOUT_FRAMES = 15;
+
+    /**
+     * How many points of the last frame's sound a readout carries, for the scope to draw.
+     * <p>
+     * A frame is 735 samples on NTSC and this takes every third, which is as much of a waveform as
+     * a couple of hundred pixels can show. Decimated rather than averaged deliberately: a scope is
+     * for seeing the shape of a wave, and averaging is a low pass that would take the corners off
+     * the square one the pulses actually make.
+     */
+    private static final int SCOPE_SAMPLES = 245;
 
     private final NES nes;
     private final ScreenComponent screen;
@@ -185,6 +208,63 @@ public class EmulatorRunner {
      * Told, on the event dispatch thread, whenever the machine stops somewhere it was asked to.
      */
     private volatile Consumer<Debugger.Stop> stopListener;
+
+    /**
+     * Who wants the machine described at a frame boundary, or null when nobody does.
+     * <p>
+     * Null is the point of it, and it is the {@link Debugger#isArmed()} rule again: nothing is read
+     * off the machine and nothing is posted to the event dispatch thread while the control panel is
+     * closed, which is nearly always. Volatile because the window sets it and this thread reads it.
+     */
+    private volatile @Nullable Consumer<Readout> frameObserver;
+
+    /**
+     * Frames left before the next readout, counted down rather than taken as a remainder of the
+     * frame number: a rewind moves that by two at a time and would step over any multiple.
+     */
+    private int untilReadout;
+
+    /**
+     * A decimated copy of the last frame's sound, refilled only while somebody is watching.
+     */
+    private final short[] scope = new short[SCOPE_SAMPLES];
+
+    /**
+     * The same frame, one trace per voice, taken from the chip rather than from what was played:
+     * these are what each voice put into the mixer, where {@link #scope} is what came out.
+     */
+    private final short[][] traces =
+            new short[APUChannel.values().length][SCOPE_SAMPLES];
+
+    /**
+     * A frame of one voice, borrowed by {@link #fillScope} and never handed anywhere.
+     */
+    private final short[] voice = new short[AUDIO_BUFFER_SAMPLES];
+
+    /**
+     * How often the game has been reading the pads, frame by frame. The one thing in a readout that
+     * has to be counted as the frames go past rather than read off the machine at the end of them.
+     */
+    private final PadPolling polling = new PadPolling();
+
+    /**
+     * The music being written down, or null when nobody asked for any. Emulation thread only, like
+     * the recorder above it, and for the same reason: it is asked what the chip is playing at a
+     * frame boundary, which is a question only this thread can ask.
+     */
+    private @Nullable MusicRecorder music;
+
+    /**
+     * What the machine did to its hardware during the frame now running, in the order it did it.
+     * Filled by the debugger's bus hooks and emptied at every boundary.
+     */
+    private final EventLog events = new EventLog();
+
+    /**
+     * Whether the reads are being recorded as well as the writes, which is the Events tab's own
+     * tick. Volatile because that tick is on the event dispatch thread and this is read here.
+     */
+    private volatile boolean eventReads;
 
     /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
@@ -350,6 +430,85 @@ public class EmulatorRunner {
     }
 
     /**
+     * Starts writing down what the sound chip is playing.
+     * <p>
+     * A frame at a time rather than four times a second like everything else the front end reads,
+     * because a melody moves faster than that -- see {@link MusicRecorder}. It costs three voice
+     * reads and three comparisons a frame, paid only while somebody is recording.
+     *
+     * @param region which console this is, since a frame is 16.6ms on one and 20ms on the other.
+     */
+    public void startMusic(final Region region) {
+        post(() -> music = new MusicRecorder(region));
+    }
+
+    /**
+     * Stops, and writes what was played to {@code path}.
+     * <p>
+     * The file is written on this thread rather than handed back, for the reason the movie's is:
+     * the recorder belongs to the thread that filled it, and a caller that took it away would be
+     * reading it while this one was still adding to it.
+     *
+     * @param whenDone told how many frames were written, on the event dispatch thread, or -1 if
+     *                 nothing was playing or the file could not be written.
+     */
+    public void stopMusic(final Path path, final LongConsumer whenDone) {
+        post(() -> {
+            var writing = music;
+
+            music = null;
+
+            if (writing == null || writing.isEmpty()) {
+                logger.log(Level.INFO, "nothing was playing, so no music was written");
+                SwingUtilities.invokeLater(() -> whenDone.accept(-1));
+
+                return;
+            }
+
+            try {
+                writing.writeTo(path);
+                logger.log(Level.INFO, "wrote " + writing.frames() + " frames of music to " + path);
+                SwingUtilities.invokeLater(() -> whenDone.accept(writing.frames()));
+            } catch (IOException e) {
+                logger.log(Level.ERROR, "could not write the music", e);
+                SwingUtilities.invokeLater(() -> whenDone.accept(-1));
+            }
+        });
+    }
+
+    /**
+     * Draws the frame again with whatever the picture switches now say, for a machine that is not
+     * running and so would not draw one by itself.
+     * <p>
+     * <b>Why this cannot be a redraw.</b> Show Background, Show Sprites and Unlimited Sprites take
+     * part where the PPU <em>composes</em> a pixel, and what the framebuffer keeps is what came out
+     * of that -- so the background under a sprite is not in it, and no amount of looking at the
+     * picture again will produce one without the sprites. The frame has to be rendered a second
+     * time. That is the difference between these three and the palette, the filters and the two
+     * crops, which {@link ScreenComponent} redraws from the colour indices it kept and which have
+     * always worked while paused.
+     * <p>
+     * <b>So the machine is run, and then put back.</b> A state is taken, two frame boundaries are
+     * gone through -- to the end of whatever frame the machine was standing in, then one whole one,
+     * since a partial frame would leave the top of the picture as it was -- the picture is handed
+     * over, and the state goes back. The machine ends byte-identical, which is the same claim the
+     * rewind rests on. What it costs is about seven milliseconds, once, on a click.
+     * <p>
+     * Two things have to be swept up after it. The frames are run {@link Debugger#unwatched}, since
+     * a watchpoint that latched during one would report itself on the next real instruction as a
+     * stop nobody asked for. And the samples they made are drained and dropped: the state puts the
+     * chip back but the ring between it and the sound card is deliberately not in a state, so they
+     * would otherwise be played.
+     * <p>
+     * <b>The picture is one frame ahead of the one it replaces</b>, and there is no way for it not
+     * to be. It is the same scene -- the machine has not moved -- so the difference is a frame of
+     * animation, which is what "the same picture without the sprites" costs.
+     */
+    public void redrawPicture() {
+        post(this::renderTheFrameAgain);
+    }
+
+    /**
      * Freezes the machine, or lets it run again. Takes effect within a frame. While paused the
      * last finished frame stays on screen and posted commands still run.
      */
@@ -387,6 +546,43 @@ public class EmulatorRunner {
      */
     public void setStopListener(final Consumer<Debugger.Stop> listener) {
         this.stopListener = listener;
+    }
+
+    /**
+     * Asks to be handed the machine at a frame boundary, four times a second, on the event dispatch
+     * thread. Null asks to stop being handed it.
+     * <p>
+     * A boundary rather than a timer, because what a gauge shows is a dozen scalars and reading
+     * those one at a time off a running machine gives a machine that never existed -- see
+     * {@link Readout}. Four times a second rather than sixty, because that is as fast as anybody
+     * reads a number and sixty would be fifty-six posts to the event dispatch thread that nobody
+     * looked at.
+     */
+    public void setFrameObserver(final @Nullable Consumer<Readout> observer) {
+        this.frameObserver = observer;
+
+        // The meters, which cost the mixer a null check on its hottest line and nothing else while
+        // nobody is looking. Posted rather than set here, so the field the mixer reads is only ever
+        // written by the thread that reads it.
+        var apu = nes.getAPU();
+        var wanted = observer != null;
+
+        post(() -> apu.setPeakTracking(wanted));
+
+        armEventLog();
+    }
+
+    /**
+     * Records the reads as well as the writes, which is the Events tab's own tick.
+     * <p>
+     * Its own switch rather than something that follows the panel being open, because it is the one
+     * part of this that a machine can feel: the read hook sees every instruction fetch. Everything
+     * else rides on the write hook, which a game passes a few hundred times a frame.
+     */
+    public void setEventReads(final boolean reads) {
+        this.eventReads = reads;
+
+        armEventLog();
     }
 
     /**
@@ -696,6 +892,11 @@ public class EmulatorRunner {
 
                         framesRun += given;
 
+                        // Going backwards is still the frame counter moving, and a dashboard frozen
+                        // at whatever number a rewind started from would be the one thing on it
+                        // anybody would notice was wrong.
+                        observeFrames(given);
+
                         // Frames rather than the states the call above answered in: this ring keeps
                         // one every other frame, so the two numbers are different here in a way they
                         // are not in a headless session.
@@ -821,6 +1022,21 @@ public class EmulatorRunner {
                 // through is left alone, exactly as it was: there is no finished frame of sound in
                 // it, and the APU's own ring holds several frames' worth of slack.
                 var sampleCount = completed ? apu.drainSamples(samples) : 0;
+
+                // After the drain, because the readout carries a slice of exactly the sound this
+                // frame produced -- and the drain is not a clock, so the machine is still standing
+                // where the frame left it.
+                if (completed) {
+                    fillScope(sampleCount);
+                    notePads();
+                    noteMusic();
+                    observeFrames(1);
+
+                    // After the readout rather than before it, and that order is the whole of how
+                    // the Events tab gets a frame rather than a fragment of one: what the log holds
+                    // at this moment is exactly the frame that has just ended.
+                    events.startFrame();
+                }
 
                 // Every frame that finished, wherever it finished -- stepped, halted, fast
                 // forwarded. One place, above everything below that might skip the rest of the
@@ -1023,6 +1239,191 @@ public class EmulatorRunner {
 
         if (listener != null) {
             SwingUtilities.invokeLater(listener);
+        }
+    }
+
+    /**
+     * Hands the machine over, if anybody asked for it and enough frames have gone by.
+     * <p>
+     * Called from the two places {@code framesRun} moves and from nowhere else: a frame is a frame
+     * whatever ran it -- stepped, halted, fast forwarded, rewound -- and this is read at exactly
+     * the moment the last one finished, which is the moment nothing in the machine is half written.
+     */
+    private void observeFrames(final int frames) {
+        var observer = frameObserver;
+
+        if (observer == null) {
+            return;
+        }
+
+        untilReadout -= frames;
+
+        if (untilReadout > 0) {
+            return;
+        }
+
+        untilReadout = READOUT_FRAMES;
+
+        // Built here and handed over whole. A lambda that read the machine on the other thread
+        // would be reading a running one, which is the whole thing Readout exists to avoid -- and
+        // the scope is cloned for the same reason: this thread refills its own next frame.
+        var traced = new ArrayList<short[]>(traces.length);
+
+        for (var trace : traces) {
+            traced.add(trace.clone());
+        }
+
+        var readout = Readout.of(
+                nes, scope.clone(), List.copyOf(traced), polling.snapshot(), events.snapshot());
+
+        // The meters' window starts again here rather than inside the reading, so that the
+        // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
+        nes.getAPU().clearPeaks();
+
+        SwingUtilities.invokeLater(() -> observer.accept(readout));
+    }
+
+    /**
+     * Counts what the game did to the pads in the frame that has just finished.
+     * <p>
+     * Every forward frame rather than every readout, unlike everything else here, because what it
+     * measures is a difference between consecutive frames: a lag frame seen once every fifteen
+     * would be fifteen frames of the game reported as one. Cheap enough for that -- four counter
+     * reads and a subtraction -- and only while somebody is watching, which is the
+     * {@link #frameObserver} rule.
+     * <p>
+     * <b>Not from the rewind path</b>, which is the one place {@code framesRun} moves without any
+     * frame being run. Nothing is re-emulated going backwards, so the counters do not move either,
+     * and every frame handed back would be counted as a frame the game failed to read the pad in.
+     * The frame number is what says so: the first frame after a rewind is not one more than the
+     * last one counted, and {@link PadPolling} starts again rather than measuring across the gap.
+     */
+    private void notePads() {
+        if (frameObserver == null) {
+            return;
+        }
+
+        polling.frameEnded(framesRun, nes.getController1(), nes.getController2());
+    }
+
+    /**
+     * Points the debugger's hooks at the log, or takes them off.
+     * <p>
+     * Posted rather than done here, because the debugger belongs to the thread clocking the machine
+     * and both callers are on the event dispatch thread -- the panel being shown, and its reads
+     * tick. Off whenever nobody is watching, which is the same rule the readout keeps and is nearly
+     * always.
+     * <p>
+     * <b>This does not slow the machine down.</b> A sink is not a breakpoint: the driver's fast
+     * loop is untouched, and what it costs is a hook on a bus the game already crosses.
+     */
+    private void armEventLog() {
+        var wanted = frameObserver != null;
+        var reads = eventReads;
+
+        post(() -> debugger.setEventSink(wanted ? events::record : null, reads));
+    }
+
+    /**
+     * Writes down what the chip was playing on the frame that has just finished.
+     * <p>
+     * Unlike {@link #notePads()} this is not behind the observer: a recording is something somebody
+     * asked for and it must go on whether or not a window is open to watch it. Unlike the movie
+     * recorder it is not fed on the rewind path either, and what that means is written down in
+     * {@link MusicRecorder}: a passage played twice was heard twice.
+     */
+    private void noteMusic() {
+        if (music != null) {
+            music.frame(nes.getAPU());
+        }
+    }
+
+    /**
+     * Takes every third sample of the frame that has just finished, or leaves the last frame's
+     * where it is when there is nothing to take -- a stepped frame drains no sound.
+     * <p>
+     * Only while somebody is watching, which is the {@link #frameObserver} rule: nothing here runs
+     * for a panel that is closed.
+     */
+    private void fillScope(final int count) {
+        if (frameObserver == null || count == 0) {
+            return;
+        }
+
+        var step = Math.max(1, count / SCOPE_SAMPLES);
+
+        decimate(samples, count, step, scope);
+
+        // The chip's own record of the same frame, asked for at exactly the length just drained so
+        // that a voice's trace and the mixed one are the same samples.
+        var wanted = Math.min(count, voice.length);
+
+        for (var channel : APUChannel.values()) {
+            nes.getAPU().trace(channel, voice, wanted);
+            decimate(voice, wanted, step, traces[channel.ordinal()]);
+        }
+    }
+
+    private static void decimate(
+            final short[] from, final int count, final int step, final short[] into) {
+
+        for (var i = 0; i < into.length; i++) {
+            var at = i * step;
+
+            into[i] = at < count ? from[at] : 0;
+        }
+    }
+
+    /**
+     * See {@link #redrawPicture()}, which is where all of the reasoning is.
+     */
+    void renderTheFrameAgain() {
+        // A running machine draws the next frame within about seventeen milliseconds anyway, and
+        // it will draw it with the new setting. This is only for one that has stopped.
+        if (!paused) {
+            return;
+        }
+
+        var ppu = nes.getPPU();
+        var taken = new ByteArrayOutputStream();
+
+        try {
+            SaveState.write(nes, taken);
+        } catch (IOException e) {
+            logger.log(Level.WARNING, "could not redraw the picture", e);
+            return;
+        }
+
+        debugger.unwatched(() -> {
+            runToFrameBoundary();
+            runToFrameBoundary();
+        });
+
+        screen.present(ppu.getFrameBuffer(), ppu.getFramePhase());
+
+        try {
+            SaveState.read(nes, new ByteArrayInputStream(taken.toByteArray()));
+        } catch (IOException e) {
+            // Nothing to be done about it here, and saying so matters: the machine has just been
+            // run two frames further than anybody asked and cannot be put back.
+            logger.log(Level.ERROR, "could not put the machine back after redrawing", e);
+        }
+
+        // The chip is back where it was, but the queue between it and the card is not in a state --
+        // see APU.sampleRing in SaveStateCompletenessTests -- so those two frames are still in it.
+        nes.getAPU().drainSamples(samples);
+    }
+
+    /**
+     * Clocks the machine until the frame counter moves, which is the only signal the PPU gives that
+     * a frame is over -- the same do-while the main loop's fast path uses.
+     */
+    private void runToFrameBoundary() {
+        var ppu = nes.getPPU();
+        var was = ppu.getFrame();
+
+        while (ppu.getFrame() == was) {
+            nes.tick();
         }
     }
 

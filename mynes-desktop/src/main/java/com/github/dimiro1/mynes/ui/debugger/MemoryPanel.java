@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.debugger;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.ui.MenuKey;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.AbstractAction;
@@ -21,7 +22,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
-import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 
@@ -210,8 +210,7 @@ final class MemoryPanel extends JPanel {
      * window rather than the field, so that it works while the table has focus.
      */
     private void bindGoTo() {
-        var shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
-        var key = KeyStroke.getKeyStroke(KeyEvent.VK_G, shortcut);
+        var key = KeyStroke.getKeyStroke(KeyEvent.VK_G, MenuKey.mask());
 
         getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, "goTo");
         getActionMap().put("goTo", new AbstractAction() {

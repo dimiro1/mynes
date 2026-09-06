@@ -119,4 +119,70 @@ class StandardControllerTests {
                     "the second poll should start again at A");
         }
     }
+
+    /**
+     * The two gauges the control panel's Pads tab is built on. Neither is anything the console can
+     * see, and what is asked of them is always a difference between two frames rather than either
+     * number on its own -- so what matters is that a poll is counted exactly once and that a frame
+     * with no poll in it counts none.
+     */
+    @Nested
+    class Counting {
+        @Test
+        void aPollIsTheFallingEdgeOfTheStrobe() {
+            assertEquals(0, controller.getPolls(), "nothing has asked yet");
+
+            controller.setStrobe(1);
+            assertEquals(0, controller.getPolls(), "raising it is only half of one");
+
+            controller.setStrobe(0);
+            assertEquals(1, controller.getPolls(), "and letting it fall is the poll");
+        }
+
+        /**
+         * $4016 carries three output lines, and a game working an expansion port writes to it
+         * without ever raising the strobe. There is no edge in that, and so no poll.
+         */
+        @Test
+        void aWriteThatLeavesTheStrobeLowIsNotAPoll() {
+            controller.setStrobe(0);
+            controller.setStrobe(0);
+
+            assertEquals(0, controller.getPolls());
+        }
+
+        @Test
+        void oneFrameOfAGameReadingThePadIsOnePollAndEightBits() {
+            strobe();
+            read(8);
+
+            assertEquals(1, controller.getPolls());
+            assertEquals(8, controller.getBitsRead());
+        }
+
+        /**
+         * The port a game with no two player mode never reads: latched with the other one, because
+         * a single write drives both, and never clocked. Which is the whole reason the two numbers
+         * are separate.
+         */
+        @Test
+        void aPadThatIsLatchedButNeverReadCountsPollsAndNoBits() {
+            strobe();
+
+            assertEquals(1, controller.getPolls());
+            assertEquals(0, controller.getBitsRead());
+        }
+
+        @Test
+        void peekingAtTheLineIsNotABitRead() {
+            strobe();
+            controller.read();
+            controller.peek();
+
+            assertEquals(
+                    1,
+                    controller.getBitsRead(),
+                    "the bit was clocked out once and read twice");
+        }
+    }
 }

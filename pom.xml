@@ -25,6 +25,7 @@
         <module>mynes-core</module>
         <module>mynes-patch</module>
         <module>mynes-archive</module>
+        <module>mynes-midi</module>
         <module>mynes-headless</module>
         <module>mynes-desktop</module>
         <module>mynes-shots</module>

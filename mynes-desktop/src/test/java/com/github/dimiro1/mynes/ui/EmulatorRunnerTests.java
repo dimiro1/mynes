@@ -18,6 +18,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongPredicate;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -97,6 +98,87 @@ class EmulatorRunnerTests {
     @AfterEach
     void tearDown() {
         runner.stop();
+    }
+
+    /**
+     * Redrawing the picture with a layer switched off means rendering a frame, because the switches
+     * take part where a pixel is composed and the framebuffer keeps only what came out. So the
+     * machine really is run -- and then put back, and the claim is that it comes back byte for byte,
+     * which is the same claim the rewind rests on.
+     */
+    @Test
+    void redrawingThePictureLeavesTheMachineExactlyWhereItWas() throws Exception {
+        for (var i = 0; i < 40_000; i++) {
+            nes.tick();
+        }
+
+        runner.setPaused(true);
+
+        var before = stateOf(nes);
+        var frames = runner.getFramesRun();
+        var wasAt = nes.getPPU().getFrame();
+
+        runner.renderTheFrameAgain();
+
+        assertArrayEquals(before, stateOf(nes), "the machine is where it was, byte for byte");
+        assertEquals(wasAt, nes.getPPU().getFrame(), "including which frame it is standing on");
+        assertEquals(frames, runner.getFramesRun(), "and the frame counter did not move");
+    }
+
+    /**
+     * The frames a redraw runs are not the game doing anything, so nothing watching the machine
+     * should think they were. A write watchpoint that latched during one would report itself on the
+     * next real instruction, which is a stop nobody asked for and nothing at all to explain it.
+     */
+    @Test
+    void aRedrawIsNotSomethingAWatchpointCanSee() {
+        debugger.addWatchpoint(0x0300);
+
+        for (var i = 0; i < 200; i++) {
+            nes.tick();
+        }
+
+        // Whatever the run above latched, reported and cleared, the way the loop would have.
+        debugger.afterInstruction(nes.getCPU().getPC(), nes.getCPU().getPC());
+        debugger.run();
+
+        runner.setPaused(true);
+        runner.renderTheFrameAgain();
+
+        assertNull(
+                debugger.afterInstruction(nes.getCPU().getPC(), nes.getCPU().getPC()),
+                "the redraw wrote to $0300 thousands of times and none of them was the game");
+    }
+
+    /**
+     * A machine that is running draws the next frame within about seventeen milliseconds anyway, and
+     * draws it with whatever the switch now says -- so a redraw would be two frames of work and a
+     * state round trip for nothing.
+     */
+    @Test
+    void aRunningMachineIsNotRedrawn() {
+        for (var i = 0; i < 40_000; i++) {
+            nes.tick();
+        }
+
+        var before = stateOf(nes);
+
+        runner.setPaused(false);
+        runner.renderTheFrameAgain();
+
+        assertArrayEquals(before, stateOf(nes), "nothing was clocked");
+    }
+
+    private static byte[] stateOf(final NES machine) {
+        var out = new java.io.ByteArrayOutputStream();
+
+        try {
+            com.github.dimiro1.mynes.state.SaveState.write(machine, out);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+
+        return out.toByteArray();
     }
 
     @Test

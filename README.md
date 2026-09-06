@@ -110,7 +110,7 @@ file is where they live.
   and it plays on from there.
 - Fast forward at 2x, 4x, 8x or unlimited.
 - Pause when the window goes behind another application, under **Machine > Pause in Background**.
-  The emulator's own windows don't count, so the debugger and the viewers keep the game running.
+  The emulator's own windows don't count, so the control panel keeps the game running.
 - Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
   video, so it is a few kilobytes a minute and replays byte for byte.
 - Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip
@@ -131,18 +131,43 @@ file is where they live.
 
 **Debugging**
 
+- One **Control Panel** (`Cmd/Ctrl+D`), with every instrument as a tab and every switch on the
+  machine in a column down the side — pause, speed, layers, volume, the five sound channels, the
+  overclock, the Game Genie and the tracer, without going back to the game window for any of them.
+- Three lines across the top of it say what the machine is doing without being asked: the frame
+  rate and the cartridge, `$2000` and `$2001` decoded with the scroll and the sprite-0 flag, and
+  which of the five voices are playing, how the frame counter is sequencing them, what is being
+  held on the pad and how often the game is reading it. Read at a frame boundary, so it is one
+  moment rather than a dozen.
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
-- A CHR viewer, a nametable viewer with the scroll window drawn over all four tables, an OAM
-  viewer showing all sixty-four sprites, and a palette viewer over the thirty-two bytes the whole
-  picture is coloured through.
-- Both of the last two answer *where*: point at a palette and the screen dims everywhere it is not
-  drawing, and the OAM viewer guesses which sprites are one character so a click outlines all of
-  them.
-- Every one of those windows has Pause in it, so stopping the machine to look at something does not
-  mean going back to the game window first.
+- **Start Music...** writes what the sound chip plays to a MIDI file — one part per pulse and one
+  for the triangle, read a frame at a time so nothing in the melody is missed, with the tempo set so
+  a tick lasts exactly one frame of the console it came from.
+- A nametable view with the scroll window drawn over all four tables, a sprite view of all
+  sixty-four with their attributes, a palette view over the thirty-two bytes the whole picture is
+  coloured through, and a tile view of character memory.
+- A sound view of all five voices: the period the game wrote, the frequency it comes out as on the
+  console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
+  each and a scope of the mix. **Split the voices** draws each one on its own in its own colour, so
+  a square wave, a triangle, a hiss and a sampled drum are told apart at a glance.
+- A piano keyboard per voice under it, A0 to C8, which is exactly the range the chip has. **All
+  three on one keyboard** puts them together, where an octave, a third and a semitone of accidental
+  dissonance stop looking alike.
+- A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
+  memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
+- A pads view: both controllers drawn with whatever is held lit up, and a strip of the last two
+  seconds marked wherever a frame went by without the game reading `$4016`. That is a main loop
+  that overran its frame — the stutter **Overclock** undoes — and nothing else in the program can
+  see it.
+- An events view: one frame drawn as the beam draws it, with a mark wherever the game touched the
+  hardware — every PPU and audio register, every mapper write, and both interrupts — at the
+  scanline and dot it happened on. A write to `$2005` is a scroll; the same write a hundred lines
+  down is a status bar split, and nothing else can tell you which it was.
+- Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
+  and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels
   out of the mixer (`--mute pulse1,dmc` headless).
 
@@ -176,6 +201,13 @@ The palette's colours laid down between the lines of a 480-line raster, with the
 Every selection applies the moment it is made, so the game behind the dialog is the comparison.
 
 ![The palette dialog over a running game](shots/palette-dialog.png)
+
+### The control panel
+
+Every instrument as a tab, every switch on the machine beside them, and three lines at the top
+saying what it is doing — stopped on a conditional breakpoint at Super Mario Bros.' NMI handler.
+
+![The control panel](shots/control-panel.png)
 
 ### The nametable viewer
 

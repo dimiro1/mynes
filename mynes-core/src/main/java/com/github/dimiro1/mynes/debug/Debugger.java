@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.debug;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.MMU;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.PPU;
 
 import java.util.Collections;
 import java.util.Locale;
@@ -131,6 +132,99 @@ public final class Debugger {
     }
 
     /**
+     * What kind of thing the machine just did, for whoever is drawing a frame's worth of them.
+     * <p>
+     * Four groups rather than one address range per register, because what the groups answer are
+     * four different questions. The <b>PPU</b> ones are where a raster effect lives: a $2005 or
+     * $2006 write part way down the screen is a split, and which line it lands on is the whole of
+     * what somebody is looking for. The <b>audio</b> ones are $4000-$401F, which is the sound chip
+     * plus the two things that share the window with it -- the transfer at $4014 and the pads at
+     * $4016. The <b>cartridge</b> ones are writes above $8000, which do not go to memory at all:
+     * every one is a mapper register, so every one is a bank switch or an interrupt being armed.
+     * And the two interrupts are where a frame is cut into pieces.
+     * <p>
+     * Reads and writes are separate constants rather than a flag beside the kind, because that is
+     * how they are asked for: recording reads means putting a hook on the line every instruction
+     * fetch comes past, so it is a decision somebody makes rather than a filter applied afterwards.
+     * A read below $2000 or above $401F is never one of these -- that is either work RAM or the
+     * program being fetched, and neither is a thing the machine <em>did</em>.
+     */
+    public enum EventKind {
+        PPU_READ("PPU read"),
+        PPU_WRITE("PPU write"),
+        AUDIO_READ("audio read"),
+        AUDIO_WRITE("audio write"),
+        CARTRIDGE_WRITE("mapper write"),
+        NMI("NMI"),
+        IRQ("IRQ");
+
+        private final String label;
+
+        EventKind(final String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        /**
+         * Whether this is the machine being asked something rather than being told something. The
+         * two interrupts are neither, and answer false.
+         */
+        public boolean isRead() {
+            return this == PPU_READ || this == AUDIO_READ;
+        }
+    }
+
+    /**
+     * One of them, in the shape something that has collected a frame's worth wants to read.
+     * <p>
+     * Not what {@link EventSink} is handed, which is the same six values as primitives: this is the
+     * materialised form, made once by whoever is about to show them rather than thousands of times
+     * a second by the machine making them.
+     *
+     * @param kind     which of the seven this is.
+     * @param address  the address touched, or the vector for an interrupt.
+     * @param value    the byte read or written, or -1 for an interrupt.
+     * @param scanline where the beam was.
+     * @param dot      the dot within that line, good to within two.
+     * @param pc       where the program counter stood, which is past the instruction that made the
+     *                 access. See {@link EventSink#onEvent}.
+     */
+    public record Event(
+            EventKind kind, int address, int value, int scanline, int dot, int pc) {
+    }
+
+    /**
+     * Told about each of those as it happens, on the thread clocking the machine.
+     * <p>
+     * Primitives rather than a record, which is the same trade {@link
+     * com.github.dimiro1.mynes.MemoryWriteListener} makes: a game with a busy music driver and a
+     * raster split makes a few hundred of these a frame, and a vblank wait with reads switched on
+     * makes thousands, none of which anybody wants allocated. Whatever is collecting them decides
+     * what shape to keep them in.
+     */
+    @FunctionalInterface
+    public interface EventSink {
+        /**
+         * @param kind     which of the seven this is.
+         * @param address  the address touched, or the vector for an interrupt.
+         * @param value    the byte read or written, or -1 for an interrupt.
+         * @param scanline where the beam was, which is the point of recording any of this.
+         * @param dot      the dot within that line. Good to within two dots and no better: the
+         *                 machine is clocked a CPU cycle at a time and the PPU runs three dots to
+         *                 one, so this is the last of the three the cycle covered.
+         * @param pc       where the program counter stood. <b>Past</b> the instruction that made
+         *                 the access, by however long that instruction was, since the operand bytes
+         *                 have already been fetched -- so it is an orientation rather than an
+         *                 answer. {@code watch} is what answers exactly, and reports {@code
+         *                 writtenBy}. For an interrupt it is the address being returned to.
+         */
+        void onEvent(EventKind kind, int address, int value, int scanline, int dot, int pc);
+    }
+
+    /**
      * How far back the disassembly view can look.
      * <p>
      * A power of two, so the ring wraps with a mask rather than a division.
@@ -185,6 +279,23 @@ public final class Debugger {
      */
     private MMU memory;
     private CPU cpu;
+    private PPU ppu;
+
+    /**
+     * Whoever is collecting a frame's worth of what the machine did, or null when nobody is.
+     * <p>
+     * Deliberately <b>not</b> part of {@link #isArmed()}. A breakpoint has to be checked between
+     * instructions and so costs the driver its whole fast loop; this rides on hooks the bus already
+     * has, so a machine being watched this way runs at full speed. Somebody who wants to see where
+     * in the frame a game writes $2005 must not have to slow the game down to find out.
+     */
+    private EventSink eventSink;
+
+    /**
+     * Whether reads are being recorded as well as writes. Off unless asked for, because it is the
+     * read hook that costs: every instruction the CPU fetches comes past it.
+     */
+    private boolean eventReads;
 
     private Stepping stepping = Stepping.NONE;
     private boolean haltAsked;
@@ -209,8 +320,9 @@ public final class Debugger {
     public void attach(final NES nes) {
         memory = nes.getMemory();
         cpu = nes.getCPU();
+        ppu = nes.getPPU();
 
-        wireBusHooks();
+        wireHooks();
     }
 
     // =================================================================== what the run loop asks
@@ -312,6 +424,10 @@ public final class Debugger {
             hitValue = value;
             hitAccess = Access.WRITE;
         }
+
+        if (eventSink != null) {
+            recordWrite(address, value);
+        }
     }
 
     /**
@@ -326,6 +442,30 @@ public final class Debugger {
             hitAddress = address;
             hitValue = value;
             hitAccess = Access.READ;
+        }
+
+        // The address test before the null check, unlike the write side, because this is the hook
+        // every instruction fetch comes past and nearly all of them are outside the window.
+        if (address >= 0x2000 && address < 0x4020 && eventSink != null && eventReads) {
+            record(
+                    address < 0x4000 ? EventKind.PPU_READ : EventKind.AUDIO_READ,
+                    address,
+                    value);
+        }
+    }
+
+    /**
+     * The interrupt hook, called from {@link CPU} on the cycle it picks a vector.
+     */
+    public void onInterrupt(final boolean nmi, final int pc) {
+        if (eventSink != null) {
+            eventSink.onEvent(
+                    nmi ? EventKind.NMI : EventKind.IRQ,
+                    nmi ? 0xFFFA : 0xFFFE,
+                    -1,
+                    ppu.getScanline(),
+                    ppu.getDot(),
+                    pc);
         }
     }
 
@@ -427,7 +567,7 @@ public final class Debugger {
         watchReadAt[address & 0xFFFF] = on.reads();
         watchWriteAt[address & 0xFFFF] = on.writes();
 
-        wireBusHooks();
+        wireHooks();
     }
 
     public void removeWatchpoint(final int address) {
@@ -435,7 +575,7 @@ public final class Debugger {
         watchReadAt[address & 0xFFFF] = false;
         watchWriteAt[address & 0xFFFF] = false;
 
-        wireBusHooks();
+        wireHooks();
     }
 
     public void toggleWatchpoint(final int address) {
@@ -459,8 +599,67 @@ public final class Debugger {
         addWatchpoint(address, on);
     }
 
+    // ============================================================================== the events
+
+    /**
+     * Records what the machine does to its hardware, or stops recording.
+     * <p>
+     * <b>This does not arm the machine.</b> Everything else here that watches costs the driver its
+     * fast loop, because a breakpoint has to be looked at between instructions; this rides on hooks
+     * the bus already carries, so a game being recorded runs at full speed. That is the whole
+     * design: where in the frame a game writes $2005 is a question about a game that is playing
+     * normally, and a gauge that changed the timing to answer it would be measuring itself.
+     *
+     * @param sink  who to tell, or null to stop.
+     * @param reads whether to record reads as well as writes. <b>Off unless it is wanted.</b> The
+     *              read hook sees every instruction fetch, so this is the one setting here that a
+     *              machine can feel -- and what it buys is the $2002 and $4016 polls, which are
+     *              worth seeing exactly when the question is why a game is waiting.
+     */
+    public void setEventSink(final EventSink sink, final boolean reads) {
+        eventSink = sink;
+        eventReads = reads;
+
+        wireHooks();
+    }
+
+    /**
+     * Clocks the machine with nothing watching, and puts the watching back afterwards.
+     * <p>
+     * For a caller that has to run the machine for a reason of its own rather than to play the
+     * game -- redrawing the picture with a layer switched off, which cannot be done without
+     * rendering a frame, since the switches take part where the pixel is composed and the
+     * framebuffer keeps only what came out. Those frames are not the game doing anything, so
+     * nothing here should think they were: a write watchpoint that latched during one would report
+     * itself on the next real instruction, which is a stop nobody asked for and nothing to explain
+     * it.
+     * <p>
+     * The hooks come off rather than the results being thrown away afterwards, because a pending
+     * hit and a real one are the same field, and telling them apart after the fact means guessing.
+     */
+    public void unwatched(final Runnable work) {
+        var reads = memory.readListener();
+        var writes = memory.writeListener();
+        var interrupts = cpu.interruptListener();
+
+        memory.setReadListener(null);
+        memory.setWriteListener(null);
+        cpu.setInterruptListener(null);
+
+        try {
+            work.run();
+        } finally {
+            memory.setReadListener(reads);
+            memory.setWriteListener(writes);
+            cpu.setInterruptListener(interrupts);
+        }
+    }
+
     /**
      * Forgets every breakpoint and watchpoint. What a new cartridge deserves.
+     * <p>
+     * Not the event sink, which belongs to a window that is still open rather than to the cartridge
+     * that has just been taken out.
      */
     public void clear() {
         breakpoints.forEach(pc -> breakAt[pc] = false);
@@ -474,7 +673,7 @@ public final class Debugger {
         watchpoints.clear();
 
         run();
-        wireBusHooks();
+        wireHooks();
     }
 
     // ============================================================================== being read
@@ -537,19 +736,20 @@ public final class Debugger {
     }
 
     /**
-     * Puts the bus hooks down or picks them up, according to whether anything is still watching.
+     * Puts the three hooks down or picks them up, according to whether anything is still watching.
      * <p>
-     * Recomputed from the watchpoints rather than counted, so that a machine attached to after a
-     * point was set gets its hooks and one whose last point has gone loses them, without either
-     * caller having to remember which case it is in.
+     * Recomputed from the watchpoints and the sink rather than counted, so that a machine attached
+     * to after a point was set gets its hooks and one whose last point has gone loses them, without
+     * any caller having to remember which case it is in. Two things want each hook now and neither
+     * knows about the other, which is exactly the case counting would get wrong.
      */
-    private void wireBusHooks() {
+    private void wireHooks() {
         if (memory == null) {
             return;
         }
 
-        var reads = false;
-        var writes = false;
+        var reads = eventSink != null && eventReads;
+        var writes = eventSink != null;
 
         for (var access : watchpoints.values()) {
             reads |= access.reads();
@@ -558,6 +758,32 @@ public final class Debugger {
 
         memory.setReadListener(reads ? this::onRead : null);
         memory.setWriteListener(writes ? this::onWrite : null);
+        cpu.setInterruptListener(eventSink == null ? null : this::onInterrupt);
+    }
+
+    /**
+     * Which of the three write kinds an address is, or none at all.
+     * <p>
+     * Work RAM and cartridge RAM are deliberately not among them. A game writes to those thousands
+     * of times a frame and none of it is the machine <em>doing</em> anything -- it is the game
+     * thinking, which is what a watchpoint and the memory view are for.
+     */
+    private void recordWrite(final int address, final int value) {
+        if (address < 0x2000) {
+            return;
+        }
+
+        if (address < 0x4000) {
+            record(EventKind.PPU_WRITE, address, value);
+        } else if (address < 0x4020) {
+            record(EventKind.AUDIO_WRITE, address, value);
+        } else if (address >= 0x8000) {
+            record(EventKind.CARTRIDGE_WRITE, address, value);
+        }
+    }
+
+    private void record(final EventKind kind, final int address, final int value) {
+        eventSink.onEvent(kind, address, value, ppu.getScanline(), ppu.getDot(), cpu.getPC());
     }
 
     private void forgetHit() {

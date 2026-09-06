@@ -2,19 +2,16 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
-import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Sweep;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
-import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
-import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -28,8 +25,8 @@ import java.util.Arrays;
 import java.util.Comparator;
 
 /**
- * A window over object attribute memory: all sixty four sprites, what each one is made of, and
- * where they are.
+ * A view of object attribute memory: all sixty four sprites, what each one is made of, and where
+ * they are.
  * <p>
  * Four bytes a sprite and none of them visible in the picture -- a sprite drawn with the wrong
  * palette, behind the background rather than in front of it, flipped, or pointing at a tile in the
@@ -37,7 +34,7 @@ import java.util.Comparator;
  * four bytes. So they are all here, decoded, beside the sprite they describe.
  * <p>
  * <b>A thing on the screen is usually several sprites</b>, and which several is a fact about the
- * game's code rather than about anything in OAM -- so the window guesses, by joining up the sprites
+ * game's code rather than about anything in OAM -- so the view guesses, by joining up the sprites
  * that touch each other and are drawn in the same palette. See {@link SpriteGroups}. The Group column says what it decided, and
  * <b>Group</b> puts the rows in that order and makes a click pick the whole thing rather than one
  * eighth of it. The field outlines the group as one shape, so what appears round a six sprite Mario
@@ -56,13 +53,13 @@ import java.util.Comparator;
  * The filter is frozen with them, for the same reason and because a sprite that walked off the
  * bottom of the picture would otherwise take its row out from under a selection.
  * <p>
- * Built the same way as the CHR viewer: a timer, an unsynchronised read of the machine, and a
- * palette that follows Settings &gt; Palette... The worst case is a sprite a quarter of a second out
- * of date.
+ * Built the same way as the CHR viewer: a {@link Sweep}, an unsynchronised read of the machine,
+ * and a palette that follows Settings &gt; Palette... The worst case is a sprite a quarter of a
+ * second out of date.
  */
-public final class OAMViewerFrame extends JFrame {
+public final class OAMViewerPanel extends JPanel {
     /**
-     * How often the viewer re-reads OAM. The same quarter second the CHR viewer uses; a sweep is 256
+     * How often the view re-reads OAM. The same quarter second the CHR viewer uses; a sweep is 256
      * bytes and 64 small tiles.
      */
     private static final int REFRESH_MILLIS = 250;
@@ -81,12 +78,10 @@ public final class OAMViewerFrame extends JFrame {
     private final JTable table = new JTable(model);
     private final BufferedImage[] sprites = new BufferedImage[SPRITES];
     private final SpriteFieldPanel field;
-    private final Timer refreshTimer;
 
     private final JLabel machine = new JLabel();
     private final JCheckBox grouped = new JCheckBox("Group");
     private final JCheckBox onScreenOnly = new JCheckBox("On screen only");
-    private final PauseBox pause;
 
     private final int[] bytes = new int[SPRITES * 4];
     private final int[] left = new int[SPRITES];
@@ -111,7 +106,7 @@ public final class OAMViewerFrame extends JFrame {
     private int rows = SPRITES;
 
     /**
-     * Which group the window thinks each sprite belongs to, shown whether or not the rows have been
+     * Which group the view thinks each sprite belongs to, shown whether or not the rows have been
      * put in that order: knowing that sprites 4, 5, 7 and 8 are one thing is worth having even in a
      * list that is still in OAM order.
      */
@@ -126,36 +121,27 @@ public final class OAMViewerFrame extends JFrame {
     private NESPalette palette;
     private int height = 8;
 
-    public OAMViewerFrame(
-            final Component parent,
-            final PPU ppu,
-            final NESPalette palette,
-            final PauseControl pauseControl) {
-
+    public OAMViewerPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.palette = palette;
         this.field = new SpriteFieldPanel(sprites, ppu, palette);
-        this.pause = new PauseBox(pauseControl);
-        this.refreshTimer = new Timer(REFRESH_MILLIS, e -> tick());
 
         for (var i = 0; i < SPRITES; i++) {
             order[i] = i;
             sprites[i] = new BufferedImage(8, MAX_HEIGHT, BufferedImage.TYPE_INT_ARGB);
         }
 
-        // Before the window is built, because the header label is one of the things it fills in
-        // and pack() sizes the window from a label with something in it. An empty one is sixteen
-        // pixels shorter, and every one of those pixels comes off the bottom of the field beside
-        // the table.
+        // Before the view is built, because the header label is one of the things it fills in and
+        // the height it asks for is measured from a label with something in it. An empty one is
+        // sixteen pixels shorter, and every one of those pixels comes off the bottom of the field
+        // beside the table.
         refresh();
-        init(parent);
+        init();
 
-        refreshTimer.start();
+        Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final Component parent) {
-        setTitle("OAM Viewer");
-        setResizable(false);
+    private void init() {
         setLayout(new BorderLayout());
 
         machine.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
@@ -186,29 +172,26 @@ public final class OAMViewerFrame extends JFrame {
         var listing = new JScrollPane(table);
         listing.setPreferredSize(new java.awt.Dimension(490, PPU.SCREEN_HEIGHT * 2));
 
+        // The field is pinned to the top of its own strip rather than added east directly, because
+        // east is stretched to whatever height the panel has and the field draws the screen across
+        // the whole of the component it is given: in a window packed around it the two were the
+        // same, and in a tab a foot taller the game came out stretched. The table beside it is the
+        // half of this that is worth making taller, and does.
+        var beside = new JPanel(new BorderLayout());
+        beside.add(field, BorderLayout.NORTH);
+
         var body = new JPanel(new BorderLayout(8, 0));
         body.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
         body.add(listing, BorderLayout.CENTER);
-        body.add(field, BorderLayout.EAST);
+        body.add(beside, BorderLayout.EAST);
 
         var options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
         options.add(grouped);
         options.add(onScreenOnly);
 
-        // Pause at the far end, away from the ticks that only change what is drawn: this one
-        // changes the machine, which is a different kind of thing to be clicking.
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        controls.add(options, BorderLayout.WEST);
-        controls.add(pause, BorderLayout.EAST);
-
         add(machine, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
-
-        pack();
-        pause.installIn(getRootPane());
-        setLocationRelativeTo(parent);
+        add(options, BorderLayout.SOUTH);
     }
 
     /**
@@ -220,31 +203,16 @@ public final class OAMViewerFrame extends JFrame {
         refresh();
     }
 
-    @Override
-    public void dispose() {
-        refreshTimer.stop();
-        super.dispose();
-    }
-
-    /**
-     * One tick of the refresh timer, which does nothing at all while the window is put away. The
-     * first draw goes through {@link #refresh()} directly instead: a window that waited for the
-     * timer would come up empty for a quarter of a second, and one painted into an image without
-     * ever being shown would come up empty for good.
-     */
-    private void tick() {
-        if (isShowing()) {
-            refresh();
-        }
-    }
-
     /**
      * One sweep: the 256 bytes, then the 64 tiles they name.
      * <p>
      * Read in one pass and drawn from that copy rather than read again per column, so that every
-     * row of the table describes one moment of the machine rather than four.
+     * row of the table describes one moment of the machine rather than four. Called once directly
+     * as the view is built as well as by the timer: a view that waited for its first tick would
+     * come up empty for a quarter of a second, and one painted into an image without ever being
+     * shown would come up empty for good.
      */
-    private void refresh() {
+    public void refresh() {
         for (var i = 0; i < bytes.length; i++) {
             bytes[i] = ppu.peekOAM(i);
         }
@@ -269,14 +237,13 @@ public final class OAMViewerFrame extends JFrame {
         }
 
         field.setPositions(left, top, height);
-        pause.refresh();
         describeMachine();
     }
 
     /**
      * The three things that decide what the sixty four are and are not in any one of them, and what
-     * the window has made of them. Said again whenever the rows change as well as on every sweep,
-     * so that a count nobody could arrive at by looking at the table never sits in the header.
+     * the view has made of them. Said again whenever the rows change as well as on every sweep, so
+     * that a count nobody could arrive at by looking at the table never sits in the header.
      */
     private void describeMachine() {
         var groups = groups();
@@ -474,7 +441,7 @@ public final class OAMViewerFrame extends JFrame {
     }
 
     /**
-     * How many things the window thinks it is showing, which is the number the guess is worth
+     * How many things the view thinks it is showing, which is the number the guess is worth
      * judging by: sixty four says it joined nothing up, one says it joined everything.
      * <p>
      * Counted over the rows rather than over OAM, so that it says two when two are listed. A number
@@ -520,7 +487,7 @@ public final class OAMViewerFrame extends JFrame {
      * <p>
      * The columns are the four bytes as they are in memory and then what they mean, rather than one
      * or the other: the byte is what a watchpoint catches and the meaning is what the question was
-     * about, and having to convert between them by hand is the thing this window exists to stop.
+     * about, and having to convert between them by hand is the thing this view exists to stop.
      */
     private final class SpriteTable extends AbstractTableModel {
         private final String[] columns = {

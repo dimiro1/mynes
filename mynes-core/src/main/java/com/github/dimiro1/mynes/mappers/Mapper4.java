@@ -159,9 +159,14 @@ public class Mapper4 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var bank = prgBankFor((address & 0x7FFF) >> 13) & prgBankMask;
 
-        return Byte.toUnsignedInt(prgROM[bank * PRG_PAGE_SIZE + (address & 0x1FFF)]);
+        return bank * PRG_PAGE_SIZE + (address & 0x1FFF);
     }
 
     /**
@@ -220,7 +225,12 @@ public class Mapper4 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[charIndex(address & 0x1FFF)]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return charIndex(address & 0x1FFF);
     }
 
     @Override
@@ -295,6 +305,29 @@ public class Mapper4 implements Mapper {
      * @param page which 8KB page of $8000-$FFFF is being read, 0 to 3.
      * @return the bank number that answers for it, before masking.
      */
+    /**
+     * $A001 can switch the RAM off and can protect it without switching it off, which is the pair
+     * of tricks a battery board plays around anything risky.
+     */
+    @Override
+    public boolean prgRAMEnabled() {
+        return (prgRAMProtect & RAM_ENABLED) != 0;
+    }
+
+    @Override
+    public boolean prgRAMWritable() {
+        return prgRAMEnabled() && (prgRAMProtect & RAM_WRITE_PROTECTED) == 0;
+    }
+
+    /**
+     * The scanline counter, which is the one piece of cartridge hardware here that interrupts the
+     * processor -- and the thing behind most of what looks like a raster bug on an MMC3 game.
+     */
+    @Override
+    public ScanlineIRQ irq() {
+        return new ScanlineIRQ(irqLatch, irqCounter, irqEnabled);
+    }
+
     private int prgBankFor(final int page) {
         // Bit 6 of the bank select swaps which end of the window is fixed. The second to last
         // bank is nailed to whichever of $8000 and $C000 the switchable page is not using, and

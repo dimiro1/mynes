@@ -115,11 +115,21 @@ class BUSIRQTests {
         }
 
         @Override
+        public int prgOffset(final int address) {
+            return 0;
+        }
+
+        @Override
         public void prgWrite(final int address, final int data) {
         }
 
         @Override
         public int charRead(final int address) {
+            return 0;
+        }
+
+        @Override
+        public int charOffset(final int address) {
             return 0;
         }
 

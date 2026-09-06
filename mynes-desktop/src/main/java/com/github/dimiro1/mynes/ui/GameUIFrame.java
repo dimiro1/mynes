@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.Overclock;
+import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.archive.Archive;
 import com.github.dimiro1.mynes.archive.InvalidArchiveException;
@@ -19,13 +20,8 @@ import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
 import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
-import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerFrame;
-import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
+import com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
-import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerFrame;
-import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
@@ -52,11 +48,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
-import java.util.EnumMap;
 import java.util.Locale;
-import java.util.Map;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
 
@@ -134,6 +129,7 @@ public class GameUIFrame extends JFrame {
      * traces are being kept in rather than wherever a ROM was last opened from.
      */
     private final SystemFileChooser traceChooser;
+    private final SystemFileChooser musicChooser;
 
     private final ScreenComponent screen = new ScreenComponent();
     private final StatusBar statusBar = new StatusBar();
@@ -147,67 +143,41 @@ public class GameUIFrame extends JFrame {
     private final FrameRate frameRate = new FrameRate();
 
     /**
+     * What the rate last measured, kept because two things show it now: the status bar, which is
+     * told, and the control panel's first line, which is rewritten from scratch whenever anything
+     * changes and would otherwise have nothing to put there.
+     */
+    private int lastFrameRate = FrameRate.UNKNOWN;
+
+    /**
      * Everything remembered between runs, and the only thing that writes the config file.
      */
     private final Config config;
 
-    // Menus and items that outlive init(): they are enabled, ticked and read back as machines
-    // come and go.
+    // Menus and items that outlive init(): they are enabled and read back as machines come and go.
     private final JMenu machineMenu = new JMenu("Machine");
     private final JMenu debugMenu = new JMenu("Debug");
-    private final JCheckBoxMenuItem machineMenuPause = new JCheckBoxMenuItem("Pause");
-    private final JCheckBoxMenuItem machineMenuPauseInBackground =
-            new JCheckBoxMenuItem("Pause in Background");
-    private final JCheckBoxMenuItem machineMenuFastForward = new JCheckBoxMenuItem("Fast Forward");
-    private final JCheckBoxMenuItem machineMenuMute = new JCheckBoxMenuItem("Mute");
-    private final JCheckBoxMenuItem debugMenuBackground = new JCheckBoxMenuItem("Show Background", true);
-    private final JCheckBoxMenuItem debugMenuSprites = new JCheckBoxMenuItem("Show Sprites", true);
-    private final JCheckBoxMenuItem hacksMenuUnlimitedSprites =
-            new JCheckBoxMenuItem("Unlimited Sprites");
 
     /**
-     * The five sound channels, ticked when they can be heard -- the same way round as the two layer
-     * switches above, and the same kind of thing: what a machine somebody is watching is allowed to
-     * show them.
+     * Every tick and every choice the menus offer, which is where the state of all of them now
+     * lives.
      * <p>
-     * Kept for the reason those are: they outlive the machines, and {@link #startMachine} replays
-     * every one of them onto whichever one is built next.
+     * The menu items used to <em>be</em> the state: {@link #startMachine} replayed a new machine
+     * out of {@code isSelected()} and {@link #updateMovieItems} greyed submenus out by name. They
+     * are about to be shown in a second place as well, and two sets of ticks kept in step by two
+     * sets of listeners is the arrangement that eventually disagrees with itself -- so the switch
+     * is one {@link javax.swing.Action} and the menu item is built from it. Seeded from the config
+     * at the top of {@link #init()} and given its behaviour in {@link #wireSwitches()}.
      */
-    private final Map<APUChannel, JCheckBoxMenuItem> debugMenuChannels =
-            new EnumMap<>(APUChannel.class);
+    private final Switches switches = new Switches();
 
     /**
-     * The Volume items, kept so that Louder and Quieter can move the dot. Setting it rather than
-     * clicking it, which fires no listener, is what keeps the three ways of picking a volume down to
-     * one path.
+     * The five things the control panel offers a button for, shared with the menu items that offer
+     * the same five. Beside the switches rather than among them; see {@link Commands}.
      */
-    private final Map<Volume, JRadioButtonMenuItem> machineMenuVolumes = new EnumMap<>(Volume.class);
+    private final Commands commands = new Commands();
 
-    /**
-     * The one item in the Hacks menu that needs a cartridge. The menu as a whole is deliberately not
-     * gated, because everything else in it is a remembered preference with something to change before
-     * a ROM is open -- and a code is written for one particular game, so there is nothing to type
-     * until there is a game to type it for.
-     */
-    private final JMenuItem debugMenuTrace = new JMenuItem("Start Trace...");
-    private final JMenuItem debugMenuStopTrace = new JMenuItem("Stop Trace");
-    private final JMenuItem hacksMenuGameGenie = new JMenuItem("Game Genie...");
     private final JMenuItem settingsMenuPalette = new JMenuItem("Palette...", KeyEvent.VK_P);
-    private final JCheckBoxMenuItem settingsMenuWarp = new JCheckBoxMenuItem("Curved Glass");
-    private final JCheckBoxMenuItem settingsMenuOverscan = new JCheckBoxMenuItem("Show Overscan");
-    private final JCheckBoxMenuItem settingsMenuLeftEdge = new JCheckBoxMenuItem("Show Left Edge");
-    private final JCheckBoxMenuItem settingsMenuTvAspect =
-            new JCheckBoxMenuItem("TV Aspect Ratio");
-    private final JCheckBoxMenuItem settingsMenuFullScreen = new JCheckBoxMenuItem("Full Screen");
-    private final JCheckBoxMenuItem settingsMenuStatusBar = new JCheckBoxMenuItem("Status Bar");
-
-    /**
-     * The Video Filter items, kept one at a time rather than as the submenu they are in, because
-     * only one of them is ever greyed out: the decoder is the 2C02's and a PAL machine has to do
-     * without it, while the palette and the tube are both every machine's.
-     */
-    private final Map<VideoFilter, JRadioButtonMenuItem> settingsMenuVideoFilters =
-            new EnumMap<>(VideoFilter.class);
 
     /**
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
@@ -230,30 +200,6 @@ public class GameUIFrame extends JFrame {
     private final JMenuItem machineMenuStopRecording = new JMenuItem("Stop Recording");
     private final JMenuItem machineMenuPlay = new JMenuItem("Play Movie...");
     private final JMenuItem machineMenuStopPlayback = new JMenuItem("Stop Playback");
-    private final JMenuItem machineMenuPowerCycle = new JMenuItem("Power Cycle", KeyEvent.VK_C);
-
-    /**
-     * Built in {@link #init()} rather than here, because {@link #regionMenu()} reads the config and
-     * a field initialiser runs before the constructor has loaded it.
-     */
-    private JMenu machineMenuRegion;
-
-    /**
-     * The Overclock submenu, built there for the same reason and kept for a second one: it is greyed
-     * out while a movie is running, exactly as the Game Genie item is. A movie pins the overclock
-     * when it starts, and this is the one hack that decides how much of its work the game gets
-     * through in a frame.
-     */
-    private JMenu hacksMenuOverclock;
-    private JMenu settingsMenuFilterStrength;
-
-    /**
-     * The Screen Size submenu, kept because full screen greys it out: the four sizes pack the
-     * window around a whole multiple of the picture, and a window filling the display is at none
-     * of them. A tick against a size nobody is looking at is the thing {@link #applyScreenScale}
-     * already steps around for a maximized window, and this is the same step taken earlier.
-     */
-    private JMenu settingsMenuScreenSize;
 
     /**
      * The games somebody has opened before. Built afresh each time the File menu is pulled down
@@ -315,11 +261,13 @@ public class GameUIFrame extends JFrame {
         }
     };
 
-    private CHRViewerFrame chrViewerFrame;
-    private NametableViewerFrame nametableViewerFrame;
-    private OAMViewerFrame oamViewerFrame;
-    private PaletteViewerFrame paletteViewerFrame;
-    private DebuggerFrame debuggerFrame;
+    /**
+     * The one debug window there is, or null while nobody has asked for it. Built with the machine
+     * that is running and repointed at whatever runs next, rather than closed: it carries the
+     * breakpoints, the address somebody was looking at and the size they gave the window, and a
+     * power cycle is exactly when they want all three back.
+     */
+    private ControlPanelFrame controlPanel;
 
     /**
      * The trace being written, or null when none is. Not kept across cartridges: a file of one
@@ -328,6 +276,12 @@ public class GameUIFrame extends JFrame {
     private Tracer tracer;
 
     private Path tracePath;
+
+    /**
+     * Where the music being recorded is going, or null when none is. The recorder itself belongs to
+     * the emulation thread; this side keeps only the name it was promised.
+     */
+    private Path musicPath;
     private Cart cart;
     private NES nes;
     private EmulatorRunner runner;
@@ -441,6 +395,11 @@ public class GameUIFrame extends JFrame {
         traceChooser.addChoosableFileFilter(traceFilter);
         traceChooser.setFileFilter(traceFilter);
 
+        var musicFilter = new SystemFileChooser.FileNameExtensionFilter("MIDI file", "mid");
+        musicChooser = new SystemFileChooser();
+        musicChooser.addChoosableFileFilter(musicFilter);
+        musicChooser.setFileFilter(musicFilter);
+
         config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
 
@@ -462,6 +421,8 @@ public class GameUIFrame extends JFrame {
     }
 
     private void init() {
+        seedSwitches();
+
         add(screen, BorderLayout.CENTER);
 
         // Straight onto the field rather than through applyStatusBar, which resizes the window: at
@@ -479,7 +440,7 @@ public class GameUIFrame extends JFrame {
         // holding several asks which.
         setTransferHandler(new RomDrop(rom -> open(rom, null, null)));
 
-        var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        var command = MenuKey.mask();
 
         JMenuBar menuBar = new JMenuBar();
 
@@ -528,16 +489,10 @@ public class GameUIFrame extends JFrame {
         machineMenu.setMnemonic(KeyEvent.VK_M);
         machineMenu.setEnabled(false);
 
-        JMenuItem machineMenuReset = new JMenuItem("Reset", KeyEvent.VK_R);
-        machineMenuReset.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, command));
-        machineMenu.add(machineMenuReset);
+        machineMenu.add(new JMenuItem(commands.reset()));
+        machineMenu.add(new JMenuItem(commands.powerCycle()));
 
-        machineMenuPowerCycle.setAccelerator(
-                KeyStroke.getKeyStroke(KeyEvent.VK_R, command | InputEvent.SHIFT_DOWN_MASK));
-        machineMenu.add(machineMenuPowerCycle);
-
-        machineMenuRegion = regionMenu();
-        machineMenu.add(machineMenuRegion);
+        machineMenu.add(regionMenu());
 
         machineMenu.addSeparator();
 
@@ -575,70 +530,43 @@ public class GameUIFrame extends JFrame {
 
         machineMenu.addSeparator();
 
-        machineMenuPause.setMnemonic(KeyEvent.VK_P);
-        machineMenuPause.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, command));
-        machineMenu.add(machineMenuPause);
+        machineMenu.add(tick(switches.pause()));
 
         // Under the item it is a setting on, which is the shape Fast Forward and Fast Forward
-        // Speed have below it. No accelerator: it is a habit somebody picks once, not something
-        // reached for mid-game.
-        machineMenuPauseInBackground.setMnemonic(KeyEvent.VK_B);
-        machineMenuPauseInBackground.setSelected(config.pauseInBackground());
-        machineMenu.add(machineMenuPauseInBackground);
+        // Speed have below it.
+        machineMenu.add(tick(switches.pauseInBackground()));
 
-        machineMenuFastForward.setMnemonic(KeyEvent.VK_F);
-        machineMenuFastForward.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, command));
-        machineMenu.add(machineMenuFastForward);
+        machineMenu.add(tick(switches.fastForward()));
 
         machineMenu.add(fastForwardSpeedMenu());
 
         machineMenu.addSeparator();
 
-        // No accelerator. Command-M is the window manager's, and picking another letter for it
-        // would mean picking one that is somewhere sensible on every keyboard layout, which is
-        // not a promise this menu can make.
-        machineMenuMute.setMnemonic(KeyEvent.VK_M);
-        machineMenuMute.setSelected(config.muted());
-        machineMenu.add(machineMenuMute);
-
+        machineMenu.add(tick(switches.mute()));
         machineMenu.add(volumeMenu());
 
         debugMenu.setMnemonic(KeyEvent.VK_D);
         debugMenu.setEnabled(false);
 
-        JMenuItem debugMenuDebugger = new JMenuItem("Debugger", KeyEvent.VK_D);
-        debugMenu.add(debugMenuDebugger);
-
-        JMenuItem debugMenuCHRViewer = new JMenuItem("CHR Viewer", KeyEvent.VK_C);
-        debugMenu.add(debugMenuCHRViewer);
-
-        JMenuItem debugMenuNametableViewer = new JMenuItem("Nametable Viewer", KeyEvent.VK_N);
-        debugMenu.add(debugMenuNametableViewer);
-
-        JMenuItem debugMenuOAMViewer = new JMenuItem("OAM Viewer", KeyEvent.VK_O);
-        debugMenu.add(debugMenuOAMViewer);
-
-        JMenuItem debugMenuPaletteViewer = new JMenuItem("Palette Viewer", KeyEvent.VK_P);
-        debugMenu.add(debugMenuPaletteViewer);
+        // One door. There were five items here, one per window, and the windows are one window
+        // now -- so what is left is the way in, and the tabs inside it are the list of what is
+        // there. The two ticks and the voices below stay: they are switches on the machine rather
+        // than things to look at, and the same switches are in the panel's own column.
+        JMenuItem debugMenuControlPanel = new JMenuItem("Control Panel", KeyEvent.VK_C);
+        debugMenuControlPanel.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_D, command));
+        debugMenu.add(debugMenuControlPanel);
 
         debugMenu.addSeparator();
 
-        // Its own item rather than a tick, because starting one asks where it should go and stopping
-        // one does not -- the shape of Record Movie... in the Machine menu, and for the same reason.
-        debugMenuTrace.setMnemonic(KeyEvent.VK_T);
-        debugMenu.add(debugMenuTrace);
-
-        debugMenuStopTrace.setEnabled(false);
-        debugMenu.add(debugMenuStopTrace);
+        debugMenu.add(new JMenuItem(commands.startTrace()));
+        debugMenu.add(new JMenuItem(commands.stopTrace()));
+        debugMenu.add(new JMenuItem(commands.startMusic()));
+        debugMenu.add(new JMenuItem(commands.stopMusic()));
 
         debugMenu.addSeparator();
 
-        debugMenuBackground.setMnemonic(KeyEvent.VK_B);
-        debugMenu.add(debugMenuBackground);
-
-        debugMenuSprites.setMnemonic(KeyEvent.VK_S);
-        debugMenu.add(debugMenuSprites);
-
+        debugMenu.add(tick(switches.background()));
+        debugMenu.add(tick(switches.sprites()));
         debugMenu.add(soundChannelsMenu());
 
         // Not gated on a machine, unlike Debug: mostly these are preferences that are remembered and
@@ -648,16 +576,14 @@ public class GameUIFrame extends JFrame {
         JMenu hacksMenu = new JMenu("Hacks");
         hacksMenu.setMnemonic(KeyEvent.VK_A);
 
-        hacksMenuUnlimitedSprites.setMnemonic(KeyEvent.VK_U);
-        hacksMenuUnlimitedSprites.setSelected(config.unlimitedSprites());
-        hacksMenu.add(hacksMenuUnlimitedSprites);
+        hacksMenu.add(tick(switches.unlimitedSprites()));
+        hacksMenu.add(overclockMenu());
 
-        hacksMenuOverclock = overclockMenu();
-        hacksMenu.add(hacksMenuOverclock);
-
-        hacksMenuGameGenie.setMnemonic(KeyEvent.VK_G);
-        hacksMenuGameGenie.setEnabled(false);
-        hacksMenu.add(hacksMenuGameGenie);
+        // The one item in the Hacks menu that needs a cartridge. The menu as a whole is
+        // deliberately not gated, because everything else in it is a remembered preference with
+        // something to change before a ROM is open -- and a code is written for one particular
+        // game, so there is nothing to type until there is a game to type it for.
+        hacksMenu.add(new JMenuItem(commands.gameGenie()));
 
         JMenu settingsMenu = new JMenu("Settings");
         settingsMenu.setMnemonic(KeyEvent.VK_S);
@@ -673,34 +599,22 @@ public class GameUIFrame extends JFrame {
         // much of the frame is a picture, which is the same question they answer differently and
         // not the same question as how big that picture is drawn. It takes the window's height
         // with it, which is why it is not in the group below either.
-        settingsMenuOverscan.setMnemonic(KeyEvent.VK_O);
-        settingsMenuOverscan.setSelected(config.overscan());
-        settingsMenu.add(settingsMenuOverscan);
+        settingsMenu.add(tick(switches.overscan()));
 
         // Beside it, because it is the other half of the same question -- how much of the frame is
         // a picture -- even though it is asked the other way up. What the chip clips down the left
         // edge it was told to clip, so those columns are drawn until somebody says otherwise,
         // where the sixteen scanlines are hidden until somebody says otherwise.
-        settingsMenuLeftEdge.setMnemonic(KeyEvent.VK_L);
-        settingsMenuLeftEdge.setSelected(config.leftEdge());
-        settingsMenu.add(settingsMenuLeftEdge);
+        settingsMenu.add(tick(switches.leftEdge()));
 
         // Under both of them, because it is the third thing that decides the shape of the picture
         // and the only one of the three that is not a crop: those two say which of the chip's rows
         // and columns are picture, and this says how wide one of those columns is drawn. None of
         // them is a setting on a filter -- all three filters draw whatever these three say -- which
         // is why the group sits between Video Filter and the sizes rather than inside either.
-        settingsMenuTvAspect.setMnemonic(KeyEvent.VK_T);
-        settingsMenuTvAspect.setSelected(config.tvAspect());
-        settingsMenuTvAspect.addActionListener(e -> {
-            config.setTvAspect(settingsMenuTvAspect.isSelected());
-            saveConfig();
-            applyTvAspect();
-        });
-        settingsMenu.add(settingsMenuTvAspect);
+        settingsMenu.add(tick(switches.tvAspect()));
 
-        settingsMenuScreenSize = screenSizeMenu();
-        settingsMenu.add(settingsMenuScreenSize);
+        settingsMenu.add(screenSizeMenu());
         settingsMenu.add(screenshotSizeMenu());
 
         // Beside the status bar rather than among the sizes above, for the reason given there:
@@ -708,15 +622,11 @@ public class GameUIFrame extends JFrame {
         // A function key, and the one every browser and every emulator since ZSNES has used --
         // which also means it needs no modifier, and Shift being Select, a shortcut carrying one
         // is a hazard here.
-        settingsMenuFullScreen.setMnemonic(KeyEvent.VK_F);
-        settingsMenuFullScreen.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F11, 0));
-        settingsMenu.add(settingsMenuFullScreen);
+        settingsMenu.add(tick(switches.fullScreen()));
 
         // Under the sizes rather than beside the palette: what this changes is the shape of the
         // window, not the picture in it.
-        settingsMenuStatusBar.setMnemonic(KeyEvent.VK_B);
-        settingsMenuStatusBar.setSelected(config.statusBar());
-        settingsMenu.add(settingsMenuStatusBar);
+        settingsMenu.add(tick(switches.statusBar()));
 
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
@@ -742,18 +652,6 @@ public class GameUIFrame extends JFrame {
         // is how the game gets the arrow keys without taking them off the menu bar.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyboardInput);
 
-        settingsMenuOverscan.addActionListener(e -> {
-            config.setOverscan(settingsMenuOverscan.isSelected());
-            saveConfig();
-            applyCrop();
-        });
-
-        settingsMenuLeftEdge.addActionListener(e -> {
-            config.setLeftEdge(settingsMenuLeftEdge.isSelected());
-            saveConfig();
-            applyCrop();
-        });
-
         settingsMenuController.addActionListener(e ->
                 new ControllerSettingsDialog(this, config.keyBindings(), updated -> {
                     config.setKeyBindings(updated);
@@ -773,27 +671,12 @@ public class GameUIFrame extends JFrame {
                     config.setPalette(currentRegion(), chosen);
                     screen.setPalette(chosen);
 
-                    if (chrViewerFrame != null) {
-                        chrViewerFrame.setPalette(chosen);
-                    }
-
-                    if (nametableViewerFrame != null) {
-                        nametableViewerFrame.setPalette(chosen);
-                    }
-
-                    if (oamViewerFrame != null) {
-                        oamViewerFrame.setPalette(chosen);
-                    }
-
-                    if (paletteViewerFrame != null) {
-                        paletteViewerFrame.setPalette(chosen);
+                    if (controlPanel != null) {
+                        controlPanel.setPalette(chosen);
                     }
 
                     saveConfig();
                 }).setVisible(true));
-
-        settingsMenuFullScreen.addActionListener(
-                e -> applyFullScreen(settingsMenuFullScreen.isSelected()));
 
         // The way out for somebody who reached full screen with the mouse and does not know which
         // key put them there. On the root pane rather than as a second accelerator, which a menu
@@ -809,17 +692,6 @@ public class GameUIFrame extends JFrame {
             public void actionPerformed(final ActionEvent e) {
                 leaveFullScreen();
             }
-        });
-
-        machineMenuPauseInBackground.addActionListener(e -> {
-            config.setPauseInBackground(machineMenuPauseInBackground.isSelected());
-            saveConfig();
-        });
-
-        settingsMenuStatusBar.addActionListener(e -> {
-            config.setStatusBar(settingsMenuStatusBar.isSelected());
-            saveConfig();
-            applyStatusBar(settingsMenuStatusBar.isSelected());
         });
 
         fileMenuScreenshot.addActionListener(e -> takeScreenshot());
@@ -847,19 +719,18 @@ public class GameUIFrame extends JFrame {
         });
 
         // The reset button on the console: memory survives, the CPU restarts through its reset
-        // vector. Posted rather than called because only the emulation thread touches the NES.
-        machineMenuReset.addActionListener(e -> {
+        // vector. Through the runner rather than posted straight at the machine, because a movie
+        // being recorded has to be told about a reset before the machine sees it -- and one posted
+        // command is the only way to be sure of that order.
+        commands.reset().onRun(() -> {
             if (runner != null) {
-                // Through the runner rather than posted straight at the machine, because a movie
-                // being recorded has to be told about a reset before the machine sees it -- and one
-                // posted command is the only way to be sure of that order.
                 runner.reset();
             }
         });
 
         // Pulling the power instead: a brand new machine, built from the cartridge already in
         // the slot.
-        machineMenuPowerCycle.addActionListener(e -> {
+        commands.powerCycle().onRun(() -> {
             if (cart != null) {
                 startMachine(cart);
             }
@@ -914,58 +785,14 @@ public class GameUIFrame extends JFrame {
             }
         });
 
-        machineMenuPause.addActionListener(e -> pause(machineMenuPause.isSelected()));
+        wireSwitches();
 
-        machineMenuFastForward.addActionListener(e -> applySpeed());
-
-        // Remembered between runs, unlike whether fast forward is on: a machine that came back
-        // silent is explained by the tick sitting next to this item, and a machine that came back
-        // fast forwarding just looks broken.
-        machineMenuMute.addActionListener(e -> {
-            config.setMuted(machineMenuMute.isSelected());
-            saveConfig();
-            updateStatusBar();
-
-            if (runner != null) {
-                runner.setMuted(machineMenuMute.isSelected());
-            }
-        });
-
-        debugMenuBackground.addActionListener(e -> {
-            if (runner != null) {
-                var ppu = nes.getPPU();
-                var visible = debugMenuBackground.isSelected();
-                runner.post(() -> ppu.setBackgroundLayerVisible(visible));
-            }
-        });
-
-        debugMenuSprites.addActionListener(e -> {
-            if (runner != null) {
-                var ppu = nes.getPPU();
-                var visible = debugMenuSprites.isSelected();
-                runner.post(() -> ppu.setSpriteLayerVisible(visible));
-            }
-        });
-
-        // Remembered between runs, unlike the two layer switches above: those are a debug view of
-        // the machine that is running, and this is how somebody wants their games to look.
-        hacksMenuUnlimitedSprites.addActionListener(e -> {
-            config.setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
-            saveConfig();
-            updateStatusBar();
-
-            if (runner != null) {
-                var ppu = nes.getPPU();
-                var unlimited = hacksMenuUnlimitedSprites.isSelected();
-                runner.post(() -> ppu.setUnlimitedSprites(unlimited));
-            }
-        });
-
-        // Not remembered between runs, unlike the tick above: a code is written for one cartridge and
-        // would be nonsense applied to the next one, so there is nowhere sensible to keep it. The
-        // whole list goes over on every change and is replayed onto the device, which keeps the rule
-        // about what two codes for one address mean in the device rather than agreed between two.
-        hacksMenuGameGenie.addActionListener(e ->
+        // Not remembered between runs, unlike the Unlimited Sprites tick: a code is written for
+        // one cartridge and would be nonsense applied to the next, so there is nowhere sensible to
+        // keep it. The whole list goes over on every change and is replayed onto the device, which
+        // keeps the rule about what two codes for one address mean in the device rather than
+        // agreed between two.
+        commands.gameGenie().onRun(() ->
                 new GameGenieDialog(this, genieCodes, updated -> {
                     genieCodes = updated;
 
@@ -979,96 +806,12 @@ public class GameUIFrame extends JFrame {
                     }
                 }).setVisible(true));
 
-        // The viewer reads the mapper's character memory and the PPU's palette RAM from this
-        // thread while the emulation thread runs. Deliberately unsynchronised: reading an array
-        // element cannot tear, so the worst case is a debug window showing a tile a frame out of
-        // date.
-        debugMenuCHRViewer.addActionListener(
-                e -> {
-                    if (cart == null) {
-                        logger.log(Level.ERROR, "cartridge is not loaded");
-                        JOptionPane.showMessageDialog(
-                                this,
-                                "Cartridge is not loaded",
-                                "Error",
-                                JOptionPane.ERROR_MESSAGE
-                        );
-                        return;
-                    }
+        commands.startTrace().onRun(this::startTrace);
+        commands.stopTrace().onRun(this::stopTrace);
+        commands.startMusic().onRun(this::startMusic);
+        commands.stopMusic().onRun(this::stopMusic);
 
-                    if (chrViewerFrame == null) {
-                        chrViewerFrame = new CHRViewerFrame(
-                                this,
-                                cart,
-                                nes.getPPU(),
-                                config.palette(currentRegion()),
-                                pauseControl);
-                    }
-
-                    chrViewerFrame.setVisible(true);
-                }
-        );
-
-        debugMenuNametableViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (nametableViewerFrame == null) {
-                nametableViewerFrame = new NametableViewerFrame(
-                        this, nes, config.palette(currentRegion()), pauseControl);
-            }
-
-            nametableViewerFrame.setVisible(true);
-        });
-
-        debugMenuOAMViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (oamViewerFrame == null) {
-                oamViewerFrame = new OAMViewerFrame(
-                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
-            }
-
-            oamViewerFrame.setVisible(true);
-        });
-
-        debugMenuPaletteViewer.addActionListener(e -> {
-            if (noCartridge()) {
-                return;
-            }
-
-            if (paletteViewerFrame == null) {
-                paletteViewerFrame = new PaletteViewerFrame(
-                        this, nes.getPPU(), config.palette(currentRegion()), pauseControl);
-            }
-
-            paletteViewerFrame.setVisible(true);
-        });
-
-        debugMenuTrace.addActionListener(e -> startTrace());
-        debugMenuStopTrace.addActionListener(e -> stopTrace());
-
-        debugMenuDebugger.addActionListener(e -> {
-            if (cart == null) {
-                logger.log(Level.ERROR, "cartridge is not loaded");
-                JOptionPane.showMessageDialog(
-                        this,
-                        "Cartridge is not loaded",
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE
-                );
-                return;
-            }
-
-            if (debuggerFrame == null) {
-                debuggerFrame = new DebuggerFrame(this, nes, runner, debugger);
-            }
-
-            debuggerFrame.setVisible(true);
-        });
+        debugMenuControlPanel.addActionListener(e -> openControlPanel());
 
         helpMenuAbout.addActionListener(e -> JOptionPane.showMessageDialog(
                 this,
@@ -1099,6 +842,15 @@ public class GameUIFrame extends JFrame {
                 // And a trace holds up to sixty-four kilobytes of instructions that have not reached
                 // the disk yet, which is the end of whatever the file was opened to look at.
                 stopTrace();
+
+                // A recording holds all of itself until it is stopped, so closing the window on one
+                // would throw away the whole tune rather than the tail of it.
+                stopMusic();
+
+                // Last, because it writes the config file and everything above may have changed
+                // something else in it. Asked of the window here rather than tracked as it is
+                // dragged: a divider being pulled about fires on every pixel it passes.
+                rememberControlPanel();
             }
 
             // Cmd-tabbing away in the middle of a jump would otherwise leave the button held down
@@ -1148,6 +900,280 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
+     * Puts what was remembered of the last run onto the switches.
+     * <p>
+     * Every one of these is quiet -- seeding a switch is not somebody moving it -- so nothing here
+     * writes the config back or touches a machine, and the order does not matter. The switches that
+     * are not here are the ones nothing remembers: Pause, Fast Forward and Full Screen are where the
+     * window is at this moment rather than how somebody wants it to look, and the two layers and the
+     * five voices start on because a machine draws and plays everything until it is asked not to.
+     */
+    private void seedSwitches() {
+        switches.pauseInBackground().set(config.pauseInBackground());
+        switches.mute().set(config.muted());
+        switches.unlimitedSprites().set(config.unlimitedSprites());
+        switches.warp().set(config.warp());
+        switches.overscan().set(config.overscan());
+        switches.leftEdge().set(config.leftEdge());
+        switches.tvAspect().set(config.tvAspect());
+        switches.statusBar().set(config.statusBar());
+
+        switches.region().select(config.region());
+        switches.fastForwardSpeed().select(config.fastForwardSpeed());
+        switches.volume().select(config.volume());
+        switches.overclock().select(config.overclock());
+        switches.videoFilter().select(config.videoFilter());
+        switches.filterStrength().select(config.filterStrength());
+        switches.screenSize().select(config.screenScale());
+        switches.screenshotSize().select(config.screenshotScale());
+    }
+
+    /**
+     * What each switch does when somebody moves it.
+     * <p>
+     * All of them in one place rather than beside the menu item each is drawn as, because the menu
+     * item is about to stop being the only place it is drawn -- and because a switch that is
+     * remembered between runs is one that writes the config here, which is worth being able to read
+     * down a single list. What is <em>not</em> here is what happens when a switch is merely brought
+     * into line with a machine: {@link Switches.Toggle#set} and {@link Switches.Choice#select} move
+     * a tick without telling anybody, which is what {@link #startMachine} and {@link #pause} want.
+     */
+    private void wireSwitches() {
+        switches.pause().onChange(this::pause);
+
+        switches.pauseInBackground().onChange(on -> {
+            config.setPauseInBackground(on);
+            saveConfig();
+        });
+
+        switches.fastForward().onChange(on -> applySpeed());
+
+        // Remembered between runs, unlike whether fast forward is on: a machine that came back
+        // silent is explained by the tick sitting next to this item, and a machine that came back
+        // fast forwarding just looks broken.
+        switches.mute().onChange(on -> {
+            config.setMuted(on);
+            saveConfig();
+            updateStatusBar();
+
+            if (runner != null) {
+                runner.setMuted(on);
+            }
+        });
+
+        switches.background().onChange(on -> onPicture(ppu -> ppu.setBackgroundLayerVisible(on)));
+        switches.sprites().onChange(on -> onPicture(ppu -> ppu.setSpriteLayerVisible(on)));
+
+        for (var channel : APUChannel.values()) {
+            switches.channel(channel).onChange(on -> {
+                if (runner != null) {
+                    runner.setChannelMuted(channel, !on);
+                }
+            });
+        }
+
+        // Remembered between runs, unlike the two layer switches above: those are a debug view of
+        // the machine that is running, and this is how somebody wants their games to look.
+        switches.unlimitedSprites().onChange(on -> {
+            config.setUnlimitedSprites(on);
+            saveConfig();
+            updateStatusBar();
+
+            onPicture(ppu -> ppu.setUnlimitedSprites(on));
+        });
+
+        switches.warp().onChange(on -> {
+            config.setWarp(on);
+            saveConfig();
+            applyVideoFilter();
+        });
+
+        switches.overscan().onChange(on -> {
+            config.setOverscan(on);
+            saveConfig();
+            applyCrop();
+        });
+
+        switches.leftEdge().onChange(on -> {
+            config.setLeftEdge(on);
+            saveConfig();
+            applyCrop();
+        });
+
+        switches.tvAspect().onChange(on -> {
+            config.setTvAspect(on);
+            saveConfig();
+            applyTvAspect();
+        });
+
+        switches.fullScreen().onChange(this::applyFullScreen);
+
+        switches.statusBar().onChange(on -> {
+            config.setStatusBar(on);
+            saveConfig();
+            applyStatusBar(on);
+        });
+
+        switches.region().onChange(setting -> {
+            // Picking the region a machine is already running is not a reason to start it again.
+            // Asked of the config, which is still holding the last answer at this point.
+            if (setting == config.region()) {
+                return;
+            }
+
+            config.setRegion(setting);
+            saveConfig();
+
+            // Nothing to restart when nothing is running, and the setting is still remembered
+            // for the next cartridge.
+            if (cart != null) {
+                startMachine(cart);
+            }
+        });
+
+        switches.fastForwardSpeed().onChange(speed -> {
+            config.setFastForwardSpeed(speed);
+            saveConfig();
+            applySpeed();
+        });
+
+        switches.volume().onChange(volume -> {
+            config.setVolume(volume);
+            saveConfig();
+            updateStatusBar();
+
+            if (runner != null) {
+                runner.setVolume(volume);
+            }
+        });
+
+        switches.overclock().onChange(setting -> {
+            config.setOverclock(setting);
+            saveConfig();
+
+            if (runner != null) {
+                // Resolved here rather than on the emulation thread: the region is what turns a
+                // percentage into scanlines, and it belongs to the machine this thread owns.
+                overclock = setting.resolve(nes.getRegion());
+
+                // Through a local, so that what reaches the chip is the number worked out on this
+                // thread rather than whatever the field holds by the time the queue gets there.
+                var chosen = overclock;
+
+                onPPU(ppu -> ppu.setOverclock(chosen));
+                updateStatusBar();
+            }
+        });
+
+        switches.videoFilter().onChange(filter -> {
+            config.setVideoFilter(filter);
+            saveConfig();
+            applyVideoFilter();
+        });
+
+        switches.filterStrength().onChange(strength -> {
+            config.setFilterStrength(strength);
+            saveConfig();
+            applyVideoFilter();
+        });
+
+        switches.screenSize().onChange(scale -> {
+            config.setScreenScale(scale);
+            saveConfig();
+            applyScreenScale(scale);
+            updateStatusBar();
+        });
+
+        switches.screenshotSize().onChange(scale -> {
+            config.setScreenshotScale(scale);
+            saveConfig();
+            updateStatusBar();
+        });
+    }
+
+    /**
+     * Changes something about the PPU of the machine that is running, if one is.
+     * <p>
+     * The chip is read out of the field here and closed over, rather than reached through the field
+     * inside the posted work: that would read it on the emulation thread whenever the queue got
+     * round to it, which is neither this thread's machine nor safe to ask for.
+     */
+    private void onPPU(final Consumer<PPU> change) {
+        if (runner == null) {
+            return;
+        }
+
+        var ppu = nes.getPPU();
+
+        runner.post(() -> change.accept(ppu));
+    }
+
+    /**
+     * The same, for the three switches that change what the chip <em>draws</em> rather than what it
+     * does: Show Background, Show Sprites and Unlimited Sprites.
+     * <p>
+     * They take part where a pixel is composed, so the picture only moves when a frame is rendered
+     * -- which a machine somebody has paused or stopped at a breakpoint is not doing, and which is
+     * exactly when somebody reaches for them. So the frame is drawn again. See
+     * {@link EmulatorRunner#redrawPicture()}, which does nothing at all while the machine is
+     * running, since a running one draws the next frame in a moment anyway.
+     * <p>
+     * The palette, the two filters, the crops and the aspect are not among these: those change what
+     * is done with the colour indices rather than what the chip put in them, and
+     * {@link ScreenComponent} has always redrawn from the frame it kept.
+     */
+    private void onPicture(final Consumer<PPU> change) {
+        onPPU(change);
+
+        if (runner != null) {
+            runner.redrawPicture();
+        }
+    }
+
+    /**
+     * A tick in a menu, which is the switch itself rather than a copy of it: the label, the
+     * mnemonic, the accelerator and the state all come off the {@link Switches.Toggle}.
+     */
+    private static JCheckBoxMenuItem tick(final Switches.Toggle toggle) {
+        return new JCheckBoxMenuItem(toggle);
+    }
+
+    /**
+     * A submenu holding one choice, and greyed out along with it -- a heading left black over a
+     * list of items nobody can pick would open onto nothing.
+     */
+    private static JMenu choiceMenu(
+            final String title, final int mnemonic, final Switches.Choice<?> choice) {
+
+        var menu = new JMenu(title);
+
+        if (mnemonic != KeyEvent.VK_UNDEFINED) {
+            menu.setMnemonic(mnemonic);
+        }
+
+        fill(menu, choice);
+        choice.shownIn(menu);
+
+        return menu;
+    }
+
+    /**
+     * The options of a choice, as radio items. The group is what makes them look like one choice
+     * rather than four independent ticks; which one is on is the choice's own business, so that a
+     * second group of the same options somewhere else agrees with this one.
+     */
+    private static <E> void fill(final JMenu menu, final Switches.Choice<E> choice) {
+        var group = new ButtonGroup();
+
+        for (var value : choice.values()) {
+            var item = new JRadioButtonMenuItem(choice.option(value));
+
+            group.add(item);
+            menu.add(item);
+        }
+    }
+
+    /**
      * Builds the Volume submenu: two steps and five positions.
      * <p>
      * Louder and Quieter are in here with the positions rather than out in the Machine menu,
@@ -1163,52 +1189,22 @@ public class GameUIFrame extends JFrame {
         var menu = new JMenu("Volume");
         menu.setMnemonic(KeyEvent.VK_V);
 
-        var command = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        var command = MenuKey.mask();
 
         var louder = new JMenuItem("Louder", KeyEvent.VK_L);
         louder.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, command));
-        louder.addActionListener(e -> applyVolume(config.volume().louder()));
+        louder.addActionListener(e -> switches.volume().choose(switches.volume().get().louder()));
         menu.add(louder);
 
         var quieter = new JMenuItem("Quieter", KeyEvent.VK_Q);
         quieter.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, command));
-        quieter.addActionListener(e -> applyVolume(config.volume().quieter()));
+        quieter.addActionListener(e -> switches.volume().choose(switches.volume().get().quieter()));
         menu.add(quieter);
 
         menu.addSeparator();
-
-        // The group is what makes them one choice rather than five independent ticks.
-        var group = new ButtonGroup();
-
-        for (var volume : Volume.values()) {
-            var item = new JRadioButtonMenuItem(volume.label(), volume == config.volume());
-
-            item.addActionListener(e -> applyVolume(volume));
-
-            group.add(item);
-            menu.add(item);
-            machineMenuVolumes.put(volume, item);
-        }
+        fill(menu, switches.volume());
 
         return menu;
-    }
-
-    /**
-     * Remembers a volume, ticks it, and tells the running machine.
-     * <p>
-     * One path for all three ways of picking one, because Louder and Quieter have to move the dot
-     * as well -- and a listener that fired on the way would set the volume it was leaving.
-     */
-    private void applyVolume(final Volume volume) {
-        config.setVolume(volume);
-        saveConfig();
-
-        machineMenuVolumes.get(volume).setSelected(true);
-        updateStatusBar();
-
-        if (runner != null) {
-            runner.setVolume(volume);
-        }
     }
 
     /**
@@ -1228,16 +1224,7 @@ public class GameUIFrame extends JFrame {
         menu.setMnemonic(KeyEvent.VK_U);
 
         for (var channel : APUChannel.values()) {
-            var item = new JCheckBoxMenuItem(channel.label(), true);
-
-            item.addActionListener(e -> {
-                if (runner != null) {
-                    runner.setChannelMuted(channel, !item.isSelected());
-                }
-            });
-
-            menu.add(item);
-            debugMenuChannels.put(channel, item);
+            menu.add(tick(switches.channel(channel)));
         }
 
         return menu;
@@ -1253,26 +1240,7 @@ public class GameUIFrame extends JFrame {
      * speeds can be compared against the running game the way the palettes can.
      */
     private JMenu fastForwardSpeedMenu() {
-        var menu = new JMenu("Fast Forward Speed");
-        menu.setMnemonic(KeyEvent.VK_S);
-
-        // The group is what makes them one choice rather than four independent ticks.
-        var group = new ButtonGroup();
-
-        for (var speed : EmulationSpeed.fastForwardChoices()) {
-            var item = new JRadioButtonMenuItem(speed.label(), speed == config.fastForwardSpeed());
-
-            item.addActionListener(e -> {
-                config.setFastForwardSpeed(speed);
-                saveConfig();
-                applySpeed();
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Fast Forward Speed", KeyEvent.VK_S, switches.fastForwardSpeed());
     }
 
     /**
@@ -1290,40 +1258,7 @@ public class GameUIFrame extends JFrame {
      * shipped, and the every-other-frame stutter some of them were written around goes with it.
      */
     private JMenu overclockMenu() {
-        var menu = new JMenu("Overclock");
-        menu.setMnemonic(KeyEvent.VK_O);
-
-        // The group is what makes them one choice rather than five independent ticks.
-        var group = new ButtonGroup();
-
-        for (var setting : OverclockSetting.values()) {
-            var item = new JRadioButtonMenuItem(setting.label(), setting == config.overclock());
-
-            item.addActionListener(e -> {
-                config.setOverclock(setting);
-                saveConfig();
-
-                if (runner != null) {
-                    // Resolved here rather than on the emulation thread: the region is what turns a
-                    // percentage into scanlines, and it belongs to the machine this thread owns.
-                    overclock = setting.resolve(nes.getRegion());
-
-                    // Copied out of the field before the lambda closes over it. A lambda reading
-                    // the field would read it on the emulation thread, whenever the queue got to
-                    // it, which is neither this thread's value nor safe to ask for.
-                    var chosen = overclock;
-                    var ppu = nes.getPPU();
-
-                    runner.post(() -> ppu.setOverclock(chosen));
-                    updateStatusBar();
-                }
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Overclock", KeyEvent.VK_O, switches.overclock());
     }
 
     /**
@@ -1339,34 +1274,7 @@ public class GameUIFrame extends JFrame {
      * the music too high is the symptom, and this is the cure.
      */
     private JMenu regionMenu() {
-        var menu = new JMenu("Region");
-        menu.setMnemonic(KeyEvent.VK_G);
-
-        var group = new ButtonGroup();
-
-        for (var setting : RegionSetting.values()) {
-            var item = new JRadioButtonMenuItem(setting.label(), setting == config.region());
-
-            item.addActionListener(e -> {
-                if (setting == config.region()) {
-                    return;
-                }
-
-                config.setRegion(setting);
-                saveConfig();
-
-                // Nothing to restart when nothing is running, and the setting is still remembered
-                // for the next cartridge.
-                if (cart != null) {
-                    startMachine(cart);
-                }
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Region", KeyEvent.VK_G, switches.region());
     }
 
     /**
@@ -1400,34 +1308,11 @@ public class GameUIFrame extends JFrame {
         var menu = new JMenu("Video Filter");
         menu.setMnemonic(KeyEvent.VK_V);
 
-        var group = new ButtonGroup();
-
-        for (var filter : VideoFilter.values()) {
-            var item = new JRadioButtonMenuItem(filter.label(), filter == config.videoFilter());
-
-            item.addActionListener(e -> {
-                config.setVideoFilter(filter);
-                saveConfig();
-                applyVideoFilter();
-            });
-
-            group.add(item);
-            menu.add(item);
-            settingsMenuVideoFilters.put(filter, item);
-        }
-
-        settingsMenuFilterStrength = filterStrengthMenu();
-
-        settingsMenuWarp.setSelected(config.warp());
-        settingsMenuWarp.addActionListener(e -> {
-            config.setWarp(settingsMenuWarp.isSelected());
-            saveConfig();
-            applyVideoFilter();
-        });
+        fill(menu, switches.videoFilter());
 
         menu.addSeparator();
-        menu.add(settingsMenuFilterStrength);
-        menu.add(settingsMenuWarp);
+        menu.add(filterStrengthMenu());
+        menu.add(tick(switches.warp()));
 
         return menu;
     }
@@ -1441,24 +1326,7 @@ public class GameUIFrame extends JFrame {
      * {@link #applyVideoFilter} greys it out whenever the item in force has no use for it.
      */
     private JMenu filterStrengthMenu() {
-        var menu = new JMenu("Strength");
-        var group = new ButtonGroup();
-
-        for (var strength : FilterStrength.values()) {
-            var item = new JRadioButtonMenuItem(
-                    strength.label(), strength == config.filterStrength());
-
-            item.addActionListener(e -> {
-                config.setFilterStrength(strength);
-                saveConfig();
-                applyVideoFilter();
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Strength", KeyEvent.VK_UNDEFINED, switches.filterStrength());
     }
 
     /**
@@ -1477,9 +1345,9 @@ public class GameUIFrame extends JFrame {
         var filter = currentVideoFilter();
 
         screen.setVideoFilter(filter, config.filterStrength(), config.warp());
-        settingsMenuVideoFilters.get(VideoFilter.NTSC).setEnabled(currentRegion() != Region.PAL);
-        settingsMenuFilterStrength.setEnabled(filter != VideoFilter.NONE);
-        settingsMenuWarp.setEnabled(filter == VideoFilter.CRT);
+        switches.videoFilter().setEnabled(VideoFilter.NTSC, currentRegion() != Region.PAL);
+        switches.filterStrength().setEnabled(filter != VideoFilter.NONE);
+        switches.warp().setEnabled(filter == VideoFilter.CRT);
         settingsMenuPalette.setEnabled(filter != VideoFilter.NTSC);
 
         updateStatusBar();
@@ -1516,7 +1384,7 @@ public class GameUIFrame extends JFrame {
 
         var after = getContentPane().getPreferredSize();
 
-        if (settingsMenuFullScreen.isSelected()) {
+        if (switches.fullScreen().isOn()) {
             growWindowedBounds(after.width - before.width, after.height - before.height);
         } else {
             pack();
@@ -1564,7 +1432,7 @@ public class GameUIFrame extends JFrame {
 
         var after = getContentPane().getPreferredSize();
 
-        if (settingsMenuFullScreen.isSelected()) {
+        if (switches.fullScreen().isOn()) {
             growWindowedBounds(after.width - before.width, after.height - before.height);
         } else {
             pack();
@@ -1616,7 +1484,7 @@ public class GameUIFrame extends JFrame {
         // A full screen window is as big as the display and nothing else, so the row has to come
         // out of the picture there the way it does for a maximized one -- and the size waiting for
         // it takes the row instead.
-        if (settingsMenuFullScreen.isSelected()) {
+        if (switches.fullScreen().isOn()) {
             growWindowedBounds(0, after - before);
         } else if (getExtendedState() == Frame.NORMAL) {
             setSize(getWidth(), getHeight() + after - before);
@@ -1636,11 +1504,19 @@ public class GameUIFrame extends JFrame {
      */
     private void measureFrameRate() {
         if (runner == null) {
-            statusBar.setFrameRate(FrameRate.UNKNOWN);
+            lastFrameRate = FrameRate.UNKNOWN;
+            statusBar.setFrameRate(lastFrameRate);
+            describeMachine();
             return;
         }
 
-        statusBar.setFrameRate(frameRate.sample(runner.getFramesRun(), System.nanoTime()));
+        lastFrameRate = frameRate.sample(runner.getFramesRun(), System.nanoTime());
+        statusBar.setFrameRate(lastFrameRate);
+
+        // The dashboard's first line carries the rate, so it is rewritten on the tick that measures
+        // it as well as whenever something changes. Cheap: it is one string, four times a minute
+        // more often than the bar's own.
+        describeMachine();
     }
 
     /**
@@ -1698,26 +1574,7 @@ public class GameUIFrame extends JFrame {
      * middle of a jump.
      */
     private JMenu screenSizeMenu() {
-        var menu = new JMenu("Screen Size");
-        menu.setMnemonic(KeyEvent.VK_S);
-
-        var group = new ButtonGroup();
-
-        for (var scale : ScreenScale.values()) {
-            var item = new JRadioButtonMenuItem(scale.label(), scale == config.screenScale());
-
-            item.addActionListener(e -> {
-                config.setScreenScale(scale);
-                saveConfig();
-                applyScreenScale(scale);
-                updateStatusBar();
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Screen Size", KeyEvent.VK_S, switches.screenSize());
     }
 
     /**
@@ -1731,25 +1588,7 @@ public class GameUIFrame extends JFrame {
      */
     private JMenu screenshotSizeMenu() {
         // H rather than the S in "Screenshot", which Screen Size above it already has.
-        var menu = new JMenu("Screenshot Size");
-        menu.setMnemonic(KeyEvent.VK_H);
-
-        var group = new ButtonGroup();
-
-        for (var scale : ScreenScale.values()) {
-            var item = new JRadioButtonMenuItem(scale.label(), scale == config.screenshotScale());
-
-            item.addActionListener(e -> {
-                config.setScreenshotScale(scale);
-                saveConfig();
-                updateStatusBar();
-            });
-
-            group.add(item);
-            menu.add(item);
-        }
-
-        return menu;
+        return choiceMenu("Screenshot Size", KeyEvent.VK_H, switches.screenshotSize());
     }
 
     /**
@@ -1881,7 +1720,7 @@ public class GameUIFrame extends JFrame {
 
         // The four sizes pack the window around a whole multiple of the picture, which is not a
         // thing a window filling the display can be at. Greyed out rather than left to fight it.
-        settingsMenuScreenSize.setEnabled(!full);
+        switches.screenSize().setEnabled(!full);
 
         if (full) {
             windowedBounds = getBounds();
@@ -1908,11 +1747,11 @@ public class GameUIFrame extends JFrame {
      * and a bit the window would spend not drawing the game.
      */
     private void leaveFullScreen() {
-        if (!settingsMenuFullScreen.isSelected()) {
+        if (!switches.fullScreen().isOn()) {
             return;
         }
 
-        settingsMenuFullScreen.setSelected(false);
+        switches.fullScreen().set(false);
         applyFullScreen(false);
     }
 
@@ -1955,8 +1794,8 @@ public class GameUIFrame extends JFrame {
     private void pauseForBackground(final @Nullable Window gained) {
         if (gained != null
                 || runner == null
-                || !machineMenuPauseInBackground.isSelected()
-                || machineMenuPause.isSelected()) {
+                || !switches.pauseInBackground().isOn()
+                || switches.pause().isOn()) {
             return;
         }
 
@@ -1987,7 +1826,7 @@ public class GameUIFrame extends JFrame {
         // Something else may have stopped the machine while nobody was looking -- a breakpoint the
         // debugger window ran into, most likely, since that window is reachable while this one is
         // in the background. Whatever it was, it is still true.
-        if (runner == null || machineMenuPause.isSelected()) {
+        if (runner == null || switches.pause().isOn()) {
             return;
         }
 
@@ -2363,10 +2202,12 @@ public class GameUIFrame extends JFrame {
         machineMenuPlay.setEnabled(cart != null && !busy);
         machineMenuStopPlayback.setEnabled(moviePlaying);
 
-        machineMenuPowerCycle.setEnabled(!busy);
-        machineMenuRegion.setEnabled(!busy);
-        hacksMenuGameGenie.setEnabled(cart != null && !busy);
-        hacksMenuOverclock.setEnabled(!busy);
+        commands.reset().setEnabled(runner != null);
+        commands.powerCycle().setEnabled(cart != null && !busy);
+        commands.gameGenie().setEnabled(cart != null && !busy);
+
+        switches.region().setEnabled(!busy);
+        switches.overclock().setEnabled(!busy);
     }
 
     /**
@@ -2492,7 +2333,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        runner.setSpeed(machineMenuFastForward.isSelected()
+        runner.setSpeed(switches.fastForward().isOn()
                 ? config.fastForwardSpeed()
                 : EmulationSpeed.NORMAL);
 
@@ -2750,16 +2591,14 @@ public class GameUIFrame extends JFrame {
             runner.stop();
         }
 
-        // The old viewers are watching the old machine's memory and palettes; they would keep
-        // showing them forever. Closed rather than repointed, since they are debug windows whose
-        // contents are entirely derived from the machine.
-        destroyCHRViewerFrame();
-        destroyPPUViewerFrames();
-
         // And a trace of one machine with another machine's instructions appended is a file nobody
         // can read. Stopped here rather than at the new machine, so the last few thousand buffered
         // lines are on disk before anything else happens.
         stopTrace();
+
+        // The same for the music, and more so: two games' tunes in one file share a clock and come
+        // out as one piece that neither of them plays.
+        stopMusic();
 
         // A new cartridge deserves a clean slate, but a power cycle does not: the breakpoints are
         // the reason somebody cycles the power. Asked before the field is reassigned, since that is
@@ -2768,7 +2607,6 @@ public class GameUIFrame extends JFrame {
 
         if (!sameCartridge) {
             debugger.clear();
-            destroyDebuggerFrame();
 
             // And the codes go with it, for the stronger version of the same reason: a breakpoint on
             // the wrong game is merely useless, where a code written for one cartridge is an
@@ -2800,12 +2638,12 @@ public class GameUIFrame extends JFrame {
         // A fresh PPU has both layers on and no hacks, and a fresh APU has all five voices in the
         // mixer, but the menus remember what the last machine was told. The runner has not started
         // yet, so the machine is still this thread's to touch.
-        nes.getPPU().setBackgroundLayerVisible(debugMenuBackground.isSelected());
-        nes.getPPU().setSpriteLayerVisible(debugMenuSprites.isSelected());
-        nes.getPPU().setUnlimitedSprites(hacksMenuUnlimitedSprites.isSelected());
+        nes.getPPU().setBackgroundLayerVisible(switches.background().isOn());
+        nes.getPPU().setSpriteLayerVisible(switches.sprites().isOn());
+        nes.getPPU().setUnlimitedSprites(switches.unlimitedSprites().isOn());
 
         for (var channel : APUChannel.values()) {
-            nes.getAPU().setChannelMuted(channel, !debugMenuChannels.get(channel).isSelected());
+            nes.getAPU().setChannelMuted(channel, !switches.channel(channel).isOn());
         }
 
         // A movie carries its own, for the reason it carries the codes and a sharper one: this is
@@ -2855,8 +2693,8 @@ public class GameUIFrame extends JFrame {
 
         // A machine that has just been switched on is running, and running at normal speed. Both
         // menu items have to agree with that; the runner is already built that way.
-        machineMenuPause.setSelected(false);
-        machineMenuFastForward.setSelected(false);
+        switches.pause().set(false);
+        switches.fastForward().set(false);
 
         // Seconds is what the setting says and frames is what a ring holds, and only here is it
         // known which machine the cartridge turned out to run on -- 1803 frames for thirty seconds
@@ -2896,13 +2734,13 @@ public class GameUIFrame extends JFrame {
             keyboardInput.setLatching(true);
         }
 
-        if (debuggerFrame != null) {
-            debuggerFrame.setMachine(nes, runner);
+        if (controlPanel != null) {
+            controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
         }
 
         // Posted before the thread exists, so they are the first things that run on it: a machine
         // started with the sound off, or quiet, must not get a frame of it at full volume in first.
-        runner.setMuted(machineMenuMute.isSelected());
+        runner.setMuted(switches.mute().isOn());
         runner.setVolume(config.volume());
         runner.start();
 
@@ -2910,6 +2748,12 @@ public class GameUIFrame extends JFrame {
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
         fileMenuCopyScreenshot.setEnabled(true);
+
+        // A trace is per machine and the last one was stopped as this one was built, so this is the
+        // one place the item comes back on.
+        commands.startTrace().setEnabled(true);
+        commands.startMusic().setEnabled(true);
+
         updateMovieItems();
         describeMachine();
     }
@@ -2946,6 +2790,48 @@ public class GameUIFrame extends JFrame {
     private void describeMachine() {
         updateTitle();
         updateStatusBar();
+
+        if (controlPanel != null) {
+            controlPanel.setRunning(dashboardLine());
+        }
+    }
+
+    /**
+     * The control panel's first line: how the machine is being run.
+     * <p>
+     * Everything on it is the window's rather than the machine's -- whether the loop is paused,
+     * what the rate has measured, which cartridge somebody put in, whether a movie is going -- and
+     * none of it can be read off the NES at all, which is why the panel is handed it written rather
+     * than working it out. Whichever frame the machine has reached is on the line below, with the
+     * rest of what the machine is doing.
+     */
+    private String dashboardLine() {
+        var parts = new java.util.ArrayList<String>();
+
+        parts.add(runner == null ? "No machine" : runner.isPaused() ? "Paused" : "Running");
+
+        if (lastFrameRate != FrameRate.UNKNOWN) {
+            parts.add(lastFrameRate + " fps");
+        }
+
+        parts.add(currentRegion().label());
+
+        if (cart != null) {
+            parts.add(String.format(
+                    "%s  (mapper %d, %dK+%dK)",
+                    cart.filename(),
+                    cart.mapperNumber(),
+                    cart.prgROM().length / 1024,
+                    cart.chrROM().length / 1024));
+        }
+
+        var activity = machineState();
+
+        if (!activity.isEmpty() && !"Paused".equals(activity)) {
+            parts.add(activity);
+        }
+
+        return String.join("  ·  ", parts);
     }
 
     private void updateTitle() {
@@ -3088,8 +2974,8 @@ public class GameUIFrame extends JFrame {
 
         logger.log(Level.INFO, "tracing to " + path.getFileName());
 
-        debugMenuTrace.setEnabled(false);
-        debugMenuStopTrace.setEnabled(true);
+        commands.startTrace().setEnabled(false);
+        commands.stopTrace().setEnabled(true);
         describeMachine();
     }
 
@@ -3119,8 +3005,8 @@ public class GameUIFrame extends JFrame {
             finishTrace(stopping, path);
         }
 
-        debugMenuTrace.setEnabled(true);
-        debugMenuStopTrace.setEnabled(false);
+        commands.startTrace().setEnabled(runner != null);
+        commands.stopTrace().setEnabled(false);
         describeMachine();
     }
 
@@ -3149,6 +3035,78 @@ public class GameUIFrame extends JFrame {
         }
     }
 
+    /**
+     * Starts writing down what the sound chip plays.
+     * <p>
+     * Asks where it should go first, the way Start Trace... and Record Movie... do: a recording
+     * that chose its own name would be one more file to find afterwards, and this is the shape
+     * every other thing here that writes one already has.
+     */
+    private void startMusic() {
+        if (runner == null || musicPath != null) {
+            return;
+        }
+
+        musicChooser.setSelectedFile(defaultMusicPath().toFile());
+
+        if (musicChooser.showSaveDialog(this) != SystemFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        musicPath = musicChooser.getSelectedFile().toPath();
+
+        runner.startMusic(currentRegion());
+
+        logger.log(Level.INFO, "recording music to " + musicPath.getFileName());
+
+        commands.startMusic().setEnabled(false);
+        commands.stopMusic().setEnabled(true);
+        describeMachine();
+    }
+
+    /**
+     * Stops, and writes the file.
+     * <p>
+     * The writing happens on the emulation thread, which is the thread the notes were collected on
+     * -- see {@link EmulatorRunner#stopMusic}. What comes back here is how many frames went into
+     * it, or -1 for a recording with nothing in it, which is worth saying out loud: a game whose
+     * music had not started yet is the commonest way to end up with an empty one.
+     */
+    private void stopMusic() {
+        if (musicPath == null) {
+            return;
+        }
+
+        var path = musicPath;
+
+        musicPath = null;
+
+        commands.startMusic().setEnabled(runner != null);
+        commands.stopMusic().setEnabled(false);
+        describeMachine();
+
+        if (runner == null) {
+            return;
+        }
+
+        runner.stopMusic(path, frames -> {
+            if (frames < 0) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Nothing was playing, so no music was written.",
+                        "No music",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+    }
+
+    private Path defaultMusicPath() {
+        var name = gamePath().getFileName().toString();
+        var dot = name.lastIndexOf('.');
+
+        return gamePath().resolveSibling((dot < 0 ? name : name.substring(0, dot)) + ".mid");
+    }
+
     private Path defaultTracePath() {
         var name = gamePath().getFileName().toString();
         var dot = name.lastIndexOf('.');
@@ -3170,7 +3128,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        machineMenuPause.setSelected(paused);
+        switches.pause().set(paused);
 
         if (paused) {
             runner.setPaused(true);
@@ -3181,47 +3139,49 @@ public class GameUIFrame extends JFrame {
         } else {
             runner.resume();
 
-            if (debuggerFrame != null) {
-                debuggerFrame.running();
+            if (controlPanel != null) {
+                controlPanel.running();
             }
         }
 
         describeMachine();
     }
 
-    private void destroyCHRViewerFrame() {
-        if (chrViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing chrViewerFrame");
-            chrViewerFrame.dispose();
-            chrViewerFrame = null;
+    /**
+     * Opens the one debug window, or brings it back to the front if it is already open.
+     * <p>
+     * Built with whatever is running rather than empty, because every instrument in it is a view of
+     * a machine and the Debug menu is greyed out until there is one. Where it opens and how it was
+     * arranged come out of the config file, which is the only thing in there the program writes
+     * rather than somebody.
+     */
+    private void openControlPanel() {
+        if (noCartridge()) {
+            return;
         }
+
+        if (controlPanel == null) {
+            controlPanel = new ControlPanelFrame(
+                    this, switches, commands, pauseControl, config.debugLayout());
+            controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
+        }
+
+        controlPanel.setRunning(dashboardLine());
+
+        controlPanel.setVisible(true);
+        controlPanel.toFront();
     }
 
-    private void destroyPPUViewerFrames() {
-        if (nametableViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing nametableViewerFrame");
-            nametableViewerFrame.dispose();
-            nametableViewerFrame = null;
-        }
-
-        if (oamViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing oamViewerFrame");
-            oamViewerFrame.dispose();
-            oamViewerFrame = null;
-        }
-
-        if (paletteViewerFrame != null) {
-            logger.log(Level.DEBUG, "closing paletteViewerFrame");
-            paletteViewerFrame.dispose();
-            paletteViewerFrame = null;
-        }
-    }
-
-    private void destroyDebuggerFrame() {
-        if (debuggerFrame != null) {
-            logger.log(Level.DEBUG, "closing debuggerFrame");
-            debuggerFrame.dispose();
-            debuggerFrame = null;
+    /**
+     * Writes down where the panel was left, on the way out of the program.
+     * <p>
+     * Asked of the window rather than tracked as it is dragged: a divider being pulled about fires
+     * on every pixel, and the config file is rewritten whole every time it is saved.
+     */
+    private void rememberControlPanel() {
+        if (controlPanel != null) {
+            config.setDebugLayout(controlPanel.currentLayout());
+            saveConfig();
         }
     }
 
@@ -3234,12 +3194,12 @@ public class GameUIFrame extends JFrame {
      * puzzle rather than a debugger.
      */
     private void stopped(final Debugger.Stop stop) {
-        machineMenuPause.setSelected(true);
+        switches.pause().set(true);
         keyboardInput.releaseAll();
         describeMachine();
 
-        if (debuggerFrame != null) {
-            debuggerFrame.stopped(stop);
+        if (controlPanel != null) {
+            controlPanel.stopped(stop);
         }
     }
 }

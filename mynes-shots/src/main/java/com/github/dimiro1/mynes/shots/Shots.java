@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.shots;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
@@ -13,11 +14,17 @@ import com.github.dimiro1.mynes.ui.AudioOutput;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.GameUIFrame;
 import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.ScreenComponent;
-import com.github.dimiro1.mynes.ui.debugger.DebuggerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerFrame;
-import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerFrame;
+import com.github.dimiro1.mynes.ui.Commands;
+import com.github.dimiro1.mynes.ui.Switches;
+import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerPanel;
+import com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame;
+import com.github.dimiro1.mynes.ui.controlpanel.Layout;
+import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
+import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
+import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
+import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerPanel;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.VideoFilter;
@@ -26,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
@@ -34,9 +42,11 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.event.MenuEvent;
+import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dialog;
+import java.awt.Dimension;
 import java.awt.Frame;
 import java.awt.Image;
 import java.awt.Rectangle;
@@ -63,8 +73,12 @@ import java.util.Set;
  * the two filter pictures are that. A picture of a <em>window</em> has the window's own chrome in
  * it, which only the screen has, so those are the real Swing windows photographed with a
  * {@link Robot}. Everything is driven the way a player drives it -- the game window through its
- * menus, a viewer through its constructor -- and nothing reaches into a private field, so a
+ * menus, an instrument through its constructor -- and nothing reaches into a private field, so a
  * refactor that breaks this breaks it at compile time.
+ * <p>
+ * The five debug views are panels rather than windows now, and are photographed twice over: once
+ * each in a window with nothing else in it, because what the README is showing is what the
+ * instrument draws, and once all together in the control panel they are really tabs of.
  * <p>
  * The machine behind every picture is put at its frame by the headless {@link Session}, which is
  * deterministic, so the same command takes the same pictures. The game window is the one thing that
@@ -133,6 +147,19 @@ public final class Shots {
     private static final List<String> GENIE_CODES = List.of("SXIOPO", "AVPAZLGV", "GOSSIP");
 
     private static final int FRAMEBUFFER_SCALE = 2;
+
+    /**
+     * A frame of NTSC sound, which is what the emulation loop hands the control panel and what the
+     * chip is asked for here in its place.
+     */
+    private static final int FRAME_SAMPLES = 735;
+
+    /**
+     * How big the debugger is drawn on its own, which used to be the size its window opened at.
+     * A panel asks for the sum of its panes and comes out narrower than anything anybody would
+     * work in.
+     */
+    private static final Dimension DEBUGGER_SIZE = new Dimension(1120, 740);
 
     /**
      * Which swatch the palette viewer's picture is taken with the pointer on, in its content pane's
@@ -242,7 +269,9 @@ public final class Shots {
         pictures.put("nametable-viewer", this::nametableViewer);
         pictures.put("oam-viewer", this::oamViewer);
         pictures.put("palette-viewer", this::paletteViewer);
+        pictures.put("chr-viewer", this::chrViewer);
         pictures.put("debugger", this::debugger);
+        pictures.put("control-panel", this::controlPanel);
 
         // The game window last, and Super Mario Bros. 3 last of those: the dialogs are photographed
         // over it, and it is the one whose title screen the README opens on.
@@ -250,7 +279,6 @@ public final class Shots {
         pictures.put("game-tetris", () -> gameWindow(TETRIS, "", TETRIS_FRAME, "game-tetris"));
         pictures.put("game-smb3", () -> gameWindow(SMB3, "", SMB3_FRAME, "game-smb3"));
         pictures.put("palette-dialog", this::paletteDialog);
-        pictures.put("chr-viewer", this::chrViewer);
         pictures.put("controller-dialog", this::controllerDialog);
         pictures.put("genie-dialog", this::genieDialog);
 
@@ -275,7 +303,7 @@ public final class Shots {
      * A machine and the schedule that has been driving it, so that a picture can keep playing past
      * the frame it was put at.
      */
-    private record Played(Session session, InputSchedule schedule, long frame) {
+    private record Played(Session session, Cart cart, InputSchedule schedule, long frame) {
         Played advance(final long frames) throws IOException {
             var at = frame;
 
@@ -285,13 +313,19 @@ public final class Shots {
                 session.advanceFrame();
             }
 
-            return new Played(session, schedule, at);
+            return new Played(session, cart, schedule, at);
         }
     }
 
     private Played play(final String rom, final String input, final long frames) throws IOException {
         var cart = Cart.load(Files.readAllBytes(roms.resolve(rom)), rom);
         var nes = new NES(cart);
+
+        // The meters and the per-voice traces, which the chip keeps only while something asks. On
+        // before the frames below are played rather than after, so that what the control panel's
+        // picture shows is the last second of a game rather than the handful of samples between
+        // the start of a frame and the breakpoint that stops it.
+        nes.getAPU().setPeakTracking(true);
         var session = new Session(
                 nes,
                 Palettes.defaultPalette(nes.getRegion()).colours(),
@@ -305,7 +339,7 @@ public final class Shots {
 
         var schedule = InputSchedule.parse(List.of(input), PRESS_FRAMES);
 
-        return new Played(session, schedule, 0).advance(frames);
+        return new Played(session, cart, schedule, 0).advance(frames);
     }
 
     // ============================================================================== framebuffers
@@ -325,8 +359,15 @@ public final class Shots {
         session.screenshot(out.resolve(name + ".png"), Crop.TELEVISION, FRAMEBUFFER_SCALE);
     }
 
-    // =================================================================================== viewers
+    // =============================================================================== instruments
 
+    /**
+     * The nametables, in a window with nothing else in it.
+     * <p>
+     * The five debug views are tabs of the control panel now, and this is what one of them draws
+     * with the split, the tabs and the controls column taken away -- which is what the README is
+     * showing. The whole panel gets a picture of its own below.
+     */
     private void nametableViewer() throws Exception {
         var session = play(SMB, SMB_INPUT, SMB_FRAME).session();
         var nes = session.nes();
@@ -335,44 +376,32 @@ public final class Shots {
                 || nes.getPPU().getScanline() > 2 * MID_FRAME_SCANLINE) {
             session.stepInstructions(1);
         }
+
         var palette = Palettes.defaultPalette(nes.getRegion());
-        var frame = new JFrame[1];
 
-        onEdt(() -> {
-            frame[0] = new NametableViewerFrame(null, nes, palette, PauseControl.NONE);
-            show(frame[0]);
-        });
-
-        capture(frame[0], "nametable-viewer");
-        onEdt(frame[0]::dispose);
+        instrument("Nametables", "nametable-viewer", () -> new NametableViewerPanel(nes, palette));
     }
 
     /**
-     * With the sprites grouped and the topmost group picked, which is the half of this window that
-     * a screenshot of a table cannot show: the outline the field draws round the thing those
-     * sprites make up.
+     * With the sprites grouped and the topmost group picked, which is the half of this one that a
+     * screenshot of a table cannot show: the outline the field draws round the thing those sprites
+     * make up.
      */
     private void oamViewer() throws Exception {
         var nes = play(SMB3, "", SMB3_FRAME).session().nes();
         var palette = Palettes.defaultPalette(nes.getRegion());
-        var frame = new JFrame[1];
 
-        onEdt(() -> {
-            frame[0] = new OAMViewerFrame(null, nes.getPPU(), palette, PauseControl.NONE);
+        instrument("Sprites", "oam-viewer", () -> {
+            var view = new OAMViewerPanel(nes.getPPU(), palette);
 
             // Before it goes up, so that the window comes to the front once and stays there: a
             // window photographed while something else holds the focus draws its selected rows in
             // grey, and the selection is what the picture is of.
-            var content = frame[0].getContentPane();
+            find(view, JCheckBox.class, "Group").doClick();
+            find(view, JTable.class, null).setRowSelectionInterval(0, 0);
 
-            find(content, JCheckBox.class, "Group").doClick();
-            find(content, JTable.class, null).setRowSelectionInterval(0, 0);
-
-            show(frame[0]);
+            return view;
         });
-
-        capture(frame[0], "oam-viewer");
-        onEdt(frame[0]::dispose);
     }
 
     /**
@@ -384,17 +413,24 @@ public final class Shots {
     private void paletteViewer() throws Exception {
         var nes = play(SMB, SMB_INPUT, SMB_FRAME).session().nes();
         var palette = Palettes.defaultPalette(nes.getRegion());
-        var frame = new JFrame[1];
+        var frame = instrument(
+                "Palette", null, () -> new PaletteViewerPanel(nes.getPPU(), palette));
 
-        onEdt(() -> {
-            frame[0] = new PaletteViewerFrame(null, nes.getPPU(), palette, PauseControl.NONE);
-            show(frame[0]);
-        });
+        hover(frame, PALETTE_CELL_X, PALETTE_CELL_Y);
 
-        hover(frame[0], PALETTE_CELL_X, PALETTE_CELL_Y);
+        capture(frame, "palette-viewer");
+        onEdt(frame::dispose);
+    }
 
-        capture(frame[0], "palette-viewer");
-        onEdt(frame[0]::dispose);
+    private void chrViewer() throws Exception {
+        var played = play(SMB3, "", SMB3_FRAME);
+        var nes = played.session().nes();
+        var palette = Palettes.defaultPalette(nes.getRegion());
+
+        instrument(
+                "Tiles",
+                "chr-viewer",
+                () -> new CHRViewerPanel(played.cart(), nes.getPPU(), palette));
     }
 
     /**
@@ -403,6 +439,94 @@ public final class Shots {
      * points panel with the truth.
      */
     private void debugger() throws Exception {
+        var stopped = stoppedInsideSuperMarioBros();
+        var nes = stopped.played().session().nes();
+        var view = new DebuggerPanel[1];
+
+        var frame = instrument("Debugger", null, () -> {
+            view[0] = new DebuggerPanel(nes, stopped.runner(), stopped.debugger());
+            view[0].stopped(stopped.stop());
+            view[0].setPreferredSize(DEBUGGER_SIZE);
+
+            return view[0];
+        });
+
+        capture(frame, "debugger");
+
+        onEdt(() -> {
+            // Told the machine is running before it goes, or it would try to resume through a
+            // runner that was never started.
+            view[0].running();
+            frame.dispose();
+        });
+    }
+
+    /**
+     * The window all five of them are really tabs of, with the debugger stopped where its own
+     * picture stops it -- which is the point of the thing: the code, a view of what the chip is
+     * drawing from, and every lever on the machine, at once.
+     */
+    private void controlPanel() throws Exception {
+        var stopped = stoppedInsideSuperMarioBros();
+        var played = stopped.played();
+        var nes = played.session().nes();
+        var switches = new Switches();
+        var commands = new Commands();
+        var panel = new ControlPanelFrame[1];
+
+        // Nothing is running one, so nothing has switched them on. Posed rather than reached into:
+        // this is the state they are in the moment a cartridge is loaded.
+        for (var button : List.of(
+                commands.reset(),
+                commands.powerCycle(),
+                commands.gameGenie(),
+                commands.startTrace())) {
+            button.setEnabled(true);
+        }
+
+        onEdt(() -> {
+            panel[0] = new ControlPanelFrame(
+                    null, switches, commands, PauseControl.NONE, Layout.DEFAULT);
+
+            panel[0].setMachine(
+                    nes,
+                    stopped.runner(),
+                    stopped.debugger(),
+                    played.cart(),
+                    Palettes.defaultPalette(nes.getRegion()));
+
+            panel[0].stopped(stopped.stop());
+
+            // The two lines the emulation thread normally sends, and the one the window normally
+            // writes. Nothing is clocking this machine, so nobody would otherwise.
+            panel[0].describe(Readout.of(
+                    nes,
+                    new short[FRAME_SAMPLES],
+                    voiceTraces(nes),
+                    Readout.Pads.NONE,
+                    Readout.Events.NONE));
+            panel[0].setRunning(
+                    "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
+
+            show(panel[0]);
+        });
+
+        capture(panel[0], "control-panel");
+
+        onEdt(() -> {
+            panel[0].running();
+            panel[0].dispose();
+        });
+    }
+
+    /**
+     * A machine stopped at Super Mario Bros.' NMI handler with a level running, and the never
+     * started runner and debugger that go with it.
+     * <p>
+     * Two pictures want exactly this -- the debugger on its own and the whole panel -- and a
+     * breakpoint that fired is the only way either of them has anything true in it.
+     */
+    private Stopped stoppedInsideSuperMarioBros() throws Exception {
         var played = play(SMB, SMB_INPUT, SMB_FRAME);
         var session = played.session();
         var debugger = session.debugger();
@@ -423,30 +547,68 @@ public final class Shots {
             stop = session.advanceFrame().stop();
         }
 
-        var nes = session.nes();
-        var stopped = stop;
-        var window = new DebuggerFrame[1];
+        // Never started: the window only needs something to hand its buttons, and the machine is
+        // already exactly where the picture wants it. So no ring and no sound card either -- the
+        // latency is a number for a line that is never opened.
+        var runner = new EmulatorRunner(
+                session.nes(), new ScreenComponent(), debugger, 0, AudioOutput.DEFAULT_LATENCY_MS);
+
+        return new Stopped(played, runner, debugger, stop);
+    }
+
+    /**
+     * A frame of each voice on its own, which the emulation loop normally takes off the chip as it
+     * drains the frame's sound.
+     */
+    private static List<short[]> voiceTraces(final NES nes) {
+        var traces = new ArrayList<short[]>();
+
+        for (var channel : APUChannel.values()) {
+            var trace = new short[FRAME_SAMPLES];
+
+            nes.getAPU().trace(channel, trace, trace.length);
+            traces.add(trace);
+        }
+
+        return List.copyOf(traces);
+    }
+
+    private record Stopped(
+            Played played, EmulatorRunner runner, Debugger debugger, Debugger.Stop stop) {
+    }
+
+    /**
+     * One instrument in a window with nothing else in it.
+     *
+     * @param name what the picture is called, or null when the caller has something to do to the
+     *             window before it is photographed and will take the picture itself.
+     * @return the window, disposed here unless the caller was handed it.
+     */
+    private JFrame instrument(
+            final String title, final @Nullable String name, final Instrument build)
+            throws Exception {
+
+        var frame = new JFrame[1];
 
         onEdt(() -> {
-            // Never started: the window only needs something to hand its buttons, and the machine
-            // is already exactly where the picture wants it. So no ring and no sound card either --
-            // the latency is a number for a line that is never opened.
-            var runner = new EmulatorRunner(
-                    nes, new ScreenComponent(), debugger, 0, AudioOutput.DEFAULT_LATENCY_MS);
+            frame[0] = new JFrame(title);
+            frame[0].setLayout(new BorderLayout());
+            frame[0].add(build.get(), BorderLayout.CENTER);
+            frame[0].pack();
 
-            window[0] = new DebuggerFrame(null, nes, runner, debugger);
-            window[0].stopped(stopped);
-            show(window[0]);
+            show(frame[0]);
         });
 
-        capture(window[0], "debugger");
+        if (name != null) {
+            capture(frame[0], name);
+            onEdt(frame[0]::dispose);
+        }
 
-        onEdt(() -> {
-            // Told the machine is running before it goes, or it would try to resume through a
-            // runner that was never started.
-            window[0].running();
-            window[0].dispose();
-        });
+        return frame[0];
+    }
+
+    private interface Instrument {
+        JComponent get() throws Exception;
     }
 
     // ============================================================================== game window
@@ -554,14 +716,6 @@ public final class Shots {
         onEdt(dialog::dispose);
     }
 
-    private void chrViewer() throws Exception {
-        var game = overSMB3();
-        var viewer = open(game, "Debug", "CHR Viewer", "CHR Viewer");
-
-        capture(viewer, "chr-viewer");
-        onEdt(viewer::dispose);
-    }
-
     private void controllerDialog() throws Exception {
         var game = overSMB3();
         var dialog = open(game, "Settings", "Controller...", "Controller");
@@ -600,9 +754,9 @@ public final class Shots {
      * @param x where, in the content pane's own coordinates, so the title bar's height is not part
      *          of the arithmetic.
      */
-    private void hover(final Window window, final int x, final int y) throws Exception {
+    private void hover(final JFrame window, final int x, final int y) throws Exception {
         onEdt(() -> {
-            var content = ((JFrame) window).getContentPane();
+            var content = window.getContentPane();
             var target = SwingUtilities.getDeepestComponentAt(content, x, y);
             var at = SwingUtilities.convertPoint(content, x, y, target);
 

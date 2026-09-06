@@ -55,15 +55,18 @@ public class Mapper66 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
 
         // A chip smaller than the window it sits in folds back on itself, the way a 16KB NROM
         // does -- which is exactly what the Duck Hunt half of that pack-in cartridge is.
-        if (offset >= prgROM.length) {
-            return Byte.toUnsignedInt(prgROM[offset % prgROM.length]);
-        }
-
-        return Byte.toUnsignedInt(prgROM[prgBank * PRG_BANK_SIZE + offset]);
+        return offset >= prgROM.length
+                ? offset % prgROM.length
+                : prgBank * PRG_BANK_SIZE + offset;
     }
 
     @Override
@@ -74,7 +77,12 @@ public class Mapper66 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[chrBank * CHR_BANK_SIZE + (address & 0x1FFF)]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return chrBank * CHR_BANK_SIZE + (address & 0x1FFF);
     }
 
     @Override

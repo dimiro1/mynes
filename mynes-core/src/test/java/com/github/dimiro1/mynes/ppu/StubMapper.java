@@ -30,7 +30,12 @@ class StubMapper implements Mapper {
 
     @Override
     public int prgRead(final int address) {
-        return prg[address & 0x7FFF];
+        return prg[prgOffset(address)];
+    }
+
+    @Override
+    public int prgOffset(final int address) {
+        return address & 0x7FFF;
     }
 
     @Override
@@ -40,7 +45,12 @@ class StubMapper implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return chr[address & 0x1FFF];
+        return chr[charOffset(address)];
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return address & 0x1FFF;
     }
 
     @Override

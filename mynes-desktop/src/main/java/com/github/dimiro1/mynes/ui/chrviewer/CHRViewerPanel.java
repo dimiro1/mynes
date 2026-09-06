@@ -3,8 +3,7 @@ package com.github.dimiro1.mynes.ui.chrviewer;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
-import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Sweep;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
 
@@ -13,20 +12,21 @@ import java.awt.*;
 import java.util.Arrays;
 
 /**
- * A window over character memory: every tile of one 4KB bank on the left, the selected tile
- * blown up on the right.
+ * A view of character memory: every tile of one 4KB bank on the left, the selected tile blown up
+ * on the right.
  * <p>
  * The tiles can be coloured with any of the eight palettes the game is running with, read live
- * out of the PPU's palette RAM, and a timer re-reads both palette and pattern data a few times a
- * second -- so CHR RAM games redraw as they write, and palette changes show up as they happen.
+ * out of the PPU's palette RAM, and a {@link Sweep} re-reads both palette and pattern data a few
+ * times a second -- so CHR RAM games redraw as they write, and palette changes show up as they
+ * happen.
  * <p>
  * Everything here runs on the event dispatch thread and reads emulator memory while the emulation
  * thread runs. Deliberately unsynchronised: reading an array element cannot tear, so the worst
  * case is a tile or a colour a frame out of date.
  */
-public class CHRViewerFrame extends JFrame {
+public final class CHRViewerPanel extends JPanel {
     /**
-     * How often the viewer re-reads character memory and palette RAM. Fast enough to feel live,
+     * How often the view re-reads character memory and palette RAM. Fast enough to feel live,
      * slow enough to cost nothing: a full sweep is 4KB of reads and a handful of compares.
      */
     private static final int REFRESH_MILLIS = 250;
@@ -36,15 +36,12 @@ public class CHRViewerFrame extends JFrame {
      */
     private static final int CHR_RAM_SIZE = 0x2000;
 
-    private final Component parent;
     private final Cart cart;
     private final PPU ppu;
 
     private final JLabel selectedLabel = new JLabel();
     private final TilesViewerPanel tilesViewer;
     private final TileComponent selectedTile;
-    private final PauseBox pause;
-    private final Timer refreshTimer;
 
     private int baseAddress = 0;
     private int selectedTileNumber = 0;
@@ -63,14 +60,7 @@ public class CHRViewerFrame extends JFrame {
      */
     private NESPalette palette;
 
-    public CHRViewerFrame(
-            final Component parent,
-            final Cart cart,
-            final PPU ppu,
-            final NESPalette palette,
-            final PauseControl pauseControl) {
-        super();
-        this.parent = parent;
+    public CHRViewerPanel(final Cart cart, final PPU ppu, final NESPalette palette) {
         this.cart = cart;
         this.ppu = ppu;
         this.palette = palette;
@@ -78,17 +68,13 @@ public class CHRViewerFrame extends JFrame {
         this.tilesViewer = new TilesViewerPanel(cart);
         this.selectedTile = new TileComponent(
                 selectedTileNumber, baseAddress, 272, 272, cart.mapper());
-        this.pause = new PauseBox(pauseControl);
-        this.refreshTimer = new Timer(REFRESH_MILLIS, e -> refresh());
 
         init();
 
-        refreshTimer.start();
+        Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
     private void init() {
-        setTitle("CHR Viewer");
-        setResizable(false);
         setLayout(new BorderLayout());
 
         tilesViewer.addChangeListener(tile -> {
@@ -109,52 +95,27 @@ public class CHRViewerFrame extends JFrame {
         options.add(getPaletteJComboBox());
         options.add(getMode8x16JCheckBox());
 
-        // Pause at the far end, away from the controls that only change what is drawn: this one
-        // changes the machine, which is a different kind of thing to be clicking.
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        controls.add(options, BorderLayout.WEST);
-        controls.add(pause, BorderLayout.EAST);
-
         selectedLabel.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
         updateSelectedLabel();
 
         add(selectedLabel, BorderLayout.NORTH);
         add(tiles, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
-        pack();
-        pause.installIn(getRootPane());
-        setLocationRelativeTo(parent);
+        add(options, BorderLayout.SOUTH);
     }
 
     /**
-     * Stops the refresh timer along with the window; without this the timer would keep the
-     * viewer reading a dead machine's memory forever.
+     * One sweep: pick up palette changes, then re-read every tile. Tiles only repaint when their
+     * bytes actually changed, so a ROM bank settles to no work at all.
      */
-    @Override
-    public void dispose() {
-        refreshTimer.stop();
-        super.dispose();
-    }
-
-    /**
-     * One tick of the refresh timer: pick up palette changes, then re-read every tile. Tiles
-     * only repaint when their bytes actually changed, so a ROM bank settles to no work at all.
-     */
-    private void refresh() {
-        if (!isShowing()) {
-            return;
-        }
-
+    public void refresh() {
         updatePaletteColours();
         tilesViewer.refreshTiles();
         selectedTile.refresh();
-        pause.refresh();
     }
 
     /**
      * Draws the tiles in {@code palette} from now on. Called on the event dispatch thread when the
-     * choice in Settings &gt; Palette... changes, so the viewer tracks the picture rather than
+     * choice in Settings &gt; Palette... changes, so the view tracks the picture rather than
      * keeping whatever was chosen when it opened.
      */
     public void setPalette(final NESPalette palette) {

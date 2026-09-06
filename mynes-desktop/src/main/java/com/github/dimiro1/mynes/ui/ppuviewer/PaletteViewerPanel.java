@@ -2,30 +2,26 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.NESPalette;
-import com.github.dimiro1.mynes.ui.PauseBox;
-import com.github.dimiro1.mynes.ui.PauseControl;
+import com.github.dimiro1.mynes.ui.Sweep;
 
 import javax.swing.BorderFactory;
-import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.Timer;
 import java.awt.BorderLayout;
-import java.awt.Component;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 
 /**
- * A window over palette RAM: the thirty two bytes the whole picture is coloured through, and what
- * each one of them is.
+ * A view of palette RAM: the thirty two bytes the whole picture is coloured through, and what each
+ * one of them is.
  * <p>
- * The fourth of the debug viewers and the one the other three lean on. The CHR viewer shows the
- * tiles a game has, the nametable viewer shows where it has put them, the OAM viewer shows the
- * sprites over the top -- and every one of those three draws through these thirty two bytes, so a
- * game whose whole screen has gone the wrong colour has usually written one of them rather than
- * done anything at all to the other three.
+ * The fourth of the debug views and the one the other three lean on. The CHR viewer shows the tiles
+ * a game has, the nametable viewer shows where it has put them, the OAM viewer shows the sprites
+ * over the top -- and every one of those three draws through these thirty two bytes, so a game
+ * whose whole screen has gone the wrong colour has usually written one of them rather than done
+ * anything at all to the other three.
  * <p>
  * Three things about palette RAM are invisible in the picture, and all three are what this is for.
  * Four of the cells are not memory: $3F10, $3F14, $3F18 and $3F1C are the matching background
@@ -36,47 +32,36 @@ import java.awt.event.MouseEvent;
  * any of it, which is why the header says what $2001 is doing rather than folding it into the
  * swatches -- see {@link PaletteRAMPanel}.
  * <p>
- * Built the same way as the other two windows in this package: a timer, an unsynchronised read of
- * the machine, and a palette that follows Settings &gt; Palette... The worst case is a colour a
- * quarter of a second out of date.
+ * Built the same way as the other two views in this package: a {@link Sweep}, an unsynchronised
+ * read of the machine, and a palette that follows Settings &gt; Palette... The worst case is a
+ * colour a quarter of a second out of date.
  */
-public final class PaletteViewerFrame extends JFrame {
+public final class PaletteViewerPanel extends JPanel {
     /**
-     * How often the viewer re-reads palette RAM. The same quarter second the other viewers use; a
-     * sweep is thirty two reads.
+     * How often the view re-reads palette RAM. The same quarter second the other views use; a sweep
+     * is thirty two reads.
      */
     private static final int REFRESH_MILLIS = 250;
 
     private final PPU ppu;
     private final PaletteRAMPanel cells;
     private final PaletteUsePanel use;
-    private final PauseBox pause;
-    private final Timer refreshTimer;
 
     private final JLabel machine = new JLabel();
     private final JLabel pointer = new JLabel();
 
-    public PaletteViewerFrame(
-            final Component parent,
-            final PPU ppu,
-            final NESPalette palette,
-            final PauseControl pauseControl) {
-
+    public PaletteViewerPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.cells = new PaletteRAMPanel(ppu, palette);
         this.use = new PaletteUsePanel(ppu, palette);
-        this.pause = new PauseBox(pauseControl);
-        this.refreshTimer = new Timer(REFRESH_MILLIS, e -> tick());
 
-        init(parent);
+        init();
         refresh();
 
-        refreshTimer.start();
+        Sweep.every(REFRESH_MILLIS, this, this::refresh);
     }
 
-    private void init(final Component parent) {
-        setTitle("Palette Viewer");
-        setResizable(false);
+    private void init() {
         setLayout(new BorderLayout());
 
         machine.setBorder(BorderFactory.createEmptyBorder(8, 12, 4, 12));
@@ -102,7 +87,7 @@ public final class PaletteViewerFrame extends JFrame {
         header.add(pointer, BorderLayout.SOUTH);
 
         // Top left rather than filling, so that the swatches' two headings and the screen's one
-        // sit on the same line; the window is packed around the longest line the pointer can show,
+        // sit on the same line; the view is as wide as the longest line the pointer can show,
         // which may be a little wider than the two panels together.
         var swatches = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         swatches.add(cells);
@@ -111,27 +96,19 @@ public final class PaletteViewerFrame extends JFrame {
         body.add(swatches, BorderLayout.WEST);
         body.add(use, BorderLayout.CENTER);
 
-        var controls = new JPanel(new BorderLayout());
-        controls.setBorder(BorderFactory.createEmptyBorder(0, 12, 8, 12));
-        controls.add(pause, BorderLayout.EAST);
-
         add(header, BorderLayout.NORTH);
         add(body, BorderLayout.CENTER);
-        add(controls, BorderLayout.SOUTH);
 
         describeMachine();
 
-        // The widest line this window will ever show, in the label, while the window is being
-        // sized around it. Packing around the swatches instead would leave the notes on the seven
-        // cells that need one to be drawn with an ellipsis through the middle, on whichever
-        // platform draws a monospaced 12 a shade wider than this one does.
+        // The widest line this view will ever show, measured while the label is holding it and then
+        // asked for from then on. Sizing around the swatches instead would leave the notes on the
+        // seven cells that need one drawn with an ellipsis through the middle, on whichever platform
+        // draws a monospaced 12 a shade wider than this one does.
         pointer.setText(longestLine());
-
-        pack();
+        pointer.setPreferredSize(pointer.getPreferredSize());
 
         select(-1);
-        pause.installIn(getRootPane());
-        setLocationRelativeTo(parent);
     }
 
     /**
@@ -143,31 +120,13 @@ public final class PaletteViewerFrame extends JFrame {
     }
 
     /**
-     * Stops the refresh timer along with the window; without this the timer would keep the viewer
-     * reading a dead machine's palette forever.
+     * One sweep. Called once directly as the view is built as well as by the timer: a view that
+     * waited for its first tick would come up empty for a quarter of a second, and one painted into
+     * an image without ever being shown would come up empty for good.
      */
-    @Override
-    public void dispose() {
-        refreshTimer.stop();
-        super.dispose();
-    }
-
-    /**
-     * One tick of the refresh timer, which does nothing at all while the window is put away. The
-     * first draw goes through {@link #refresh()} directly instead: a window that waited for the
-     * timer would come up empty for a quarter of a second, and one painted into an image without
-     * ever being shown would come up empty for good.
-     */
-    private void tick() {
-        if (isShowing()) {
-            refresh();
-        }
-    }
-
-    private void refresh() {
+    public void refresh() {
         cells.refresh();
         use.refresh();
-        pause.refresh();
         describeMachine();
     }
 
@@ -205,7 +164,7 @@ public final class PaletteViewerFrame extends JFrame {
     }
 
     /**
-     * Everything about the chosen cell, which is the question this window exists for: not "what
+     * Everything about the chosen cell, which is the question this view exists for: not "what
      * colour is that" but "which byte do I put a watchpoint on, is it even the byte I think it is,
      * and where on the screen is it".
      */
@@ -214,8 +173,7 @@ public final class PaletteViewerFrame extends JFrame {
         use.setCell(index);
 
         if (index < 0) {
-            // A space rather than nothing at all, so the label keeps its height and the window
-            // is not packed a line shorter than it will be a moment later.
+            // A space rather than nothing at all, so the label keeps its height.
             pointer.setText(" ");
             return;
         }

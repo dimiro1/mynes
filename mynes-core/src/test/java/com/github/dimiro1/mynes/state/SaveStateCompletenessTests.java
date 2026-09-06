@@ -60,6 +60,12 @@ class SaveStateCompletenessTests {
             Map.entry("StandardController.buttons",
                     "the player's hands, which a file cannot put back -- and a machine that came"
                             + " back with A held would never see it released"),
+            Map.entry("StandardController.polls",
+                    "how often the game has latched this pad, which is a gauge somebody is reading"
+                            + " rather than anything the console can see -- the same argument as"
+                            + " APU.levels, and a state that put one back would be restoring the"
+                            + " gauge rather than the machine"),
+            Map.entry("StandardController.bitsRead", "the other half of the same gauge"),
             Map.entry("PPU.backgroundLayerVisible",
                     "a debug switch belonging to whoever is watching, not to the machine"),
             Map.entry("PPU.spriteLayerVisible",
@@ -91,6 +97,11 @@ class SaveStateCompletenessTests {
                             + " from the write listener because the two are put down separately:"
                             + " watching every read means being told about every instruction fetch,"
                             + " which is a price only somebody who asked for it should pay"),
+            Map.entry("CPU.interruptListener",
+                    "where a debugger wires in to be told which interrupts were served and when."
+                            + " Whoever is watching the machine rather than the machine, which is"
+                            + " the same argument as MMU's two hooks -- and null whenever nobody is"
+                            + " watching, which is what keeps the walk below out of the debugger"),
             Map.entry("MMU.genie",
                     "the Game Genie plugged in between the cartridge and the console, which belongs"
                             + " to whoever is playing rather than to the machine -- and a state that"
@@ -109,6 +120,10 @@ class SaveStateCompletenessTests {
                     "which voices whoever is listening has switched off, which is the Debug menu's"
                             + " ticks rather than anything the chip holds -- the same argument as"
                             + " PPU.backgroundLayerVisible, and the machine cannot tell either way"),
+            Map.entry("APU.levels",
+                    "what each voice has been doing since a meter and a scope last looked, which is"
+                            + " theirs rather than the chip's -- and null unless one of them is"
+                            + " being drawn, which is what keeps it off the mixer's hottest line"),
             Map.entry("CPU.speculating",
                     "true only in the middle of a halted cycle, which is run and then taken back."
                             + " A state is taken between cycles, where it is always false"),
@@ -382,9 +397,11 @@ class SaveStateCompletenessTests {
             var next = counter[0]++;
 
             if (field.getType().isArray() && field.getType().getComponentType().isPrimitive()) {
-                // Only the ones a state is expected to carry. Scrambling the PRG ROM would be
-                // scrambling the cartridge, which no save state claims to put back.
-                if (!isCartridgeROM(name)) {
+                // Only the ones a state is expected to carry, and only where there is one. An array
+                // field holding null is stepped over the way an object field holding null is: it is
+                // a piece of instrumentation nobody has switched on -- APU.peaks is the one -- and
+                // it has to be on the list below to have got here at all.
+                if (!isCartridgeROM(name) && value != null) {
                     for (var i = 0; i < Array.getLength(value); i++) {
                         writeElement(value, i, next + i);
                     }
