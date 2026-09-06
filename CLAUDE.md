@@ -512,6 +512,19 @@ fifteenth frame, and `invokeLater`s it. It holds no reference to the machine, wh
 looking at it later safe. The observer is null while the panel is put away -- the
 `Debugger.isArmed()` rule -- so a closed panel costs one null check a frame.
 
+**The Cartridge tab is `Mapper.banks()`, and that is a default method rather than twelve.** Every
+board here reads with `array[offset]`, so the offset is the half of a read a debugger wants -- and
+pulling it out as `prgOffset`/`charOffset` means `banks()` is worked out from the same arithmetic
+the reads do rather than from whatever each board keeps in its own fields, which is what stops the
+two coming apart. `MapperBanksTests` fills every bank with its own number and reads one byte back
+out of each window, which is the check that catches exactly that.
+
+Normalised to 8KB of program ROM and 1KB of character memory, the smallest window any of these
+switch: a coarser board shows consecutive numbers, which is what it is really doing. `charOffset` is
+free of side effects, and on MMC2 and MMC4 that is a real distinction rather than a formality --
+those boards switch a bank when the beam passes a particular tile, and it is `ppuAddress` that moves
+the latch rather than the read, so asking never changes what is on screen.
+
 **The Sound tab is the one instrument with no picture to draw**, which is why a sound bug is the
 hardest kind to chase: a note that will not stop, a channel that never starts, music a semitone
 flat. So each of the five rows says the same thing three ways -- the period the game *wrote*, which

@@ -10,6 +10,7 @@ import com.github.dimiro1.mynes.ui.PauseControl;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.Sweep;
 import com.github.dimiro1.mynes.ui.Switches;
+import com.github.dimiro1.mynes.ui.cartridge.CartridgePanel;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerPanel;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
@@ -298,7 +299,8 @@ public final class ControlPanelFrame extends JFrame {
             OAMViewerPanel sprites,
             PaletteViewerPanel palette,
             CHRViewerPanel tiles,
-            SoundPanel sound) {
+            SoundPanel sound,
+            CartridgePanel cartridge) {
 
         private Instruments(final NES nes, final Cart cart, final NESPalette colours) {
             this(
@@ -306,7 +308,8 @@ public final class ControlPanelFrame extends JFrame {
                     new OAMViewerPanel(nes.getPPU(), colours),
                     new PaletteViewerPanel(nes.getPPU(), colours),
                     new CHRViewerPanel(cart, nes.getPPU(), colours),
-                    new SoundPanel());
+                    new SoundPanel(),
+                    new CartridgePanel(cart));
         }
 
         /**
@@ -320,6 +323,7 @@ public final class ControlPanelFrame extends JFrame {
             pane.addTab("Palette", fixed(palette));
             pane.addTab("Tiles", fixed(tiles));
             pane.addTab("Sound", filling(sound));
+            pane.addTab("Cartridge", filling(cartridge));
         }
 
         void setPalette(final NESPalette colours) {
@@ -331,6 +335,7 @@ public final class ControlPanelFrame extends JFrame {
 
         void show(final Readout readout) {
             sound.show(readout);
+            cartridge.show(readout);
         }
     }
 

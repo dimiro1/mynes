@@ -200,10 +200,15 @@ public class Mapper1 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
         var bank = prgBankFor(offset) & prgBankMask;
 
-        return Byte.toUnsignedInt(prgROM[bank * PRG_BANK_SIZE + (offset & 0x3FFF)]);
+        return bank * PRG_BANK_SIZE + (offset & 0x3FFF);
     }
 
     @Override
@@ -254,7 +259,12 @@ public class Mapper1 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[charIndex(address & 0x1FFF)]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return charIndex(address & 0x1FFF);
     }
 
     @Override
@@ -375,6 +385,15 @@ public class Mapper1 implements Mapper {
      * and a game that sets that bit to bank CHR on a board it thinks is bigger turns its own save
      * RAM off, which is why the bit is only read as an enable where the board is really SNROM.
      */
+    /**
+     * MMC1 can switch the RAM off, and a board with a battery on it does exactly that around
+     * anything risky -- so a hex view of $6000 full of zeroes is usually this.
+     */
+    @Override
+    public boolean prgRAMEnabled() {
+        return isPRGRAMEnabled();
+    }
+
     private boolean isPRGRAMEnabled() {
         if (!mmc1a && (prgBank & PRG_RAM_DISABLE) != 0) {
             return false;

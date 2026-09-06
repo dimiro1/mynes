@@ -71,13 +71,16 @@ public class Mapper71 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
 
-        if (offset < PRG_BANK_SIZE) {
-            return Byte.toUnsignedInt(prgROM[prgBank * PRG_BANK_SIZE + offset]);
-        }
-
-        return Byte.toUnsignedInt(prgROM[lastBankBase + (offset & 0x3FFF)]);
+        return offset < PRG_BANK_SIZE
+                ? prgBank * PRG_BANK_SIZE + offset
+                : lastBankBase + (offset & 0x3FFF);
     }
 
     @Override
@@ -94,7 +97,12 @@ public class Mapper71 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[address & 0x1FFF]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return address & 0x1FFF;
     }
 
     @Override

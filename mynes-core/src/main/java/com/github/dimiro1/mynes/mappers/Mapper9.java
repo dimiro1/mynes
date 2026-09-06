@@ -90,6 +90,11 @@ public class Mapper9 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
         var page = offset >> 13;
 
@@ -97,8 +102,7 @@ public class Mapper9 implements Mapper {
         // folded in case a header names one with fewer than four.
         var bank = page == 0 ? prgBank : prgBankMask - 3 + page;
 
-        return Byte.toUnsignedInt(
-                prgROM[(bank & prgBankMask) * PRG_BANK_SIZE + (offset & 0x1FFF)]);
+        return (bank & prgBankMask) * PRG_BANK_SIZE + (offset & 0x1FFF);
     }
 
     @Override
@@ -117,7 +121,16 @@ public class Mapper9 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[charIndex(address & 0x1FFF)]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    /**
+     * Which bank is showing rather than which one the beam is about to switch to: the latch moves
+     * in {@link #ppuAddress}, so asking this never changes what is on screen.
+     */
+    @Override
+    public int charOffset(final int address) {
+        return charIndex(address & 0x1FFF);
     }
 
     @Override

@@ -44,13 +44,17 @@ public class Mapper3 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    /**
+     * The program ROM does not move on this board; a 16KB chip is mirrored the way an NROM's is.
+     */
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
 
-        if (prgROM.length == 0x4000 && offset >= 0x4000) {
-            return Byte.toUnsignedInt(prgROM[offset % 0x4000]);
-        }
-
-        return Byte.toUnsignedInt(prgROM[offset]);
+        return prgROM.length == 0x4000 && offset >= 0x4000 ? offset % 0x4000 : offset;
     }
 
     @Override
@@ -75,7 +79,12 @@ public class Mapper3 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chrROM[chrBank * CHR_BANK_SIZE + (address & 0x1FFF)]);
+        return Byte.toUnsignedInt(chrROM[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return chrBank * CHR_BANK_SIZE + (address & 0x1FFF);
     }
 
     @Override

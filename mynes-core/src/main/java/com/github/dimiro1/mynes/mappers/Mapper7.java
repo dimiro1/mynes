@@ -63,15 +63,18 @@ public class Mapper7 implements Mapper {
 
     @Override
     public int prgRead(final int address) {
+        return Byte.toUnsignedInt(prgROM[prgOffset(address)]);
+    }
+
+    @Override
+    public int prgOffset(final int address) {
         var offset = address & 0x7FFF;
 
         // A chip smaller than the window it sits in folds back on itself, the way a 16KB NROM
         // does. No real AxROM cart is that small, but a synthesised header can be.
-        if (offset >= prgROM.length) {
-            return Byte.toUnsignedInt(prgROM[offset % prgROM.length]);
-        }
-
-        return Byte.toUnsignedInt(prgROM[(bankSelect & bankMask) * PRG_BANK_SIZE + offset]);
+        return offset >= prgROM.length
+                ? offset % prgROM.length
+                : (bankSelect & bankMask) * PRG_BANK_SIZE + offset;
     }
 
     @Override
@@ -81,7 +84,12 @@ public class Mapper7 implements Mapper {
 
     @Override
     public int charRead(final int address) {
-        return Byte.toUnsignedInt(chr[address & 0x1FFF]);
+        return Byte.toUnsignedInt(chr[charOffset(address)]);
+    }
+
+    @Override
+    public int charOffset(final int address) {
+        return address & 0x1FFF;
     }
 
     @Override

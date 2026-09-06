@@ -148,6 +148,8 @@ file is where they live.
 - A sound view of all five voices: the period the game wrote, the frequency it comes out as on the
   console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
   each and a scope of the mix.
+- A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
+  memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
 - Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
   and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels

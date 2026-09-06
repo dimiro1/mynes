@@ -4,6 +4,9 @@ import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.mappers.Mapper;
+import com.github.dimiro1.mynes.mappers.Mirroring;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,6 +60,8 @@ import java.util.List;
  * @param scope     a decimated slice of the last frame's mixed output, or empty where there is no
  *                  sound card to have drained one. Handed over rather than shared -- whoever built
  *                  it must not write to it again.
+ * @param board     what the cartridge is showing the console, which on a banked board changes as
+ *                  often as anything else here.
  */
 public record Readout(
         CPU.State cpu,
@@ -78,7 +83,32 @@ public record Readout(
         int pad2,
         List<APU.VoiceState> voices,
         int[] peaks,
-        short[] scope) {
+        short[] scope,
+        Board board) {
+
+    /**
+     * What the cartridge is doing, which is a question about the board rather than about the game.
+     * <p>
+     * Together rather than as five components of the record above, because they are answered
+     * together and because four of the five are the same answer on eleven of the twelve boards
+     * here: only MMC1 and MMC3 can switch their RAM off, and only MMC3 counts scanlines.
+     *
+     * @param banks       which bank each window of the two address spaces is showing.
+     * @param mirroring   how the cartridge has wired the console's two kilobytes of nametable.
+     * @param ramBytes    how much cartridge RAM the board fitted, which is not always what the
+     *                    header claimed.
+     * @param ramEnabled  whether that RAM is answering at all.
+     * @param ramWritable whether a write to it lands.
+     * @param irq         the scanline counter, or null on a board that has none.
+     */
+    public record Board(
+            Mapper.Banks banks,
+            Mirroring mirroring,
+            int ramBytes,
+            boolean ramEnabled,
+            boolean ramWritable,
+            @Nullable Mapper.ScanlineIRQ irq) {
+    }
 
     /**
      * What a readout taken anywhere but the emulation loop has for a scope: nothing. The samples
@@ -130,7 +160,20 @@ public record Readout(
                 nes.getController2().getButtons(),
                 List.copyOf(voices),
                 peaks,
-                scope);
+                scope,
+                boardOf(nes));
+    }
+
+    private static Board boardOf(final NES nes) {
+        var mapper = nes.getBus().getMapper();
+
+        return new Board(
+                mapper.banks(),
+                mapper.mirroring(),
+                mapper.prgRAM().length,
+                mapper.prgRAMEnabled(),
+                mapper.prgRAMWritable(),
+                mapper.irq());
     }
 
     /**
