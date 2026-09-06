@@ -5,7 +5,9 @@ import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.ui.Readout;
 import com.github.dimiro1.mynes.ui.debugger.Theme;
 import net.miginfocom.swing.MigLayout;
+import org.jetbrains.annotations.Nullable;
 
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.Font;
@@ -39,8 +41,25 @@ public final class SoundPanel extends JPanel {
      */
     private static final String[] DUTIES = {"12.5%", "25%", "50%", "25% inv"};
 
+    /**
+     * How tall one voice's own trace is. Shorter than the mixed one below them, because what a
+     * split view is for is telling five shapes apart rather than measuring any of them.
+     */
+    private static final int VOICE_HEIGHT = 40;
+
     private final Map<APUChannel, Row> rows = new EnumMap<>(APUChannel.class);
+    private final Map<APUChannel, Scope> traces = new EnumMap<>(APUChannel.class);
+    private final Map<APUChannel, JLabel> names = new EnumMap<>(APUChannel.class);
+
+    private final JCheckBox split = new JCheckBox("Split the voices");
     private final Scope scope = new Scope();
+
+    /**
+     * The last frame handed over, kept so that ticking Split draws the five traces out of it
+     * straight away. Without it they would come up empty and stay that way until the next readout
+     * -- which on a machine somebody has stopped in order to look at is never.
+     */
+    private @Nullable Readout last;
 
     public SoundPanel() {
         setLayout(new MigLayout(
@@ -64,8 +83,81 @@ public final class SoundPanel extends JPanel {
             row.addTo(this);
         }
 
-        add(Theme.heading("Output"), "newline, gaptop 14, span 8");
+        add(Theme.heading("Output"), "newline, gaptop 14, span 8, split 3");
+        add(note("what the chip makes, before Volume and Mute"), "gapleft 8");
+        add(split, "gapleft 24, wrap");
+
+        // One trace per voice above the mixed one, hidden until somebody asks. What each of them
+        // shows is what that voice put *into* the mixer, where the trace below is what came out --
+        // which is the whole reason to look at them separately: a square wave, a triangle, a hiss
+        // and a sampled drum are recognisable at a glance where their sum is not.
+        for (var channel : APUChannel.values()) {
+            var name = new JLabel(channel.label());
+            var trace = new Scope(
+                    Traces.colourOf(channel),
+                    Traces.fullScaleOf(channel),
+                    VOICE_HEIGHT,
+                    false);
+
+            name.setForeground(Traces.colourOf(channel));
+            name.setVisible(false);
+            trace.setVisible(false);
+
+            names.put(channel, name);
+            traces.put(channel, trace);
+
+            add(name, "span 8, split 2, w 70!");
+            add(trace, "growx, h " + VOICE_HEIGHT + "!, wrap");
+        }
+
         add(scope, "span 8, growx, h 96!");
+
+        split.setToolTipText("Draw each voice on its own as well as the sum of them");
+        split.addActionListener(e -> showSplit(split.isSelected()));
+    }
+
+    /**
+     * Shows or hides the five, which is a question about this panel rather than about the machine
+     * -- so it is a tick here rather than a switch in the column, the way the nametable view's grid
+     * is.
+     */
+    private void showSplit(final boolean showing) {
+        for (var channel : APUChannel.values()) {
+            names.get(channel).setVisible(showing);
+            traces.get(channel).setVisible(showing);
+        }
+
+        if (showing && last != null) {
+            drawTheVoices(last);
+        }
+
+        revalidate();
+        repaint();
+    }
+
+    private void drawTheVoices(final Readout readout) {
+        for (var channel : APUChannel.values()) {
+            traces.get(channel).show(readout.trace(channel));
+        }
+    }
+
+    /**
+     * Says what the trace under it is and, by implication, what it is not.
+     * <p>
+     * Worth saying because the column beside this has ten sound controls in it and only five of them
+     * move this line. The five voice ticks happen at the mixer inside the chip, so they change what
+     * comes out; Mute and the volume happen on the way to the sound card, so they change how loudly
+     * it is played and nothing about what was played. Which is also why the meters above keep
+     * moving for a voice somebody has switched off -- "this is playing and you cannot hear it" is a
+     * different answer from "this is not playing".
+     */
+    private static JLabel note(final String text) {
+        var label = new JLabel(text);
+
+        label.setForeground(Theme.muted());
+        label.setFont(label.getFont().deriveFont(11f));
+
+        return label;
     }
 
     /**
@@ -77,6 +169,12 @@ public final class SoundPanel extends JPanel {
         }
 
         scope.show(readout.scope());
+
+        last = readout;
+
+        if (split.isSelected()) {
+            drawTheVoices(readout);
+        }
     }
 
     /**

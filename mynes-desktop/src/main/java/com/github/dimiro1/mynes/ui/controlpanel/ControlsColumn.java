@@ -52,12 +52,19 @@ final class ControlsColumn extends JPanel {
         add(new JCheckBox(switches.sprites()));
         add(new JCheckBox(switches.unlimitedSprites()));
 
+        // Two headings rather than one, because these are two different kinds of thing and the
+        // Sound tab beside them makes the difference visible: Mute and the volume are how loudly
+        // the machine is played, and happen on the way to the sound card, so the scope's trace does
+        // not move when they do. The five below are what it is playing, and happen at the mixer
+        // inside the chip, so they change the trace and the numbers with it.
         add(Theme.heading("Sound"), GROUP);
         add(new JCheckBox(switches.mute()));
         add(radios(switches.volume()), UNDER);
 
+        add(Theme.heading("Voices"), GROUP);
+
         for (var channel : APUChannel.values()) {
-            add(new JCheckBox(switches.channel(channel)), UNDER);
+            add(new JCheckBox(switches.channel(channel)));
         }
 
         add(Theme.heading("Hacks"), GROUP);

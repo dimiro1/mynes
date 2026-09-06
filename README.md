@@ -147,7 +147,8 @@ file is where they live.
   coloured through, and a tile view of character memory.
 - A sound view of all five voices: the period the game wrote, the frequency it comes out as on the
   console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
-  each and a scope of the mix.
+  each and a scope of the mix. **Split the voices** draws each one on its own in its own colour, so
+  a square wave, a triangle, a hiss and a sampled drum are told apart at a glance.
 - A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
   memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
 - Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,

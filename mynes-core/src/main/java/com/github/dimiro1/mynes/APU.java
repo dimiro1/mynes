@@ -175,13 +175,14 @@ public class APU {
     private final DMC dmc = new DMC();
 
     /**
-     * The loudest each voice has been since anybody last asked, or null while nobody is asking.
+     * What each voice has been doing, for a meter and a scope to draw, or null while nobody is
+     * drawing either.
      * <p>
-     * Null is the point of it: {@link #mix()} runs on every CPU cycle, and a machine nobody has a
-     * meter pointed at pays one null check there and nothing else. Not part of a save state -- it
-     * belongs to whoever is watching rather than to the machine, the same as the channel mutes.
+     * Null is the point of it: {@link #mix()} runs on every CPU cycle, and a machine nobody is
+     * watching pays one null check there and nothing else. Not part of a save state -- it belongs
+     * to whoever is watching rather than to the machine, the same as the channel mutes.
      */
-    private int @Nullable [] peaks;
+    private @Nullable Levels levels;
     private final FrameCounter frameCounter = new FrameCounter();
 
     /**
@@ -352,6 +353,12 @@ public class APU {
 
         var averaged = sampleSum / sampleCycles;
 
+        // The same window the sample above was averaged over, so a voice's trace and the mixed one
+        // line up sample for sample.
+        if (levels != null) {
+            levels.emit(sampleCycles);
+        }
+
         sampleSum = 0;
         sampleCycles = 0;
         cyclesToNextSample += cyclesPerSample;
@@ -377,15 +384,12 @@ public class APU {
         var delta = dmc.output;
 
         // Before the mute rather than after, so a voice somebody has switched off still moves its
-        // meter. Null unless a meter is being drawn, which is the whole of what this costs.
-        var kept = peaks;
+        // meter and its trace. Null unless one of the two is being drawn, which is the whole of
+        // what this costs.
+        var watching = levels;
 
-        if (kept != null) {
-            keep(kept, APUChannel.PULSE_1, one);
-            keep(kept, APUChannel.PULSE_2, two);
-            keep(kept, APUChannel.TRIANGLE, tri);
-            keep(kept, APUChannel.NOISE, noi);
-            keep(kept, APUChannel.DMC, delta);
+        if (watching != null) {
+            watching.take(one, two, tri, noi, delta);
         }
 
         var pulses = audible(APUChannel.PULSE_1, one) + audible(APUChannel.PULSE_2, two);
@@ -396,11 +400,7 @@ public class APU {
         return PULSE_TABLE[pulses] + TND_TABLE[rest];
     }
 
-    private static void keep(final int[] peaks, final APUChannel channel, final int level) {
-        if (level > peaks[channel.ordinal()]) {
-            peaks[channel.ordinal()] = level;
-        }
-    }
+
 
     /**
      * A channel's level, or zero if somebody has switched that voice off.
@@ -717,7 +717,7 @@ public class APU {
      * called on the thread that clocks the chip, which is what keeps that field plain.
      */
     public void setPeakTracking(final boolean tracking) {
-        peaks = tracking ? new int[APUChannel.values().length] : null;
+        levels = tracking ? new Levels() : null;
     }
 
     /**
@@ -735,10 +735,10 @@ public class APU {
      * @param into filled with one level per {@link APUChannel}, zeroed if nothing is being tracked.
      */
     public void peaks(final int[] into) {
-        var kept = peaks;
+        var watching = levels;
 
         for (var i = 0; i < into.length; i++) {
-            into[i] = kept == null ? 0 : kept[i];
+            into[i] = watching == null ? 0 : watching.peaks[i];
         }
     }
 
@@ -747,10 +747,102 @@ public class APU {
      * is drawing one owns this; anybody else reading them is a bystander.
      */
     public void clearPeaks() {
-        var kept = peaks;
+        var watching = levels;
 
-        if (kept != null) {
-            Arrays.fill(kept, 0);
+        if (watching != null) {
+            Arrays.fill(watching.peaks, 0);
+        }
+    }
+
+    /**
+     * The last {@code count} samples of one voice on its own, oldest first.
+     * <p>
+     * What that voice put into the mixer rather than what came out of it: the level its sequencer
+     * and envelope produced, before the two ladders make five levels into one and before the mute
+     * takes any of them away. Which is the point of drawing them separately -- a square wave, a
+     * triangle, a hiss and a sampled drum are recognisable at a glance where their sum is not.
+     * <p>
+     * Zeroes while nothing is being tracked, and zeroes for however much of {@code count} has not
+     * happened yet.
+     *
+     * @param channel which voice.
+     * @param into    where they go, oldest first, starting at zero.
+     * @param count   how many, which is normally however many samples were just drained.
+     */
+    public void trace(final APUChannel channel, final short[] into, final int count) {
+        var watching = levels;
+
+        if (watching == null) {
+            Arrays.fill(into, 0, count, (short) 0);
+            return;
+        }
+
+        watching.trace(channel.ordinal(), into, count);
+    }
+
+    /**
+     * What each voice has been doing, kept only while somebody is watching.
+     * <p>
+     * One object rather than three fields because the mixer's hottest line tests it once: the
+     * peaks, the running sums and the traces are all wanted at the same times and by the same
+     * caller, and three null checks there would be three times the price of the one.
+     */
+    private static final class Levels {
+        /**
+         * How many samples of each voice are kept. A frame is 735 of them on NTSC and 882 on PAL,
+         * so this holds the last whole frame of either with room to spare -- which is what lets a
+         * scope ask for exactly the frame that has just been drained and get it.
+         */
+        private static final int TRACE = 1024;
+
+        private final int[] peaks = new int[APUChannel.values().length];
+        private final int[] sums = new int[APUChannel.values().length];
+        private final short[][] traces = new short[APUChannel.values().length][TRACE];
+
+        private int write;
+
+        /**
+         * One CPU cycle's worth of every voice.
+         */
+        private void take(
+                final int one, final int two, final int tri, final int noi, final int delta) {
+
+            keep(APUChannel.PULSE_1.ordinal(), one);
+            keep(APUChannel.PULSE_2.ordinal(), two);
+            keep(APUChannel.TRIANGLE.ordinal(), tri);
+            keep(APUChannel.NOISE.ordinal(), noi);
+            keep(APUChannel.DMC.ordinal(), delta);
+        }
+
+        private void keep(final int voice, final int level) {
+            sums[voice] += level;
+
+            if (level > peaks[voice]) {
+                peaks[voice] = level;
+            }
+        }
+
+        /**
+         * One output sample's worth: each voice averaged over the cycles that went into it, which
+         * is the same average the mixer took, so the traces and the mixed one line up.
+         */
+        private void emit(final int cycles) {
+            for (var voice = 0; voice < sums.length; voice++) {
+                traces[voice][write] = (short) (sums[voice] / cycles);
+                sums[voice] = 0;
+            }
+
+            write = (write + 1) % TRACE;
+        }
+
+        private void trace(final int voice, final short[] into, final int count) {
+            var kept = traces[voice];
+            var wanted = Math.min(count, TRACE);
+            var from = Math.floorMod(write - wanted, TRACE);
+
+            for (var i = 0; i < wanted; i++) {
+                into[i] = kept[(from + i) % TRACE];
+            }
         }
     }
 

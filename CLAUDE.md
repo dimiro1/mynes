@@ -445,7 +445,11 @@ of 0.20 to silence, which is what `HeadlessRunTests` asserts.
 The window has the same five under **Debug > Sound Channels**, ticked when audible, beside Show
 Background and Show Sprites rather than anywhere near Mute. That is the distinction worth keeping:
 Mute and **Machine > Volume** decide how loudly the machine is played and these decide what it is
-playing.
+playing. The control panel's column says it with two headings -- **Sound** over Mute and the volume,
+**Voices** over the five -- because the Sound tab beside them makes the difference visible and
+otherwise inexplicable: the five change the scope's trace, since they happen at the mixer inside the
+chip, and the other two do not, since they happen on the way to the sound card. The scope's heading
+says so too.
 
 ### The sound card is not the same clock
 
@@ -548,6 +552,16 @@ the other. Peaks are taken *before* the mute, so a voice somebody has switched o
 meter -- "this is playing and you cannot hear it" is a different answer from "this is not playing",
 and telling them apart is most of what the mute is for. Tracking is off until something asks, which
 costs the mixer's hottest line one null check.
+
+**Split the voices draws each one on its own, above the sum of them.** What a voice's trace shows
+is what it put *into* the mixer -- the level its sequencer and envelope made, before the two ladders
+turn five levels into one and before the mute takes any away -- which is the point of separating
+them: a square wave, a triangle, a hiss and a sampled drum are recognisable at a glance and their
+sum is not. `APU.trace` is where they come from, behind the same null check as the peaks, recorded
+on the same average the mixer took so a voice's trace and the mixed one are the same samples. Each
+is drawn against its own full scale, since the four that come off a sequencer run 0 to 15 and the
+DMC's level is seven bits, and off the floor rather than about the middle, since a level never goes
+below zero.
 
 **The scope is scaled to what a game actually puts out rather than to the sixteen bit range.**
 Fifteen seconds of Super Mario Bros.' first level peaks at 0.20 of full scale and averages 0.02:

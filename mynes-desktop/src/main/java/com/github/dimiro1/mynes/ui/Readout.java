@@ -62,6 +62,9 @@ import java.util.List;
  *                  it must not write to it again.
  * @param board     what the cartridge is showing the console, which on a banked board changes as
  *                  often as anything else here.
+ * @param traces    the same slice of the same frame for each voice on its own, in
+ *                  {@link APUChannel} order -- what each put <em>into</em> the mixer, where
+ *                  {@code scope} is what came out of it. Empty where the scope is.
  */
 public record Readout(
         CPU.State cpu,
@@ -84,7 +87,8 @@ public record Readout(
         List<APU.VoiceState> voices,
         int[] peaks,
         short[] scope,
-        Board board) {
+        Board board,
+        List<short[]> traces) {
 
     /**
      * What the cartridge is doing, which is a question about the board rather than about the game.
@@ -118,17 +122,23 @@ public record Readout(
     public static final short[] NO_SCOPE = new short[0];
 
     /**
+     * The same for the five voices, for a readout taken where there is no frame of sound to slice.
+     */
+    public static final List<short[]> NO_TRACES = List.of();
+
+    /**
      * Reads the machine. Only ever called on the thread that clocks it, at a frame boundary.
      */
     public static Readout of(final NES nes) {
-        return of(nes, NO_SCOPE);
+        return of(nes, NO_SCOPE, NO_TRACES);
     }
 
     /**
-     * The same, with a slice of what the sound card was given -- which only the loop that drained it
-     * has.
+     * The same, with a slice of what the sound card was given and of what each voice put into it --
+     * which only the loop that drained the frame has.
      */
-    public static Readout of(final NES nes, final short[] scope) {
+    public static Readout of(
+            final NES nes, final short[] scope, final List<short[]> traces) {
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
         var voices = new ArrayList<APU.VoiceState>(APUChannel.values().length);
@@ -161,7 +171,8 @@ public record Readout(
                 List.copyOf(voices),
                 peaks,
                 scope,
-                boardOf(nes));
+                boardOf(nes),
+                traces);
     }
 
     private static Board boardOf(final NES nes) {
@@ -174,6 +185,13 @@ public record Readout(
                 mapper.prgRAMEnabled(),
                 mapper.prgRAMWritable(),
                 mapper.irq());
+    }
+
+    /**
+     * One voice's own waveform over the last frame, or empty where nothing drained one.
+     */
+    public short[] trace(final APUChannel channel) {
+        return traces.isEmpty() ? NO_SCOPE : traces.get(channel.ordinal());
     }
 
     /**

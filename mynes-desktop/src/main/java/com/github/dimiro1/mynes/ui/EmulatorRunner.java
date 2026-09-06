@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.LockSupport;
@@ -221,6 +222,18 @@ public class EmulatorRunner {
      * A decimated copy of the last frame's sound, refilled only while somebody is watching.
      */
     private final short[] scope = new short[SCOPE_SAMPLES];
+
+    /**
+     * The same frame, one trace per voice, taken from the chip rather than from what was played:
+     * these are what each voice put into the mixer, where {@link #scope} is what came out.
+     */
+    private final short[][] traces =
+            new short[APUChannel.values().length][SCOPE_SAMPLES];
+
+    /**
+     * A frame of one voice, borrowed by {@link #fillScope} and never handed anywhere.
+     */
+    private final short[] voice = new short[AUDIO_BUFFER_SAMPLES];
 
     /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
@@ -1122,7 +1135,13 @@ public class EmulatorRunner {
         // Built here and handed over whole. A lambda that read the machine on the other thread
         // would be reading a running one, which is the whole thing Readout exists to avoid -- and
         // the scope is cloned for the same reason: this thread refills its own next frame.
-        var readout = Readout.of(nes, scope.clone());
+        var traced = new ArrayList<short[]>(traces.length);
+
+        for (var trace : traces) {
+            traced.add(trace.clone());
+        }
+
+        var readout = Readout.of(nes, scope.clone(), List.copyOf(traced));
 
         // The meters' window starts again here rather than inside the reading, so that the
         // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
@@ -1145,10 +1164,25 @@ public class EmulatorRunner {
 
         var step = Math.max(1, count / SCOPE_SAMPLES);
 
-        for (var i = 0; i < SCOPE_SAMPLES; i++) {
+        decimate(samples, count, step, scope);
+
+        // The chip's own record of the same frame, asked for at exactly the length just drained so
+        // that a voice's trace and the mixed one are the same samples.
+        var wanted = Math.min(count, voice.length);
+
+        for (var channel : APUChannel.values()) {
+            nes.getAPU().trace(channel, voice, wanted);
+            decimate(voice, wanted, step, traces[channel.ordinal()]);
+        }
+    }
+
+    private static void decimate(
+            final short[] from, final int count, final int step, final short[] into) {
+
+        for (var i = 0; i < into.length; i++) {
             var at = i * step;
 
-            scope[i] = at < count ? samples[at] : 0;
+            into[i] = at < count ? from[at] : 0;
         }
     }
 

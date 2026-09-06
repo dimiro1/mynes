@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.shots;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
@@ -146,6 +147,12 @@ public final class Shots {
     private static final List<String> GENIE_CODES = List.of("SXIOPO", "AVPAZLGV", "GOSSIP");
 
     private static final int FRAMEBUFFER_SCALE = 2;
+
+    /**
+     * A frame of NTSC sound, which is what the emulation loop hands the control panel and what the
+     * chip is asked for here in its place.
+     */
+    private static final int FRAME_SAMPLES = 735;
 
     /**
      * How big the debugger is drawn on its own, which used to be the size its window opened at.
@@ -313,6 +320,12 @@ public final class Shots {
     private Played play(final String rom, final String input, final long frames) throws IOException {
         var cart = Cart.load(Files.readAllBytes(roms.resolve(rom)), rom);
         var nes = new NES(cart);
+
+        // The meters and the per-voice traces, which the chip keeps only while something asks. On
+        // before the frames below are played rather than after, so that what the control panel's
+        // picture shows is the last second of a game rather than the handful of samples between
+        // the start of a frame and the breakpoint that stops it.
+        nes.getAPU().setPeakTracking(true);
         var session = new Session(
                 nes,
                 Palettes.defaultPalette(nes.getRegion()).colours(),
@@ -486,7 +499,7 @@ public final class Shots {
 
             // The two lines the emulation thread normally sends, and the one the window normally
             // writes. Nothing is clocking this machine, so nobody would otherwise.
-            panel[0].describe(Readout.of(nes));
+            panel[0].describe(Readout.of(nes, new short[FRAME_SAMPLES], voiceTraces(nes)));
             panel[0].setRunning(
                     "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
 
@@ -515,11 +528,6 @@ public final class Shots {
 
         debugger.addBreakpoint(SMB_NMI, Condition.parse(SMB_PLAYING));
 
-        // The meters, which are off until something asks. Nothing is clocking this machine by the
-        // time the picture is taken, so what they show is the loudest each voice was over the run
-        // rather than over the quarter second a running one would report.
-        session.nes().getAPU().setPeakTracking(true);
-
         Debugger.Stop stop = null;
         var frame = played.frame();
 
@@ -541,6 +549,23 @@ public final class Shots {
                 session.nes(), new ScreenComponent(), debugger, 0, AudioOutput.DEFAULT_LATENCY_MS);
 
         return new Stopped(played, runner, debugger, stop);
+    }
+
+    /**
+     * A frame of each voice on its own, which the emulation loop normally takes off the chip as it
+     * drains the frame's sound.
+     */
+    private static List<short[]> voiceTraces(final NES nes) {
+        var traces = new ArrayList<short[]>();
+
+        for (var channel : APUChannel.values()) {
+            var trace = new short[FRAME_SAMPLES];
+
+            nes.getAPU().trace(channel, trace, trace.length);
+            traces.add(trace);
+        }
+
+        return List.copyOf(traces);
     }
 
     private record Stopped(
