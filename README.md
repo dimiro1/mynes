@@ -150,10 +150,9 @@ file is where they live.
   console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
   each and a scope of the mix. **Split the voices** draws each one on its own in its own colour, so
   a square wave, a triangle, a hiss and a sampled drum are told apart at a glance.
-- A piano keyboard per voice under it, A0 to C8, which is exactly the range the chip has. The noise
-  gets one too: its register normally runs a 32767-step sequence and is pure hiss, but in short mode
-  it runs 93 steps and has a real pitch. **All four on one keyboard** puts them together, where an
-  octave, a third and a semitone of accidental dissonance stop looking alike.
+- A piano keyboard per voice under it, A0 to C8, which is exactly the range the chip has. **All
+  three on one keyboard** puts them together, where an octave, a third and a semitone of accidental
+  dissonance stop looking alike.
 - A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
   memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
 - A pads view: both controllers drawn with whatever is held lit up, and a strip of the last two

@@ -126,13 +126,13 @@ class SoundPanelTests {
 
         var keyboards = all(panel, Piano.class);
 
-        assertEquals(5, keyboards.size(), "four voices with a note, plus the one they share");
+        assertEquals(4, keyboards.size(), "three voices with a keyboard, plus the one they share");
         assertEquals(
-                4,
+                3,
                 keyboards.stream().filter(java.awt.Component::isVisible).count(),
                 "one each to begin with");
 
-        var one = box(panel, "All four on one keyboard");
+        var one = box(panel, "All three on one keyboard");
 
         assertNotNull(one);
         one.doClick();

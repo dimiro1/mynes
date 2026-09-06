@@ -63,7 +63,7 @@ public final class SoundPanel extends JPanel {
     private final Map<APUChannel, Piano> apart = new EnumMap<>(APUChannel.class);
     private final Map<APUChannel, JLabel> keyboardNames = new EnumMap<>(APUChannel.class);
 
-    private final JCheckBox oneKeyboard = new JCheckBox("All four on one keyboard");
+    private final JCheckBox oneKeyboard = new JCheckBox("All three on one keyboard");
 
     /**
      * The last frame handed over, kept so that ticking Split draws the five traces out of it
@@ -103,10 +103,7 @@ public final class SoundPanel extends JPanel {
         // the question a column of names cannot answer -- an octave, a third, or a semitone of
         // accidental dissonance all look the same written down.
         add(Theme.heading("Notes"), "newline, gaptop 14, span 8, split 3");
-        add(
-                Theme.note("A0 to C8, which is the range the chip has -- the noise only in short"
-                        + " mode, and the DMC never"),
-                "gapleft 8");
+        add(Theme.note("A0 to C8, which is the range the chip has"), "gapleft 8");
         add(oneKeyboard, "gapleft 24, wrap");
 
         // A keyboard each, which is the default for the reason a score is written that way: a part
@@ -168,7 +165,7 @@ public final class SoundPanel extends JPanel {
         split.addActionListener(e -> showSplit(split.isSelected()));
 
         oneKeyboard.setToolTipText(
-                "Put all four voices on one keyboard, where what they are doing to each other --"
+                "Put all three voices on one keyboard, where what they are doing to each other --"
                         + " an octave, a third, a semitone of accidental dissonance -- is visible");
         oneKeyboard.addActionListener(e -> showOneKeyboard(oneKeyboard.isSelected()));
     }

@@ -551,18 +551,25 @@ window, because that is exactly the range the chip has -- the triangle at its lo
 27.3Hz, which is A0 to within a few cents, and the pulses run out at the top where the sweep unit
 silences them anyway.
 
-**The noise has a keyboard, and that is not a mistake.** `APU.VoiceState.pitch()` is what decides
-who gets one, and it is a different question from `hertz()` for exactly one voice: the noise's hertz
-is how fast its shift register is being clocked, and its pitch is that over the length of the
-sequence it is running round. In the usual mode that sequence is 32767 steps and there is no pitch
-at all, so the keyboard stays empty -- which is itself the answer to "is this a note or a hiss". In
-short mode it is 93 steps, which repeats fast enough to be heard, and games use it for metallic
-effects and occasionally for bass. 4811.2Hz for the shortest period is the first entry of the table
-every reference prints for this channel, which is what `APUVoiceStateTests` holds it to. The DMC is
-the one voice that can never have a keyboard: its rate is a sample rate, and what pitch a sample
-comes out at is a fact about the bytes in it. **The Sound tab's note column and the dashboard both
-go through `pitch()`** rather than deciding for themselves, since two places deciding which voices
-have a note is exactly how they came to disagree about `playing` once already.
+**Three keyboards and not four: the noise has a pitch and does not get one.** `APU.VoiceState.pitch()`
+is what decides who has a note, and it is a different question from `hertz()` for exactly one voice
+-- the noise's hertz is how fast its shift register is being clocked, and its pitch is that over the
+length of the sequence it is running round. Normally that is 32767 steps and there is no pitch at
+all; tap the register six bits along instead of one and it is 93, which repeats fast enough to be
+heard, and 4811.2Hz for the shortest period is the first entry of the table every reference prints
+for this channel. `APUVoiceStateTests` holds it to that.
+
+**A keyboard for it was built and then taken out, and the reason was measured.** Over an hour of
+play across seven cartridges, Super Mario Bros. spends 64 frames of 3600 in short mode and Mega Man
+5 spends 56, while Super Mario Bros. 3, Castlevania, Battletoads, Contra and Metroid never touch it
+-- and two of Mega Man's three notes are below A0 and off a piano anyway. At four readouts a second
+that is a row of nothing. What the noise keeps is its **note, in the column beside its row**, which
+costs no room and is where anybody reading that row would look; that column had been saying "no
+note" unconditionally, which was wrong for those 64 frames. The DMC could never have had either: its
+rate is a sample rate, and what pitch a sample comes out at is a fact about the bytes in it. **The
+note column and the dashboard both go through `pitch()`** rather than deciding for themselves, since
+two places deciding which voices have a note is exactly how they came to disagree about `playing`
+once already.
 
 **What a keyboard shows that is not a measurement is the trail.** A readout is four times a second
 and a melody is faster than that, so a keyboard lit only by what is held at the instant of the

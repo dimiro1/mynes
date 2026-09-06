@@ -26,9 +26,9 @@ import java.util.Map;
  * where the sweep unit silences them anyway. So a real piano's range is not a rounding of the NES's
  * -- it is the same range, which is why the metaphor is worth using at all.
  * <p>
- * <b>One keyboard per voice, or all four on one.</b> They answer different questions and both are
- * worth having, which is why there is a tick rather than a decision. Four keyboards are read like
- * four staves: each part's own shape, its range, and whether it is moving at all. One keyboard is
+ * <b>One keyboard per voice, or all three on one.</b> They answer different questions and both are
+ * worth having, which is why there is a tick rather than a decision. Three keyboards are read like
+ * three staves: each part's own shape, its range, and whether it is moving at all. One keyboard is
  * read like a chord -- what the parts are doing <em>to each other</em>, which is where an octave,
  * a third and a semitone of accidental dissonance stop looking alike. Separate is the default for
  * the reason a score is written that way: a part is easier to follow than a texture.
@@ -82,20 +82,27 @@ final class Piano extends JComponent {
     private static final int TRAIL_READOUTS = 2;
 
     /**
-     * The voices that can have a note, in the order the rows above have them.
+     * The voices that get a keyboard, in the order the rows above have them.
      * <p>
-     * The noise is one of them, which is the entry worth explaining. In its usual mode its shift
-     * register runs a sequence 32767 steps long and what comes out is hiss with no pitch at all --
-     * so its keyboard stays empty, which is itself the answer to whether a sound is a note. In
-     * short mode the sequence is 93 steps, which repeats fast enough to be heard as a metallic
-     * pitch, and games use it for exactly that. {@link APU.VoiceState#pitch()} is what tells the
-     * two apart, and this asks it rather than deciding for itself.
+     * <b>The noise is not one of them, and it was.</b> It can have a pitch -- tap its shift register
+     * six bits along instead of one and the sequence is 93 steps rather than 32767, which repeats
+     * fast enough to be heard -- so a keyboard for it is right in principle. It is useless in
+     * practice, and that was measured rather than argued about. Over an hour of play across seven
+     * cartridges: Super Mario Bros. spends 64 frames of 3600 in short mode and Mega Man 5 spends 56,
+     * while Super Mario Bros. 3, Castlevania, Battletoads, Contra and Metroid never touch it at all.
+     * Two of Mega Man's three notes are below A0 and off the end of a piano anyway. At four readouts
+     * a second, a keyboard for that is a row of nothing that somebody has to be told to ignore.
      * <p>
-     * The DMC is not here at all and cannot be: its rate is a sample rate, and what pitch a sample
-     * comes out at is a fact about the bytes in it rather than about the chip.
+     * What the noise does keep is its <em>note</em>, in the column beside its row, where it costs no
+     * room and is exactly where anybody reading that row would look. {@link APU.VoiceState#pitch()}
+     * is what puts it there, and that column had been saying "no note" unconditionally, which was
+     * wrong for those 64 frames.
+     * <p>
+     * The DMC could never have had one: its rate is a sample rate, and what pitch a sample comes out
+     * at is a fact about the bytes in it rather than about the chip.
      */
     static final APUChannel[] PITCHED = {
-            APUChannel.PULSE_1, APUChannel.PULSE_2, APUChannel.TRIANGLE, APUChannel.NOISE,
+            APUChannel.PULSE_1, APUChannel.PULSE_2, APUChannel.TRIANGLE,
     };
 
     /**
