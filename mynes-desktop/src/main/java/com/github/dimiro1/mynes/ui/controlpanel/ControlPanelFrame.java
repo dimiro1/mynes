@@ -13,6 +13,7 @@ import com.github.dimiro1.mynes.ui.Switches;
 import com.github.dimiro1.mynes.ui.cartridge.CartridgePanel;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerPanel;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
+import com.github.dimiro1.mynes.ui.events.EventsPanel;
 import com.github.dimiro1.mynes.ui.pads.PadsPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
@@ -38,6 +39,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.function.Consumer;
 
 /**
  * One window over everything the machine is doing, and every lever on it.
@@ -206,7 +208,7 @@ public final class ControlPanelFrame extends JFrame {
 
         var inFront = tabs.getSelectedIndex();
 
-        instruments = new Instruments(nes, cart, colours);
+        instruments = new Instruments(nes, cart, colours, this::recordEventReads);
 
         tabs.removeAll();
 
@@ -302,9 +304,15 @@ public final class ControlPanelFrame extends JFrame {
             CHRViewerPanel tiles,
             SoundPanel sound,
             CartridgePanel cartridge,
-            PadsPanel pads) {
+            PadsPanel pads,
+            EventsPanel events) {
 
-        private Instruments(final NES nes, final Cart cart, final NESPalette colours) {
+        private Instruments(
+                final NES nes,
+                final Cart cart,
+                final NESPalette colours,
+                final Consumer<Boolean> onEventReads) {
+
             this(
                     new NametableViewerPanel(nes, colours),
                     new OAMViewerPanel(nes.getPPU(), colours),
@@ -312,14 +320,16 @@ public final class ControlPanelFrame extends JFrame {
                     new CHRViewerPanel(cart, nes.getPPU(), colours),
                     new SoundPanel(),
                     new CartridgePanel(cart),
-                    new PadsPanel());
+                    new PadsPanel(),
+                    new EventsPanel(nes.getRegion(), onEventReads));
         }
 
         /**
          * The pictures in the order the questions come in -- what is on the screen, what is over
          * it, what colours both are drawn through, and only then what the game has to draw with --
          * and then the three parts of the machine that have no picture at all: what it sounds
-         * like, what it is made of, and what it is being told.
+         * like, what it is made of, and what it is being told. Events is last because it is the
+         * only one that is not about the machine as it stands but about what it did.
          */
         void addTo(final JTabbedPane pane) {
             pane.addTab("Nametables", fixed(nametables));
@@ -329,6 +339,7 @@ public final class ControlPanelFrame extends JFrame {
             pane.addTab("Sound", filling(sound));
             pane.addTab("Cartridge", filling(cartridge));
             pane.addTab("Pads", filling(pads));
+            pane.addTab("Events", fixed(events));
         }
 
         void setPalette(final NESPalette colours) {
@@ -342,6 +353,7 @@ public final class ControlPanelFrame extends JFrame {
             sound.show(readout);
             cartridge.show(readout);
             pads.show(readout);
+            events.show(readout);
         }
     }
 
@@ -416,6 +428,19 @@ public final class ControlPanelFrame extends JFrame {
 
         if (debugger != null) {
             debugger.readout(readout);
+        }
+    }
+
+    /**
+     * The Events tab's own tick, which reaches past this window and onto the machine's bus.
+     * <p>
+     * Through the runner rather than through the debugger directly, for the reason every other
+     * change to a running machine goes that way: the debugger belongs to the thread clocking it and
+     * this is the event dispatch thread.
+     */
+    private void recordEventReads(final boolean reads) {
+        if (runner != null) {
+            runner.setEventReads(reads);
         }
     }
 

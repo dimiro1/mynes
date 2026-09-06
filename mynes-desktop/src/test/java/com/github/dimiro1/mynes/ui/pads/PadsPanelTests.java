@@ -95,7 +95,7 @@ class PadsPanelTests {
     }
 
     private static Readout readout(final Readout.Pads pads) {
-        return Readout.of(nes, Readout.NO_SCOPE, Readout.NO_TRACES, pads);
+        return Readout.of(nes, Readout.NO_SCOPE, Readout.NO_TRACES, pads, Readout.Events.NONE);
     }
 
     private static List<String> labels(final Container root) {

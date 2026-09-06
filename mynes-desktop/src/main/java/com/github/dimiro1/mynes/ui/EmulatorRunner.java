@@ -242,6 +242,18 @@ public class EmulatorRunner {
     private final PadPolling polling = new PadPolling();
 
     /**
+     * What the machine did to its hardware during the frame now running, in the order it did it.
+     * Filled by the debugger's bus hooks and emptied at every boundary.
+     */
+    private final EventLog events = new EventLog();
+
+    /**
+     * Whether the reads are being recorded as well as the writes, which is the Events tab's own
+     * tick. Volatile because that tick is on the event dispatch thread and this is read here.
+     */
+    private volatile boolean eventReads;
+
+    /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
      * give the keyboard back and take the word off the title bar.
      */
@@ -464,6 +476,21 @@ public class EmulatorRunner {
         var wanted = observer != null;
 
         post(() -> apu.setPeakTracking(wanted));
+
+        armEventLog();
+    }
+
+    /**
+     * Records the reads as well as the writes, which is the Events tab's own tick.
+     * <p>
+     * Its own switch rather than something that follows the panel being open, because it is the one
+     * part of this that a machine can feel: the read hook sees every instruction fetch. Everything
+     * else rides on the write hook, which a game passes a few hundred times a frame.
+     */
+    public void setEventReads(final boolean reads) {
+        this.eventReads = reads;
+
+        armEventLog();
     }
 
     /**
@@ -911,6 +938,11 @@ public class EmulatorRunner {
                     fillScope(sampleCount);
                     notePads();
                     observeFrames(1);
+
+                    // After the readout rather than before it, and that order is the whole of how
+                    // the Events tab gets a frame rather than a fragment of one: what the log holds
+                    // at this moment is exactly the frame that has just ended.
+                    events.startFrame();
                 }
 
                 // Every frame that finished, wherever it finished -- stepped, halted, fast
@@ -1148,7 +1180,8 @@ public class EmulatorRunner {
             traced.add(trace.clone());
         }
 
-        var readout = Readout.of(nes, scope.clone(), List.copyOf(traced), polling.snapshot());
+        var readout = Readout.of(
+                nes, scope.clone(), List.copyOf(traced), polling.snapshot(), events.snapshot());
 
         // The meters' window starts again here rather than inside the reading, so that the
         // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
@@ -1178,6 +1211,24 @@ public class EmulatorRunner {
         }
 
         polling.frameEnded(framesRun, nes.getController1(), nes.getController2());
+    }
+
+    /**
+     * Points the debugger's hooks at the log, or takes them off.
+     * <p>
+     * Posted rather than done here, because the debugger belongs to the thread clocking the machine
+     * and both callers are on the event dispatch thread -- the panel being shown, and its reads
+     * tick. Off whenever nobody is watching, which is the same rule the readout keeps and is nearly
+     * always.
+     * <p>
+     * <b>This does not slow the machine down.</b> A sink is not a breakpoint: the driver's fast
+     * loop is untouched, and what it costs is a hook on a bus the game already crosses.
+     */
+    private void armEventLog() {
+        var wanted = frameObserver != null;
+        var reads = eventReads;
+
+        post(() -> debugger.setEventSink(wanted ? events::record : null, reads));
     }
 
     /**

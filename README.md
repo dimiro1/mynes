@@ -156,6 +156,10 @@ file is where they live.
   seconds marked wherever a frame went by without the game reading `$4016`. That is a main loop
   that overran its frame — the stutter **Overclock** undoes — and nothing else in the program can
   see it.
+- An events view: one frame drawn as the beam draws it, with a mark wherever the game touched the
+  hardware — every PPU and audio register, every mapper write, and both interrupts — at the
+  scanline and dot it happened on. A write to `$2005` is a scroll; the same write a hundred lines
+  down is a status bar split, and nothing else can tell you which it was.
 - Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
   and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels

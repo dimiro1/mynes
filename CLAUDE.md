@@ -603,6 +603,64 @@ the panel has been shut for a while. `Readout.Pads.NONE`, with no window at all,
 taken anywhere but the emulation loop carries, and "nobody counted" is said differently from "no
 lag" wherever it shows: on the dashboard the count is simply absent.
 
+**The Events tab is the only thing in the program that answers *when*.** Everything else answers
+*what*: which bank, which sprite, which byte. A write to `$2005` is a scroll; the same write a
+hundred and fourteen lines down is a status bar split, and by the time the frame is over there is
+nothing anywhere -- not in memory, not in the picture, not in a disassembly -- to say which line it
+landed on. So one frame is drawn as the beam draws it, 341 dots by 262 scanlines with the picture
+area clear and the blanking shaded, and every PPU register, audio register, mapper write and
+interrupt is a mark where it happened. A split on the wrong line, a bank switched mid-picture
+instead of in the blanking, an MMC3 interrupt three lines late, an NMI a game switched off half way
+down: each is a mark in the wrong place and none of them is anything at all in any other view.
+
+**Recording does not arm the machine, and that is the point.** Every other thing the debugger
+watches costs the driver its fast loop, because a breakpoint has to be looked at between
+instructions. This rides on the bus hooks `MMU` already carries, so a game being recorded is a game
+running normally -- which it has to be, since where in the frame a game writes `$2005` is a question
+about a game that is playing properly and a gauge that changed the timing would be measuring itself.
+`Debugger.isArmed()` is deliberately untouched by `setEventSink`.
+
+**Writes always, reads only when asked, and that is a decision at the machine rather than a
+filter.** Recording reads means putting a hook on the line every instruction fetch comes past --
+the same price `watch ... read` pays and for the same reason -- so the Events tab's **Record reads**
+tick reaches through `EmulatorRunner.setEventReads` and onto the bus rather than hiding marks that
+were already collected. What it buys is the polls: `$2002` while a program waits for vblank and
+`$4016` while it reads the pad, which are worth seeing exactly when the question is why a game is
+waiting. The five coloured ticks beside it *are* filters, cost nothing, and are also the legend.
+
+**What is recorded is four ranges and two interrupts, and what is left out is the point.** `$2000`
+to `$3FFF` is the PPU, `$4000` to `$401F` is the sound chip plus the transfer at `$4014` and the
+pads at `$4016`, and a write above `$8000` is a mapper register -- every one of those is the machine
+being *told* something. Work RAM and cartridge RAM are not: a game writes to those thousands of
+times a frame and all of it is the game thinking, which is what a watchpoint and the memory view are
+for. A read outside `$2000-$401F` is never an event either, since above `$8000` it is the program
+being fetched.
+
+**The dot is good to within two and no better.** The machine is clocked a CPU cycle at a time and
+three dots go past in one, so what `PPU.getDot()` answers when a write lands is the last of the
+three the cycle covered -- the same three-dots-per-tick granularity CLAUDE.md already notes for
+scanline 0. The raster is drawn two screen pixels to a dot for that reason as much as for
+legibility: dot-for-dot would be claiming a precision that is not there.
+
+**A frame at a time, where the Pads tab keeps two seconds.** Both are histories rather than states,
+and the difference is what each draws: a rate wants a window, and a raster wants exactly one frame,
+because two frames of marks on one raster is two games drawn on top of each other. `ui/EventLog`
+holds the frame in parallel arrays so that nothing allocates while the machine runs, and
+`EmulatorRunner` calls `startFrame()` **after** the readout is taken -- that order is the whole of
+how the tab gets a frame rather than a fragment. It holds 4096, which is generous for the couple of
+hundred a game means to make and deliberately short of the thousands a `$2002` wait produces with
+reads on; `Readout.Events.dropped` says how many were lost, because the frame that overflows is the
+frame worth looking at.
+
+**`InterruptListener` is the third seam, beside the two memory ones, and it is not about the bus.**
+`CPU` calls it on the cycle the vector is picked, which is the honest moment: an interrupt asserted
+while the I flag was set is not one the processor served, and an NMI that arrived mid-sequence
+hijacks whatever was already pushing, and by that cycle both are settled. **A BRK is not one of
+these** -- it picks its vector through the same code and is deliberately not reported, being an
+instruction the program ran rather than a device interrupting it. The blind spot that leaves is a
+BRK an NMI hijacked, which is an NMI being serviced and still does not arrive; it is documented
+rather than closed, for the reason the watchpoints' DMA hole is.
+
 **`Readout` is also what a `MachineSnapshot` is made of.** The machine's registers are the
 machine's registers, and two shapes for them would be two places to add the next one to; a snapshot
 is a readout plus the things only a stopped machine can afford, which is 64K of address space and
@@ -1020,6 +1078,7 @@ mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and 
   mynes/ui/sound/     the five voices, their meters and the scope of what they add up to
   mynes/ui/cartridge/ which bank of the cartridge is in each window, and the rest of the board
   mynes/ui/pads/      both controllers, and the strip of frames the game never read one on
+  mynes/ui/events/    one frame as a raster, with a mark wherever the machine was touched
 
 mynes-shots/          depends on desktop, and nothing depends on it
   mynes/shots/        the camera that takes the README's pictures off the real window

@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.mappers.Mirroring;
 import org.jetbrains.annotations.Nullable;
@@ -68,6 +69,11 @@ import java.util.List;
  * @param pads      how often the game has been looking at the controllers, which is the one thing
  *                  here that is counted rather than read: it takes two frames to see, so only the
  *                  loop that ran them can answer. {@link Pads#NONE} where nothing was counting.
+ * @param events    everything the machine did to its hardware during the frame that just finished,
+ *                  which is the other thing only the loop that ran it can answer -- it is a
+ *                  <em>history</em> rather than a state, and by the time a frame is over there is
+ *                  nothing left in the machine to say when any of it happened.
+ *                  {@link Events#NONE} where nothing was recording.
  */
 public record Readout(
         CPU.State cpu,
@@ -92,7 +98,8 @@ public record Readout(
         short[] scope,
         Board board,
         List<short[]> traces,
-        Pads pads) {
+        Pads pads,
+        Events events) {
 
     /**
      * What the cartridge is doing, which is a question about the board rather than about the game.
@@ -177,6 +184,41 @@ public record Readout(
     }
 
     /**
+     * One frame of what the machine did to its hardware, in the order it did it.
+     * <p>
+     * The only part of a readout that is a <em>history</em>. Everything else here is the machine as
+     * it stands, and could in principle be asked for at any moment; this could not be asked for at
+     * all, because by the time the frame is over there is nothing in the machine to say which
+     * scanline a write to $2005 landed on -- and that is the whole question.
+     *
+     * @param events  in the order they happened, oldest first. Handed over rather than shared.
+     * @param dropped how many more there were than the log could hold, which is nearly always zero
+     *                and is not zero exactly when a game is doing the thing worth looking at.
+     */
+    public record Events(List<Debugger.Event> events, int dropped) {
+
+        /**
+         * What a readout taken anywhere but the emulation loop knows about the frame: nothing.
+         */
+        public static final Events NONE = new Events(List.of(), 0);
+
+        /**
+         * How many of a kind there are, for the line that says what the frame was made of.
+         */
+        public int count(final Debugger.EventKind kind) {
+            var found = 0;
+
+            for (var event : events) {
+                if (event.kind() == kind) {
+                    found++;
+                }
+            }
+
+            return found;
+        }
+    }
+
+    /**
      * What a readout taken anywhere but the emulation loop has for a scope: nothing. The samples
      * belong to the thread feeding the sound card, and a machine stopped at a breakpoint is not
      * feeding one.
@@ -192,19 +234,21 @@ public record Readout(
      * Reads the machine. Only ever called on the thread that clocks it, at a frame boundary.
      */
     public static Readout of(final NES nes) {
-        return of(nes, NO_SCOPE, NO_TRACES, Pads.NONE);
+        return of(nes, NO_SCOPE, NO_TRACES, Pads.NONE, Events.NONE);
     }
 
     /**
-     * The same, with the three things a machine cannot be asked for: a slice of what the sound card
-     * was given, a slice of what each voice put into it, and how often the game has been reading
-     * the pads. All three are the emulation loop's own bookkeeping rather than the machine's.
+     * The same, with the four things a machine cannot be asked for: a slice of what the sound card
+     * was given, a slice of what each voice put into it, how often the game has been reading the
+     * pads, and everything it did to its hardware during the frame. All four are the emulation
+     * loop's own bookkeeping rather than the machine's.
      */
     public static Readout of(
             final NES nes,
             final short[] scope,
             final List<short[]> traces,
-            final Pads pads) {
+            final Pads pads,
+            final Events events) {
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
         var voices = new ArrayList<APU.VoiceState>(APUChannel.values().length);
@@ -239,7 +283,8 @@ public record Readout(
                 scope,
                 boardOf(nes),
                 traces,
-                pads);
+                pads,
+                events);
     }
 
     private static Board boardOf(final NES nes) {

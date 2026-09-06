@@ -97,6 +97,11 @@ class SaveStateCompletenessTests {
                             + " from the write listener because the two are put down separately:"
                             + " watching every read means being told about every instruction fetch,"
                             + " which is a price only somebody who asked for it should pay"),
+            Map.entry("CPU.interruptListener",
+                    "where a debugger wires in to be told which interrupts were served and when."
+                            + " Whoever is watching the machine rather than the machine, which is"
+                            + " the same argument as MMU's two hooks -- and null whenever nobody is"
+                            + " watching, which is what keeps the walk below out of the debugger"),
             Map.entry("MMU.genie",
                     "the Game Genie plugged in between the cartridge and the console, which belongs"
                             + " to whoever is playing rather than to the machine -- and a state that"

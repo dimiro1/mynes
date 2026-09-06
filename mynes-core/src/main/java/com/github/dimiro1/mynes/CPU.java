@@ -36,6 +36,14 @@ public class CPU {
     private final List<CPUEventListener> listeners = new ArrayList<>();
 
     /**
+     * Whoever wants to be told which interrupts are served and when, or null when nobody does --
+     * which is nearly always. One slot rather than a list, and a null check rather than an empty
+     * one, for the reason {@link MMU}'s two hooks are the same shape: a machine nobody is watching
+     * should pay a branch and nothing else.
+     */
+    private InterruptListener interruptListener;
+
+    /**
      * Reset is a one-shot request: there is no line for a device to keep holding, so the flag is
      * cleared as soon as the reset sequence starts. Set at construction so a fresh CPU boots
      * through the reset vector.
@@ -420,6 +428,20 @@ public class CPU {
     }
 
     /**
+     * Told whenever an interrupt is served, or null for nobody.
+     * <p>
+     * Its own slot rather than another method on {@link CPUEventListener}, because the two are
+     * asked for separately and cost differently: a step listener is called 1.8 million times a
+     * second and an interrupt listener a handful of times a frame, so something that wants only
+     * the second should not be put on the first list.
+     *
+     * @see InterruptListener
+     */
+    public void setInterruptListener(final InterruptListener listener) {
+        this.interruptListener = listener;
+    }
+
+    /**
      * Stop notifying one.
      * <p>
      * Not called from inside {@link CPUEventListener#onStep}: the list is walked while it notifies,
@@ -720,6 +742,16 @@ public class CPU {
                 decSP();
                 setFlagI(true);
                 interruptVector = takeVector();
+
+                // Here rather than inside takeVector, which BRK also goes through: a BRK is an
+                // instruction the program ran rather than a device interrupting it, and a listener
+                // watching for where a frame was cut does not want one. The blind spot that leaves
+                // is a BRK an NMI hijacked, which really is an NMI being serviced and is not
+                // reported -- a program that runs BRK at all is one a breakpoint suits better.
+                if (interruptListener != null) {
+                    interruptListener.onInterrupt(interruptVector == NMI_VECTOR, pc);
+                }
+
                 incIntTick();
             }
             case 6 -> {
