@@ -12,6 +12,7 @@ import java.io.File;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -135,16 +136,32 @@ class RomDropTests {
     }
 
     /**
-     * The window is handed the cartridge from the event queue rather than from inside the drop, so
-     * nothing has happened by the time {@code importData} returns.
+     * The window is handed the cartridge from the event queue rather than from inside the drop.
+     * <p>
+     * Asked as <em>which thread</em> rather than as "nothing has happened yet", which is what this
+     * used to assert and is a claim about a moment a test cannot pin down: {@code importData}
+     * returns having posted the work, and between that and the next line the event queue is free to
+     * run it. On a machine where the queue is already awake -- which every earlier test in this
+     * module leaves it -- that is a few microseconds, and the test fails for being right too
+     * quickly. It went red on CI and never once here, which is the signature of exactly that.
      */
     @Test
-    void theGameIsNotLoadedInsideTheDrop() {
-        var opened = new AtomicReference<File>();
+    void theGameIsNotLoadedInsideTheDrop() throws Exception {
+        var queue = new AtomicReference<Boolean>();
 
-        new RomDrop(opened::set).importData(support(new File("/roms/smb.nes")));
+        assertFalse(
+                SwingUtilities.isEventDispatchThread(),
+                "the drop is being made from this thread, so the two are telling apart");
 
-        assertNull(opened.get());
+        new RomDrop(rom -> queue.set(SwingUtilities.isEventDispatchThread()))
+                .importData(support(new File("/roms/smb.nes")));
+
+        flush();
+
+        assertEquals(
+                Boolean.TRUE,
+                queue.get(),
+                "the cartridge was handed over on the event queue rather than inside the drop");
     }
 
     private static TransferHandler.TransferSupport support(final File... files) {
