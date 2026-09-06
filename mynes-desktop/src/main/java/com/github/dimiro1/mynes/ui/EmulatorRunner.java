@@ -236,6 +236,12 @@ public class EmulatorRunner {
     private final short[] voice = new short[AUDIO_BUFFER_SAMPLES];
 
     /**
+     * How often the game has been reading the pads, frame by frame. The one thing in a readout that
+     * has to be counted as the frames go past rather than read off the machine at the end of them.
+     */
+    private final PadPolling polling = new PadPolling();
+
+    /**
      * Told, on the event dispatch thread, when a movie reaches its last frame -- so the window can
      * give the keyboard back and take the word off the title bar.
      */
@@ -903,6 +909,7 @@ public class EmulatorRunner {
                 // where the frame left it.
                 if (completed) {
                     fillScope(sampleCount);
+                    notePads();
                     observeFrames(1);
                 }
 
@@ -1141,13 +1148,36 @@ public class EmulatorRunner {
             traced.add(trace.clone());
         }
 
-        var readout = Readout.of(nes, scope.clone(), List.copyOf(traced));
+        var readout = Readout.of(nes, scope.clone(), List.copyOf(traced), polling.snapshot());
 
         // The meters' window starts again here rather than inside the reading, so that the
         // debugger's stop snapshot -- which goes through the same record -- cannot empty them.
         nes.getAPU().clearPeaks();
 
         SwingUtilities.invokeLater(() -> observer.accept(readout));
+    }
+
+    /**
+     * Counts what the game did to the pads in the frame that has just finished.
+     * <p>
+     * Every forward frame rather than every readout, unlike everything else here, because what it
+     * measures is a difference between consecutive frames: a lag frame seen once every fifteen
+     * would be fifteen frames of the game reported as one. Cheap enough for that -- four counter
+     * reads and a subtraction -- and only while somebody is watching, which is the
+     * {@link #frameObserver} rule.
+     * <p>
+     * <b>Not from the rewind path</b>, which is the one place {@code framesRun} moves without any
+     * frame being run. Nothing is re-emulated going backwards, so the counters do not move either,
+     * and every frame handed back would be counted as a frame the game failed to read the pad in.
+     * The frame number is what says so: the first frame after a rewind is not one more than the
+     * last one counted, and {@link PadPolling} starts again rather than measuring across the gap.
+     */
+    private void notePads() {
+        if (frameObserver == null) {
+            return;
+        }
+
+        polling.frameEnded(framesRun, nes.getController1(), nes.getController2());
     }
 
     /**

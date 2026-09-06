@@ -60,6 +60,12 @@ class SaveStateCompletenessTests {
             Map.entry("StandardController.buttons",
                     "the player's hands, which a file cannot put back -- and a machine that came"
                             + " back with A held would never see it released"),
+            Map.entry("StandardController.polls",
+                    "how often the game has latched this pad, which is a gauge somebody is reading"
+                            + " rather than anything the console can see -- the same argument as"
+                            + " APU.levels, and a state that put one back would be restoring the"
+                            + " gauge rather than the machine"),
+            Map.entry("StandardController.bitsRead", "the other half of the same gauge"),
             Map.entry("PPU.backgroundLayerVisible",
                     "a debug switch belonging to whoever is watching, not to the machine"),
             Map.entry("PPU.spriteLayerVisible",

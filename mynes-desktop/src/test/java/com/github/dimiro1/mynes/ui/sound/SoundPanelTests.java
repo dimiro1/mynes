@@ -119,7 +119,7 @@ class SoundPanelTests {
             traces.add(trace);
         }
 
-        return Readout.of(nes, new short[FRAME], List.copyOf(traces));
+        return Readout.of(nes, new short[FRAME], List.copyOf(traces), Readout.Pads.NONE);
     }
 
     private static int loudest(final short[] samples) {

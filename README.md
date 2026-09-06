@@ -136,8 +136,9 @@ file is where they live.
   overclock, the Game Genie and the tracer, without going back to the game window for any of them.
 - Three lines across the top of it say what the machine is doing without being asked: the frame
   rate and the cartridge, `$2000` and `$2001` decoded with the scroll and the sprite-0 flag, and
-  which of the five voices are playing, how the frame counter is sequencing them and what is being
-  held on the pad. Read at a frame boundary, so it is one moment rather than a dozen.
+  which of the five voices are playing, how the frame counter is sequencing them, what is being
+  held on the pad and how often the game is reading it. Read at a frame boundary, so it is one
+  moment rather than a dozen.
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
   the address space.
@@ -151,6 +152,10 @@ file is where they live.
   a square wave, a triangle, a hiss and a sampled drum are told apart at a glance.
 - A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
   memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
+- A pads view: both controllers drawn with whatever is held lit up, and a strip of the last two
+  seconds marked wherever a frame went by without the game reading `$4016`. That is a main loop
+  that overran its frame — the stutter **Overclock** undoes — and nothing else in the program can
+  see it.
 - Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
   and the sprite view guesses which sprites are one character so a click outlines all of them.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels

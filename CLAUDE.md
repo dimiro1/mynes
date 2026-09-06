@@ -570,6 +570,39 @@ level, and a trace drawn against the whole range is a flat line. Fixed rather th
 whatever is in the buffer, which is the important half -- a scope that scaled itself would draw
 silence at full scale the moment the last note ended.
 
+**The Pads tab answers two questions, and the second is why it is a tab.** The first is what is
+being held, drawn as a controller rather than as eight ticks, because the shape is the reading: Up
+and Left together is a diagonal, and Left and Right together -- which a keyboard can send and a
+moulded cross cannot -- is a bug in whatever is feeding the pad. The second is **how often the game
+looks**, and nothing else in the program can see it. A game reads $4016 once a frame, so a frame
+that went by with no poll in it is a frame whose main loop did not finish in time: the game skipped
+a turn and drew the same picture again, which is invisible in a picture, in the sound and in the
+frame counter alike. It is exactly the stutter `--hack overclock` undoes, and the strip of the last
+two seconds under the pads is the before and after for it -- a mark every other frame is a loop
+overrunning by a little, a solid run is a level loading, and one mark every few seconds is the host
+stopping rather than the game.
+
+**The two ports are told apart by their reads rather than by their polls.** `Controller.getPolls()`
+counts the falling edge of the strobe, which is the moment the shift register stops following the
+buttons -- and one write to $4016 drives the latch line of both ports, so both pads always answer
+with the same number. `getBitsRead()` is what differs: a game with no two player mode latches pad
+two every frame and never clocks a bit out of $4017, which is the answer to why a second controller
+does nothing. Both are `long`, both are instrumentation rather than state, and both are in
+`NOT_IN_THE_STATE` with their reason.
+
+**The arithmetic is `ui/PadPolling`, and it runs every forward frame rather than every readout.**
+What it measures is a difference between consecutive frames, so a lag frame seen once every fifteen
+would be fifteen frames of the game reported as one -- it is the one thing in a readout that cannot
+be sampled at the rate the rest of it is. It is still behind the `Debugger.isArmed()` rule, so a
+closed panel counts nothing. **It is not fed from the rewind path**, which is the one place
+`framesRun` moves without a frame being run: nothing is re-emulated going backwards, so the
+counters do not move either and every frame handed back would be counted as a frame the game failed
+to read the pad in. The frame number is what says so -- a call that is not one more than the last
+one starts the window again rather than measuring across the gap, which is also what happens when
+the panel has been shut for a while. `Readout.Pads.NONE`, with no window at all, is what a readout
+taken anywhere but the emulation loop carries, and "nobody counted" is said differently from "no
+lag" wherever it shows: on the dashboard the count is simply absent.
+
 **`Readout` is also what a `MachineSnapshot` is made of.** The machine's registers are the
 machine's registers, and two shapes for them would be two places to add the next one to; a snapshot
 is a readout plus the things only a stopped machine can afford, which is 64K of address space and
@@ -984,6 +1017,9 @@ mynes-desktop/        depends on core, patch, archive and headless; FlatLaf and 
                       with the scroll window over them, the sixty four sprites with their
                       attributes, and the thirty two bytes of palette RAM everything is coloured
                       through
+  mynes/ui/sound/     the five voices, their meters and the scope of what they add up to
+  mynes/ui/cartridge/ which bank of the cartridge is in each window, and the rest of the board
+  mynes/ui/pads/      both controllers, and the strip of frames the game never read one on
 
 mynes-shots/          depends on desktop, and nothing depends on it
   mynes/shots/        the camera that takes the README's pictures off the real window

@@ -13,6 +13,7 @@ import com.github.dimiro1.mynes.ui.Switches;
 import com.github.dimiro1.mynes.ui.cartridge.CartridgePanel;
 import com.github.dimiro1.mynes.ui.chrviewer.CHRViewerPanel;
 import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
+import com.github.dimiro1.mynes.ui.pads.PadsPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerPanel;
@@ -292,7 +293,7 @@ public final class ControlPanelFrame extends JFrame {
     // ================================================================================== internals
 
     /**
-     * The four instruments a machine brings with it, built and thrown away together.
+     * The instruments a machine brings with it, built and thrown away together.
      */
     private record Instruments(
             NametableViewerPanel nametables,
@@ -300,7 +301,8 @@ public final class ControlPanelFrame extends JFrame {
             PaletteViewerPanel palette,
             CHRViewerPanel tiles,
             SoundPanel sound,
-            CartridgePanel cartridge) {
+            CartridgePanel cartridge,
+            PadsPanel pads) {
 
         private Instruments(final NES nes, final Cart cart, final NESPalette colours) {
             this(
@@ -309,13 +311,15 @@ public final class ControlPanelFrame extends JFrame {
                     new PaletteViewerPanel(nes.getPPU(), colours),
                     new CHRViewerPanel(cart, nes.getPPU(), colours),
                     new SoundPanel(),
-                    new CartridgePanel(cart));
+                    new CartridgePanel(cart),
+                    new PadsPanel());
         }
 
         /**
          * The pictures in the order the questions come in -- what is on the screen, what is over
          * it, what colours both are drawn through, and only then what the game has to draw with --
-         * and the half of the machine that has no picture at the end.
+         * and then the three parts of the machine that have no picture at all: what it sounds
+         * like, what it is made of, and what it is being told.
          */
         void addTo(final JTabbedPane pane) {
             pane.addTab("Nametables", fixed(nametables));
@@ -324,6 +328,7 @@ public final class ControlPanelFrame extends JFrame {
             pane.addTab("Tiles", fixed(tiles));
             pane.addTab("Sound", filling(sound));
             pane.addTab("Cartridge", filling(cartridge));
+            pane.addTab("Pads", filling(pads));
         }
 
         void setPalette(final NESPalette colours) {
@@ -336,6 +341,7 @@ public final class ControlPanelFrame extends JFrame {
         void show(final Readout readout) {
             sound.show(readout);
             cartridge.show(readout);
+            pads.show(readout);
         }
     }
 

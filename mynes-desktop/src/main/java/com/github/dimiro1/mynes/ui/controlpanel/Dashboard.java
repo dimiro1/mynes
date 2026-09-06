@@ -129,8 +129,8 @@ final class Dashboard extends JPanel {
     }
 
     /**
-     * Which voices have something left to play, how the frame counter is sequencing them, and what
-     * is being held on the pad.
+     * Which voices have something left to play, how the frame counter is sequencing them, what is
+     * being held on the pad, and how often the game has been reading it.
      * <p>
      * Out of $4015, which says whether a channel's length counter has anything left rather than
      * whether it is audible this instant -- so a voice that is silent between notes still shows.
@@ -165,6 +165,17 @@ final class Dashboard extends JPanel {
         }
 
         parts.add("PAD " + buttons(readout.pad1()));
+
+        // Beside the pad rather than beside the frame rate, which is where it looks like it
+        // belongs: what this counts is frames the game never read the pad in, which is a fact about
+        // the game's main loop and not about how fast the loop around it is being run. Absent
+        // rather than zero when nothing has been counting, since "no lag" and "nobody looked" are
+        // different answers -- see Readout.Pads.
+        var pads = readout.pads();
+
+        if (pads.frames() > 0) {
+            parts.add("lag " + pads.lagFrames() + " of " + pads.frames());
+        }
 
         return "APU  " + String.join(GAP, parts);
     }

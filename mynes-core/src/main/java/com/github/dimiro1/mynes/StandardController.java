@@ -28,6 +28,20 @@ public class StandardController implements Controller {
      */
     private int output;
 
+    /**
+     * How often the game has latched this pad, and how many bits it has clocked out of it.
+     * <p>
+     * Instrumentation, and so not in a save state: the console cannot see either number, and a
+     * state that put one back would be restoring the gauge rather than the machine. Emulation
+     * thread only, like the shift register beside them -- the one field here that crosses a thread
+     * is {@code buttons}.
+     * <p>
+     * {@code long} rather than {@code int} because only differences are ever taken of them, and a
+     * counter that wrapped would put one nonsensical frame into whatever was reading it.
+     */
+    private long polls;
+    private long bitsRead;
+
     public StandardController() {
         this.buttons = 0;
         this.shiftRegister = 0;
@@ -46,11 +60,19 @@ public class StandardController implements Controller {
             reloadShiftRegister();
         }
 
+        // The falling edge is the poll: the moment the register stops following the buttons and
+        // starts holding them is the moment the game asked what is being held.
+        if (level == 0 && this.strobe == 1) {
+            polls++;
+        }
+
         this.strobe = level;
     }
 
     @Override
     public int read() {
+        bitsRead++;
+
         if (strobe == 1) {
             // While strobe is high, always return A button state
             return buttons & BUTTON_A;
@@ -73,6 +95,16 @@ public class StandardController implements Controller {
     @Override
     public int getButtons() {
         return buttons;
+    }
+
+    @Override
+    public long getPolls() {
+        return polls;
+    }
+
+    @Override
+    public long getBitsRead() {
+        return bitsRead;
     }
 
     @Override

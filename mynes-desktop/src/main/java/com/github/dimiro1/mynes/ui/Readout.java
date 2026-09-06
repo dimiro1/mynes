@@ -65,6 +65,9 @@ import java.util.List;
  * @param traces    the same slice of the same frame for each voice on its own, in
  *                  {@link APUChannel} order -- what each put <em>into</em> the mixer, where
  *                  {@code scope} is what came out of it. Empty where the scope is.
+ * @param pads      how often the game has been looking at the controllers, which is the one thing
+ *                  here that is counted rather than read: it takes two frames to see, so only the
+ *                  loop that ran them can answer. {@link Pads#NONE} where nothing was counting.
  */
 public record Readout(
         CPU.State cpu,
@@ -88,7 +91,8 @@ public record Readout(
         int[] peaks,
         short[] scope,
         Board board,
-        List<short[]> traces) {
+        List<short[]> traces,
+        Pads pads) {
 
     /**
      * What the cartridge is doing, which is a question about the board rather than about the game.
@@ -115,6 +119,64 @@ public record Readout(
     }
 
     /**
+     * How often the game has looked at the pads, frame by frame.
+     * <p>
+     * The only part of a readout that is not a reading. Everything else here is a field of the
+     * machine as it stands; this is a <em>difference</em> between the frame that just finished and
+     * the one before it, so it can only be answered by whatever ran both -- see
+     * {@link PadPolling}, which is where the arithmetic is and why it stops when nobody is looking.
+     * <p>
+     * <b>{@code polled} is the gauge worth having.</b> A game reads the pad once per frame, in the
+     * NMI or at the top of its main loop, so a frame that went by without one is a frame whose
+     * work did not finish in time -- which is exactly the stutter {@code --hack overclock} exists
+     * to undo, and is invisible in a picture that is simply showing the last frame again.
+     *
+     * @param polls1   how many times pad one was latched in the frame that just finished, which on
+     *                 a game keeping up is 1. The same number for both pads: one write to $4016
+     *                 latches both ports.
+     * @param bits1    how many bits were clocked out of pad one in that frame, which is 8 per poll.
+     * @param polls2   the same for pad two.
+     * @param bits2    the same for pad two -- 0 on every game with no two player mode, which is
+     *                 what tells the two ports apart.
+     * @param polled   one entry per recent frame, oldest first, true where the game latched the
+     *                 pad. Handed over rather than shared. Shorter than the window until enough
+     *                 frames have gone by, and empty where nothing was counting.
+     * @param lagFrames how many of those frames went by without a poll.
+     */
+    public record Pads(
+            int polls1,
+            int bits1,
+            int polls2,
+            int bits2,
+            boolean[] polled,
+            int lagFrames) {
+
+        /**
+         * How many frames {@code polled} holds once it has filled: two seconds on NTSC.
+         * <p>
+         * Long enough for a pattern to be a pattern rather than a coincidence, and short enough
+         * that a game which stopped lagging ten seconds ago is not still being blamed for it. Here
+         * rather than in {@link PadPolling}, which fills it, because whatever draws it needs a
+         * width before the first readout has arrived to say how wide it is.
+         */
+        public static final int WINDOW = 120;
+
+        /**
+         * What a readout taken anywhere but the emulation loop knows about polling: nothing. A
+         * frame counted against no previous frame is not a measurement of anything.
+         */
+        public static final Pads NONE = new Pads(0, 0, 0, 0, new boolean[0], 0);
+
+        /**
+         * How many frames the window above actually holds, which is what {@code lagFrames} is out
+         * of. Zero means nobody was counting rather than a game that never lagged.
+         */
+        public int frames() {
+            return polled.length;
+        }
+    }
+
+    /**
      * What a readout taken anywhere but the emulation loop has for a scope: nothing. The samples
      * belong to the thread feeding the sound card, and a machine stopped at a breakpoint is not
      * feeding one.
@@ -130,15 +192,19 @@ public record Readout(
      * Reads the machine. Only ever called on the thread that clocks it, at a frame boundary.
      */
     public static Readout of(final NES nes) {
-        return of(nes, NO_SCOPE, NO_TRACES);
+        return of(nes, NO_SCOPE, NO_TRACES, Pads.NONE);
     }
 
     /**
-     * The same, with a slice of what the sound card was given and of what each voice put into it --
-     * which only the loop that drained the frame has.
+     * The same, with the three things a machine cannot be asked for: a slice of what the sound card
+     * was given, a slice of what each voice put into it, and how often the game has been reading
+     * the pads. All three are the emulation loop's own bookkeeping rather than the machine's.
      */
     public static Readout of(
-            final NES nes, final short[] scope, final List<short[]> traces) {
+            final NES nes,
+            final short[] scope,
+            final List<short[]> traces,
+            final Pads pads) {
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
         var voices = new ArrayList<APU.VoiceState>(APUChannel.values().length);
@@ -172,7 +238,8 @@ public record Readout(
                 peaks,
                 scope,
                 boardOf(nes),
-                traces);
+                traces,
+                pads);
     }
 
     private static Board boardOf(final NES nes) {

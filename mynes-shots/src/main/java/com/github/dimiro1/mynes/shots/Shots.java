@@ -499,7 +499,8 @@ public final class Shots {
 
             // The two lines the emulation thread normally sends, and the one the window normally
             // writes. Nothing is clocking this machine, so nobody would otherwise.
-            panel[0].describe(Readout.of(nes, new short[FRAME_SAMPLES], voiceTraces(nes)));
+            panel[0].describe(Readout.of(
+                    nes, new short[FRAME_SAMPLES], voiceTraces(nes), Readout.Pads.NONE));
             panel[0].setRunning(
                     "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
 
