@@ -5,6 +5,7 @@ import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.mappers.Mapper;
 import com.github.dimiro1.mynes.mappers.Mirroring;
 import org.jetbrains.annotations.Nullable;
@@ -74,6 +75,11 @@ import java.util.List;
  *                  <em>history</em> rather than a state, and by the time a frame is over there is
  *                  nothing left in the machine to say when any of it happened.
  *                  {@link Events#NONE} where nothing was recording.
+ * @param usage     how much of the frame the program used and how much of the machine's memory it
+ *                  has written, which is the third of the things only the loop that ran the frame
+ *                  can answer: both are differences taken between one boundary and the next, and
+ *                  the memory half is collected on the bus as the game goes.
+ *                  {@link Usage.Snapshot#NONE} where nothing was measuring.
  */
 public record Readout(
         CPU.State cpu,
@@ -99,7 +105,8 @@ public record Readout(
         Board board,
         List<short[]> traces,
         Pads pads,
-        Events events) {
+        Events events,
+        Usage.Snapshot usage) {
 
     /**
      * What the cartridge is doing, which is a question about the board rather than about the game.
@@ -234,21 +241,22 @@ public record Readout(
      * Reads the machine. Only ever called on the thread that clocks it, at a frame boundary.
      */
     public static Readout of(final NES nes) {
-        return of(nes, NO_SCOPE, NO_TRACES, Pads.NONE, Events.NONE);
+        return of(nes, NO_SCOPE, NO_TRACES, Pads.NONE, Events.NONE, Usage.Snapshot.NONE);
     }
 
     /**
-     * The same, with the four things a machine cannot be asked for: a slice of what the sound card
+     * The same, with the five things a machine cannot be asked for: a slice of what the sound card
      * was given, a slice of what each voice put into it, how often the game has been reading the
-     * pads, and everything it did to its hardware during the frame. All four are the emulation
-     * loop's own bookkeeping rather than the machine's.
+     * pads, everything it did to its hardware during the frame, and how much of the frame it used.
+     * All five are the emulation loop's own bookkeeping rather than the machine's.
      */
     public static Readout of(
             final NES nes,
             final short[] scope,
             final List<short[]> traces,
             final Pads pads,
-            final Events events) {
+            final Events events,
+            final Usage.Snapshot usage) {
         var ppu = nes.getPPU();
         var apu = nes.getAPU();
         var voices = new ArrayList<APU.VoiceState>(APUChannel.values().length);
@@ -284,7 +292,8 @@ public record Readout(
                 boardOf(nes),
                 traces,
                 pads,
-                events);
+                events,
+                usage);
     }
 
     private static Board boardOf(final NES nes) {

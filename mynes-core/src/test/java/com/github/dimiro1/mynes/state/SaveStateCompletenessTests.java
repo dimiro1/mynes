@@ -124,6 +124,11 @@ class SaveStateCompletenessTests {
                     "what each voice has been doing since a meter and a scope last looked, which is"
                             + " theirs rather than the chip's -- and null unless one of them is"
                             + " being drawn, which is what keeps it off the mixer's hottest line"),
+            Map.entry("CPU.stalledCycles",
+                    "how many cycles a transfer has taken off the program, which is a gauge"
+                            + " somebody is reading rather than anything the machine can see -- the"
+                            + " same argument as StandardController.polls. Nothing in the console"
+                            + " asks it, and a state that put it back would be restoring the gauge"),
             Map.entry("CPU.speculating",
                     "true only in the middle of a halted cycle, which is run and then taken back."
                             + " A state is taken between cycles, where it is always false"),

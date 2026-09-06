@@ -104,6 +104,17 @@ public class CPU {
     private boolean stalled;
 
     /**
+     * How many cycles this processor has spent that way since it was switched on.
+     * <p>
+     * Instrumentation rather than state, which is the same argument {@link Controller#getPolls()}
+     * makes: nothing in the machine can see it, nothing depends on it, and a save state that put it
+     * back would be restoring a gauge. What it is for is the one question the cycle counter cannot
+     * answer on its own -- a sprite transfer takes 513 cycles of a frame and a run of DMC fetches
+     * takes four apiece, and neither is a cycle the program got to use.
+     */
+    private long stalledCycles;
+
+    /**
      * True while a cycle is being run only to find out what it does.
      * <p>
      * A halted CPU keeps driving the address it had reached and reads it again every cycle, so the
@@ -205,6 +216,26 @@ public class CPU {
 
     public State getState() {
         return new State(a, x, y, sp, pc, p, cycles);
+    }
+
+    /**
+     * How many cycles the processor has actually executed in: every cycle but the ones a transfer
+     * held it off the bus for.
+     * <p>
+     * The number to measure a program against, rather than the raw cycle count. A frame is a fixed
+     * number of cycles whatever happens in it, so on a frame with a sprite transfer in it five
+     * hundred of them belong to the transfer and the program never sees them -- and a gauge that
+     * counted those as time the game spent would report a game doing less work as working harder.
+     */
+    public long getRunCycles() {
+        return cycles - stalledCycles;
+    }
+
+    /**
+     * The other half of the same pair: how many cycles a transfer has taken off the program.
+     */
+    public long getStalledCycles() {
+        return stalledCycles;
     }
 
     /**
@@ -493,6 +524,7 @@ public class CPU {
             // through those too.
             stalled = true;
             cycles++;
+            stalledCycles++;
             return;
         }
 
@@ -540,6 +572,10 @@ public class CPU {
 
         stalled = true;
         cycles++;
+
+        // Outside the registers restore() puts back, deliberately: the cycle really did go by, and
+        // a counter of cycles that went by must not be taken back with them.
+        stalledCycles++;
     }
 
     private void runCycle() {
