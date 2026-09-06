@@ -327,7 +327,7 @@ mvn test
   blargg's own readme says passes on only one of four random alignments on real hardware.
 - **MMC3:** five of `mmc3-test-2`'s six ROMs, including the exact-dot scanline timing one. The
   sixth tests the revision A counter, and no real chip passes both.
-- **The whole console:** [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) scores 139 of
+- **The whole console:** [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) scores 140 of
   its 141 tests.
 
 ![AccuracyCoin's results table](shots/accuracycoin.png)

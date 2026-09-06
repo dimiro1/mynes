@@ -101,12 +101,26 @@ public class PPU {
      * it -- but two is what blargg's {@code 10-even_odd_timing} accepts, and that ROM measures the
      * delay directly, against the dot an odd frame drops. It is the tighter oracle, so it wins.
      * <p>
-     * AccuracyCoin's {@code BG Serial In} wants four or five and is the reason to say so here. It
-     * blanks eighteen dots across the background shift registers' reload and only leaves the hole
-     * it looks for if that blank covers three reload dots; at two dots of delay it covers two. The
-     * two ROMs are measuring the same number against different things -- the frame's dropped dot
-     * and the reload cadence -- and they disagree by two dots, which is a real discrepancy rather
-     * than a choice to be made. Left where blargg puts it.
+     * AccuracyCoin's {@code BG Serial In} is the one thing in either suite that disagrees. It
+     * blanks the picture for eighteen dots -- six CPU cycles separate its two writes, so the window
+     * is that long whatever this number is -- and the artefact it looks for only shows if the window
+     * covers three of the background shift registers' reloads rather than two. Eighteen dots covers
+     * three only from a start congruent to 0 or 1 modulo 8, and at two dots of delay it starts on
+     * dot 118 of scanline 1, which is 6. Scanline 1 is the only one that can answer: the loop runs
+     * a hundred and eighty times down the screen to make the artefact visible, but sprite zero sits
+     * at Y=0, so every pass after the first has nothing to collide with.
+     * <p>
+     * Four or five land it, and both are refused because both cost another test in the same suite:
+     * four breaks {@code Stale Sprite Shift Regs} and five breaks {@code $2007 Stress Test}. So the
+     * disagreement is not this ROM against blargg's but this ROM against itself, and what is behind
+     * it is two dots in each of two places that cancel everywhere else. The ROM's own sync lands
+     * two dots early here -- {@code New_VBL_Sync} comes back at (240, 339) rather than the (241, 0)
+     * it claims, its drifting $2002 poll moving one dot an iteration and stopping two iterations
+     * sooner -- and this delay is two dots longer than the ROM's model of it, since the ROM counts
+     * from the first dot of the write cycle and this counts from after that cycle's bus access,
+     * exactly as {@link #DATA_FETCH_DOTS} does. Every other test asks where the effect landed, and
+     * gets the right answer out of the pair of errors together. This one asks where the effect
+     * landed relative to the reload cadence, which only one of the two moves.
      */
     private static final int MASK_WRITE_DELAY_DOTS = 2;
 
@@ -1427,6 +1441,14 @@ public class PPU {
             }
 
             if (step == EvaluationStep.FINISHED) {
+                // The copy is over, but the line is not, and the hardware has no idle state to
+                // fall into: it goes on picking up the first byte of one sprite after another and
+                // failing to write any of them, all the way to dot 256. Nothing comes of it --
+                // secondary OAM is settled and the overflow flag is decided -- but the address
+                // really does keep moving, and a game reading $2004 on those dots sees the walk.
+                // AccuracyCoin's $2004 Stress Test reads all 341 dots of a line and is the only
+                // thing that can tell this from a machine that simply stopped.
+                oamAddress = (oamAddress + 4) & 0xFF;
                 return;
             }
 
@@ -1511,15 +1533,26 @@ public class PPU {
          * Y does but a byte rather than four. With aligned OAM the two are the same thing, because
          * one more byte is where the next sprite starts anyway; it is only visible when a game has
          * left OAMADDR pointing into the middle of a sprite.
+         * <p>
+         * With secondary OAM full this is the fourth byte of the sprite that set the overflow flag,
+         * and reaching it is the end of the evaluation: the diagonal walk that found that sprite
+         * does not resume, and what the rest of the line does instead is the same aimless walk a
+         * run off the end of OAM leaves behind. The byte counter is dropped on the way, so the walk
+         * starts from the sprite this one is part of rather than from the byte after it -- which is
+         * a Y coordinate the hardware has already read once and reads again.
          */
         private void evaluateXPosition(final boolean full) {
-            var inRange = isInRange(latch);
+            if (full) {
+                oamAddress &= 0xFC;
+                step = EvaluationStep.FINISHED;
 
-            if (!full) {
-                slot++;
-                spritesFound++;
+                return;
             }
 
+            var inRange = isInRange(latch);
+
+            slot++;
+            spritesFound++;
             step = EvaluationStep.Y_POSITION;
 
             if (inRange) {
@@ -1563,8 +1596,8 @@ public class PPU {
         /**
          * Moves OAMADDR on, ending the evaluation if it runs off the end of OAM.
          * <p>
-         * Whatever is left of the scanline after that is spent reading the last address over and
-         * over and throwing away what comes back.
+         * Whatever is left of the scanline after that is spent walking OAM a sprite at a time and
+         * throwing away what comes back.
          */
         private void advance(final int by) {
             var next = oamAddress + by;
@@ -1583,6 +1616,30 @@ public class PPU {
          */
         private int secondaryOAMAddress() {
             return spritesFound == 8 ? 0 : (slot + 3) & 0x1C;
+        }
+
+        /**
+         * What the even dot of an evaluation step puts on OAM's data bus, asked before that dot has
+         * been run.
+         * <p>
+         * The even dot is the write, and a write is only half of what the bus carries. While there
+         * is somewhere to put the byte the bus holds the byte going across, which is the one the
+         * odd dot read -- so a game reading $2004 through the first half of a line sees each byte
+         * of OAM twice and cannot tell the two dots apart. Once the write is suppressed, either
+         * because eight sprites are already in hand or because the walk has run off the end of OAM,
+         * secondary OAM is being read rather than written and the bus holds <em>its</em> byte
+         * instead: the last Y coordinate that was tried and rejected, sitting in the slot it was
+         * tentatively written to and never claimed.
+         * <p>
+         * That is the whole difference between this and reading primary OAM twice, and it is what
+         * AccuracyCoin's {@code $2004 Stress Test} is built on -- both of its answer keys are a
+         * stretch of doubled bytes followed by a stretch that alternates with one byte of secondary
+         * OAM.
+         */
+        private int busOnWriteDot() {
+            return step != EvaluationStep.FINISHED && spritesFound < 8
+                    ? latch
+                    : secondaryOAM[slot & 0x1F];
         }
 
         /**
@@ -2235,11 +2292,17 @@ public class PPU {
      * traffic rather than a value it asked for. Micro Machines reads it for exactly that.
      * <p>
      * So the answer depends only on where the beam is. Dots 1 to 64 are the clear, which is
-     * implemented as a read that is forced to return $FF. Dots 65 to 256 are the evaluation,
-     * walking primary OAM from wherever OAMADDR was left. Dots 257 onwards are the fetch, which
-     * reads <em>secondary</em> OAM -- four bytes of a sprite, and then its X coordinate four times
-     * more while the pattern fetches happen. A game with nothing on the line reads $FF throughout
-     * that, because the clear put $FF there and evaluation found nothing to overwrite it with.
+     * implemented as a read that is forced to return $FF. Dots 65 to 256 are the evaluation, whose
+     * two dots are a read of primary OAM and a write to secondary OAM -- so the odd dot answers
+     * with the byte read and the even one with whatever the write put across, which is not the same
+     * question once there is nothing left to write. Dots 257 onwards are the fetch, which reads
+     * <em>secondary</em> OAM -- four bytes of a sprite, and then its X coordinate four times more
+     * while the pattern fetches happen. A game with nothing on the line reads $FF throughout that,
+     * because the clear put $FF there and evaluation found nothing to overwrite it with.
+     * <p>
+     * Dot 0 belongs with the fetch rather than with the clear that starts on dot 1: nothing has
+     * moved the counter since the fetch left it at the top of secondary OAM, so that is what the
+     * dot reads.
      *
      * @see <a href="https://www.nesdev.org/wiki/PPU_sprite_evaluation">NESdev: sprite evaluation</a>
      */
@@ -2252,16 +2315,23 @@ public class PPU {
             return 0xFF;
         }
 
-        // The fetch, and then the tail of the line where the background pipeline is being primed
-        // and the only thing still reading secondary OAM reads the first byte of it over and over.
-        // Both are just "wherever the counter has got to", which is why this asks rather than works
-        // it out again: the window $2004 reads through and the seed the corruption is taken from
-        // have to be the same counter, or one of them is describing hardware that does not exist.
-        if (dot >= 257) {
-            return secondaryOAM[secondaryOAMAddress()];
+        if (dot >= 65 && dot <= 256) {
+            // The pre-render line runs no evaluation at all, so there is no write half of a dot
+            // there and nothing but primary OAM to answer with.
+            if (scanline >= POST_RENDER_LINE || (dot & 1) == 1) {
+                return oam.read(oamAddress);
+            }
+
+            return evaluation.busOnWriteDot();
         }
 
-        return oam.read(oamAddress);
+        // The fetch, the tail of the line where the background pipeline is being primed and the
+        // only thing still reading secondary OAM reads the first byte of it over and over, and the
+        // idle dot the line starts on. All three are just "wherever the counter has got to", which
+        // is why this asks rather than works it out again: the window $2004 reads through and the
+        // seed the corruption is taken from have to be the same counter, or one of them is
+        // describing hardware that does not exist.
+        return secondaryOAM[secondaryOAMAddress()];
     }
 
     /**
@@ -3097,8 +3167,10 @@ public class PPU {
         X_POSITION,
 
         /**
-         * The address has run off the end of OAM. Whatever is left of the scanline is spent
-         * reading and discarding.
+         * There is nothing left to decide: either the address has run off the end of OAM, or the
+         * overflow flag has been set and the sprite that set it has gone past. Whatever is left of
+         * the scanline is spent reading the first byte of one sprite after another and discarding
+         * every one of them.
          */
         FINISHED,
     }

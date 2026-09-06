@@ -226,12 +226,7 @@ class PPURegisterTests extends PPUFixture {
          */
         @Test
         void theEvaluationTakesOverTheAddressAtDot65() {
-            // Every byte holds its own address, so what $2004 answers with says where in OAM the
-            // evaluation had got to.
-            for (var address = 0; address < 256; address++) {
-                ppu.write(OAMADDR, address);
-                ppu.write(OAMDATA, address);
-            }
+            fillOAMWithItsOwnAddresses();
 
             ppu.write(PPUMASK, 0x08);
             runTo(100, 40);
@@ -253,9 +248,74 @@ class PPURegisterTests extends PPUFixture {
             ppu.write(OAMADDR, 0x00);
             assertEquals(0xFF, ppu.read(OAMDATA), "dots 1 to 64 are the secondary OAM clear");
 
-            runTo(0, 70);
+            // An odd dot, which is the half of an evaluation step that reads primary OAM. The even
+            // one is the write, and answers with whatever is going across instead.
+            runTo(0, 71);
             ppu.write(OAMADDR, 0x00);
             assertEquals(0x11, ppu.read(OAMDATA), "and afterwards OAM is visible again");
+        }
+
+        /**
+         * An evaluation step is two dots: the odd one reads primary OAM and the even one writes
+         * what it read into secondary OAM. Both put the same byte on the bus $2004 reads, which is
+         * why a game watching the register sees each byte of OAM twice -- and why the two dots
+         * only tell themselves apart once there is nothing left to write.
+         */
+        @Test
+        void everyByteOfOamIsReadTwiceWhileThereIsSomewhereToPutIt() {
+            fillOAMWithItsOwnAddresses();
+            ppu.write(PPUMASK, 0x08);
+
+            runTo(100, 71);
+            var read = ppu.read(OAMDATA);
+
+            runTo(100, 72);
+            assertEquals(read, ppu.read(OAMDATA), "the write dot puts across what the read dot got");
+        }
+
+        /**
+         * Sixty four sprites at two dots each runs out of OAM long before the line runs out of
+         * dots. The hardware has nowhere to stop, so it spends what is left picking up the first
+         * byte of one sprite after another and failing to write any of them -- and the failed write
+         * is what makes the two halves of a step visibly different, since secondary OAM is being
+         * read back rather than written and still holds the last Y coordinate that was tried.
+         */
+        @Test
+        void onceTheCopyIsOverTheWriteDotShowsWhatSecondaryOamWasLeftHolding() {
+            fillOAMWithItsOwnAddresses();
+            ppu.write(PPUMASK, 0x08);
+
+            // Two sprites are in range of scanline 100 and sixty two are not, which is 140 dots of
+            // evaluation from dot 65 -- so the address runs off the end of OAM on dot 204.
+            runTo(100, 206);
+            assertEquals(0xFC, ppu.read(OAMDATA),
+                    "the Y coordinate of the last sprite tried, still in the slot it never claimed");
+
+            runTo(100, 207);
+            assertEquals(0x04, ppu.read(OAMDATA), "and the walk is a sprite further on");
+        }
+
+        @Test
+        void theIdleDotAtTheStartOfALineReadsSecondaryOam() {
+            fillOAMWithItsOwnAddresses();
+            ppu.write(PPUMASK, 0x08);
+
+            // Nothing has moved the counter since the sprite fetch left it at the top of secondary
+            // OAM, so dot 0 belongs with the fetch rather than with the clear that follows it.
+            runTo(101, 0);
+            assertEquals(0x60, ppu.read(OAMDATA),
+                    "the Y coordinate of the first sprite the line above found");
+        }
+
+        /**
+         * Every byte holds its own address, so what $2004 answers with says where in OAM the sprite
+         * hardware had got to.
+         */
+        private void fillOAMWithItsOwnAddresses() {
+            for (var address = 0; address < 256; address++) {
+                ppu.write(OAMADDR, address);
+                ppu.write(OAMDATA, address);
+            }
         }
     }
 
