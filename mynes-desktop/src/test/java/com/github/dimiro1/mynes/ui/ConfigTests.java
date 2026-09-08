@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.ui.input.KeyBindings;
 import com.github.dimiro1.mynes.ui.input.KeyBindings.Button;
+import com.github.dimiro1.mynes.ui.input.KeyBindings.Port;
 import com.github.dimiro1.mynes.palette.NESPalette;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.video.FilterStrength;
@@ -138,22 +139,61 @@ class ConfigTests {
         void aMissingFileGivesTheDefaults() {
             var bindings = Config.load(directory.resolve("not-there.properties")).keyBindings();
 
-            assertEquals(KeyEvent.VK_X, bindings.keyFor(Button.A));
-            assertEquals(KeyEvent.VK_Z, bindings.keyFor(Button.B));
-            assertEquals(KeyEvent.VK_SHIFT, bindings.keyFor(Button.SELECT));
-            assertEquals(KeyEvent.VK_ENTER, bindings.keyFor(Button.START));
-            assertEquals(KeyEvent.VK_UP, bindings.keyFor(Button.UP));
-            assertEquals(KeyEvent.VK_DOWN, bindings.keyFor(Button.DOWN));
-            assertEquals(KeyEvent.VK_LEFT, bindings.keyFor(Button.LEFT));
-            assertEquals(KeyEvent.VK_RIGHT, bindings.keyFor(Button.RIGHT));
+            assertEquals(KeyEvent.VK_X, bindings.keyFor(Port.ONE, Button.A));
+            assertEquals(KeyEvent.VK_Z, bindings.keyFor(Port.ONE, Button.B));
+            assertEquals(KeyEvent.VK_SHIFT, bindings.keyFor(Port.ONE, Button.SELECT));
+            assertEquals(KeyEvent.VK_ENTER, bindings.keyFor(Port.ONE, Button.START));
+            assertEquals(KeyEvent.VK_UP, bindings.keyFor(Port.ONE, Button.UP));
+            assertEquals(KeyEvent.VK_DOWN, bindings.keyFor(Port.ONE, Button.DOWN));
+            assertEquals(KeyEvent.VK_LEFT, bindings.keyFor(Port.ONE, Button.LEFT));
+            assertEquals(KeyEvent.VK_RIGHT, bindings.keyFor(Port.ONE, Button.RIGHT));
+
+            for (var button : Button.values()) {
+                assertEquals(KeyBindings.UNBOUND, bindings.keyFor(Port.TWO, button),
+                        "player two starts with nothing on it: " + button.label());
+            }
+        }
+
+        @Test
+        void aFileFromBeforeThereWasASecondPadLeavesItEmpty() throws IOException {
+            // Every entry a 0.6.0 file could carry, and not one of them names player two.
+            var bindings = Config.load(write("""
+                    controller1.a=VK_K
+                    controller1.b=VK_J
+                    controller1.select=VK_SHIFT
+                    controller1.start=VK_ENTER
+                    controller1.up=VK_UP
+                    controller1.down=VK_DOWN
+                    controller1.left=VK_LEFT
+                    controller1.right=VK_RIGHT
+                    """)).keyBindings();
+
+            assertEquals(KeyEvent.VK_K, bindings.keyFor(Port.ONE, Button.A));
+            assertEquals(KeyBindings.UNBOUND, bindings.keyFor(Port.TWO, Button.A));
+        }
+
+        @Test
+        void theSecondPadIsReadTheSameWayTheFirstIs() throws IOException {
+            var bindings = Config.load(write("""
+                    controller2.a=VK_G
+                    controller2.up=VK_NOT_A_KEY
+                    """)).keyBindings();
+
+            assertEquals(KeyEvent.VK_G, bindings.keyFor(Port.TWO, Button.A));
+            assertEquals(KeyBindings.UNBOUND, bindings.keyFor(Port.TWO, Button.UP),
+                    "a name this JDK does not know falls back to the default, which is nothing");
+            assertEquals(KeyEvent.VK_X, bindings.keyFor(Port.ONE, Button.A),
+                    "and player one is untouched");
         }
 
         @Test
         void aMissingEntryFallsBackToItsDefault() throws IOException {
             var bindings = Config.load(write("controller1.a=VK_K\n")).keyBindings();
 
-            assertEquals(KeyEvent.VK_K, bindings.keyFor(Button.A), "the entry that is there");
-            assertEquals(KeyEvent.VK_Z, bindings.keyFor(Button.B), "and the seven that are not");
+            assertEquals(KeyEvent.VK_K, bindings.keyFor(Port.ONE, Button.A),
+                    "the entry that is there");
+            assertEquals(KeyEvent.VK_Z, bindings.keyFor(Port.ONE, Button.B),
+                    "and the seven that are not");
         }
 
         @Test
@@ -163,16 +203,17 @@ class ConfigTests {
                     controller1.b=VK_Q
                     """)).keyBindings();
 
-            assertEquals(KeyEvent.VK_X, bindings.keyFor(Button.A), "the bad entry alone");
-            assertEquals(KeyEvent.VK_Q, bindings.keyFor(Button.B), "the good one still counts");
+            assertEquals(KeyEvent.VK_X, bindings.keyFor(Port.ONE, Button.A), "the bad entry alone");
+            assertEquals(KeyEvent.VK_Q, bindings.keyFor(Port.ONE, Button.B),
+                    "the good one still counts");
         }
 
         @Test
         void anEmptyValueLeavesTheButtonUnbound() throws IOException {
             var bindings = Config.load(write("controller1.select=\n")).keyBindings();
 
-            assertEquals(KeyBindings.UNBOUND, bindings.keyFor(Button.SELECT));
-            assertNull(bindings.buttonFor(KeyEvent.VK_SHIFT), "the default key is free now");
+            assertEquals(KeyBindings.UNBOUND, bindings.keyFor(Port.ONE, Button.SELECT));
+            assertNull(bindings.pressFor(KeyEvent.VK_SHIFT), "the default key is free now");
         }
     }
 
@@ -850,15 +891,21 @@ class ConfigTests {
         void theBindingsSurviveTheRoundTrip() throws IOException {
             var config = Config.load(config());
             config.setKeyBindings(KeyBindings.defaults()
-                    .with(Button.A, KeyEvent.VK_L)
-                    .with(Button.SELECT, KeyBindings.UNBOUND));
+                    .with(Port.ONE, Button.A, KeyEvent.VK_L)
+                    .with(Port.ONE, Button.SELECT, KeyBindings.UNBOUND)
+                    .with(Port.TWO, Button.A, KeyEvent.VK_G)
+                    .with(Port.TWO, Button.LEFT, KeyEvent.VK_S));
             config.save(config());
 
             var loaded = Config.load(config()).keyBindings();
 
-            for (var button : Button.values()) {
-                assertEquals(config.keyBindings().keyFor(button), loaded.keyFor(button),
-                        button.label());
+            for (var port : Port.values()) {
+                for (var button : Button.values()) {
+                    assertEquals(
+                            config.keyBindings().keyFor(port, button),
+                            loaded.keyFor(port, button),
+                            port.label() + " " + button.label());
+                }
             }
         }
 
@@ -1110,6 +1157,11 @@ class ConfigTests {
             // left arrow is 37.
             assertTrue(text.contains("controller1.a=VK_X"), text);
             assertTrue(text.contains("controller1.left=VK_LEFT"), text);
+
+            // Both pads are written whether or not the second one has anything on it, so that the
+            // file says what can be remapped rather than only what has been.
+            assertTrue(text.contains("controller2.a=\n"), text);
+            assertTrue(text.contains("controller2.right=\n"), text);
         }
     }
 
@@ -1119,7 +1171,7 @@ class ConfigTests {
         @Test
         void aSaveWritesEverySection() throws IOException {
             var config = Config.load(config());
-            config.setKeyBindings(KeyBindings.defaults().with(Button.A, KeyEvent.VK_L));
+            config.setKeyBindings(KeyBindings.defaults().with(Port.ONE, Button.A, KeyEvent.VK_L));
             config.setPalette(Region.NTSC, OTHER);
             config.setScreenScale(ScreenScale.THREE_TIMES);
             config.setScreenshotScale(ScreenScale.FOUR_TIMES);
@@ -1161,7 +1213,7 @@ class ConfigTests {
         void changingOneSettingKeepsTheOther() throws IOException {
             // Rebind a key, the way Settings > Controller... would.
             var first = Config.load(config());
-            first.setKeyBindings(first.keyBindings().with(Button.A, KeyEvent.VK_L));
+            first.setKeyBindings(first.keyBindings().with(Port.ONE, Button.A, KeyEvent.VK_L));
             first.save(config());
 
             // Then pick a palette in a later run, the way Settings > Palette... would. Saving
@@ -1174,7 +1226,7 @@ class ConfigTests {
             var reloaded = Config.load(config());
 
             assertSame(OTHER, reloaded.palette(Region.NTSC), "the palette just picked");
-            assertEquals(KeyEvent.VK_L, reloaded.keyBindings().keyFor(Button.A),
+            assertEquals(KeyEvent.VK_L, reloaded.keyBindings().keyFor(Port.ONE, Button.A),
                     "and the binding from the run before");
         }
 

@@ -456,14 +456,15 @@ public final class Report {
      * <p>
      * A replay is asked the movie rather than the schedule, which {@code --play} refused and which
      * is therefore empty: answering 0 for a run that pressed something on every frame would be the
-     * one number in this document most likely to be believed.
+     * one number in this document most likely to be believed. Either pad counts, since a frame two
+     * people played is not a frame nobody touched.
      */
     private static long framesWithInput(final Options options, final Outcome outcome) {
         var count = 0L;
 
         for (var frame = 0L; frame < outcome.frames(); frame++) {
             var buttons = outcome.replayed() != null
-                    ? outcome.replayed().buttonsAt(frame)
+                    ? outcome.replayed().buttonsAt(frame) | outcome.replayed().buttons2At(frame)
                     : options.input().buttonsAt(frame);
 
             if (buttons != 0) {

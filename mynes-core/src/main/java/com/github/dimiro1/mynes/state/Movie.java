@@ -34,10 +34,10 @@ import java.util.zip.ZipException;
  * cartridge given the same buttons on the same frames arrives at the same bytes every time. That is
  * what {@code SaveStateDivergenceTests} and {@code RewindTests} are already built on, and it is what
  * lets a movie be four things and nothing else -- <strong>where it started, one button mask per
- * finished frame, which frames the Reset button was pressed at the start of, and the facts that
- * change how a cartridge runs but live outside a save state</strong>. Ninety seconds of play is five
- * and a half thousand bytes before the gzip gets to it, and a replay reproduces the run byte for
- * byte rather than approximately.
+ * finished frame per pad, which frames the Reset button was pressed at the start of, and the facts
+ * that change how a cartridge runs but live outside a save state</strong>. Ninety seconds of play is
+ * eleven thousand bytes before the gzip gets to it, and a replay reproduces the run byte for byte
+ * rather than approximately.
  * <p>
  * Those outside facts are the ones worth naming, because getting any of them wrong is a replay that
  * quietly diverges rather than one that refuses: the ROM's digest (of the <em>patched</em> image, so
@@ -139,9 +139,10 @@ public final class Movie {
     private static final String TAG_CONTROLLER1 = "CTL1";
 
     /**
-     * The same shape for player two, which nothing wires up today. Never written by this version and
-     * applied by a reader only when the header says there are two ports, so a movie recorded by a
-     * later build that does wire it will still play its first player here.
+     * The same shape for player two, and in every movie this build records. A file that carried one
+     * lane while the machine had two pads on it would replay a two player session as a one player
+     * one -- the second player standing still through a game somebody played with them -- and
+     * nothing in the file would say why the replay came apart.
      */
     private static final String TAG_CONTROLLER2 = "CTL2";
 
@@ -172,8 +173,14 @@ public final class Movie {
 
     /**
      * How many controller lanes a movie written by this build carries.
+     * <p>
+     * Both of them, always, rather than only the ones somebody used: an untouched pad is a run of
+     * zeros the gzip crushes to nothing, and counting the lanes a take happened to need would make
+     * "nobody played the second pad" and "somebody played it and stood still" two different files
+     * for one session. A movie from before this build says one and has no {@code CTL2} in it, which
+     * is exactly the case {@link #buttons2At} answers zero for.
      */
-    public static final int PORTS = 1;
+    public static final int PORTS = 2;
 
     /**
      * How long a chunk this will inflate before deciding the file is lying to it. Generous -- a
@@ -192,7 +199,8 @@ public final class Movie {
     private final byte[] player1;
 
     /**
-     * Null unless a later build wrote a second lane and this file has one.
+     * Null for a movie written before this build wired the second port up, which is the one case
+     * where a file has a first lane and no second.
      */
     private final byte[] player2;
 
@@ -214,7 +222,8 @@ public final class Movie {
      * @param anchored      whether it starts from a save state carried inside it.
      * @param anchorFrame   the PPU frame the recording started on. 0 for a movie from power on.
      * @param frameCount    how many frames it holds.
-     * @param ports         how many controller lanes are in the body. 1 in this version.
+     * @param ports         how many controller lanes are in the body. 2 in this version, and 1 in
+     *                      a movie recorded before there was a second pad to play.
      */
     public record Header(
             int formatVersion,
@@ -287,7 +296,8 @@ public final class Movie {
     }
 
     /**
-     * The same for player two, which is always 0 for a movie this build recorded.
+     * The same for player two, and zero all the way through a movie recorded before there was
+     * anything to play the second pad with.
      */
     public int buttons2At(final long index) {
         return player2 != null && index >= 0 && index < player2.length
@@ -435,6 +445,10 @@ public final class Movie {
 
         chunk(body, TAG_CONTROLLER1, player1);
 
+        if (player2 != null) {
+            chunk(body, TAG_CONTROLLER2, player2);
+        }
+
         if (resets.length > 0) {
             var bytes = new byte[resets.length * 8];
 
@@ -536,6 +550,19 @@ public final class Movie {
                             + player1.length + " button masks.");
         }
 
+        var player2 = header.ports() >= 2 ? chunks.get(TAG_CONTROLLER2) : null;
+
+        if (header.ports() >= 2 && player2 == null) {
+            throw new MovieException(
+                    "that movie says it holds two players and has no \"CTL2\" in it.");
+        }
+
+        if (player2 != null && header.frameCount() != player2.length) {
+            throw new MovieException(
+                    "that movie is damaged: it says " + header.frameCount() + " frames and holds "
+                            + player2.length + " button masks for player two.");
+        }
+
         var anchor = chunks.get(TAG_ANCHOR);
 
         if (header.anchored() != (anchor != null)) {
@@ -568,7 +595,7 @@ public final class Movie {
                 header,
                 anchor,
                 player1,
-                header.ports() >= 2 ? chunks.get(TAG_CONTROLLER2) : null,
+                player2,
                 resets(chunks.get(TAG_RESETS), header.frameCount()),
                 codes(chunks.get(TAG_GENIE)),
                 overclock(chunks.get(TAG_OVERCLOCK)));

@@ -355,16 +355,19 @@ class EmulatorRunnerTests {
     // ==================================================================================== movies
 
     /**
-     * The mask the loop latches is the mask that gets written down, for every frame that finished.
+     * The masks the loop latches are the masks that get written down, for every frame that finished
+     * and for both pads -- a movie that recorded one of two people playing would replay as a game
+     * neither of them played.
      * <p>
      * Both calls are posted before the thread starts, so they run before the first frame and the
      * movie starts at frame 0 with nothing missed off the front.
      */
     @Test
-    void everyRecordedFrameCarriesTheMaskThatWasLatched() throws Exception {
+    void everyRecordedFrameCarriesTheMasksThatWereLatched() throws Exception {
         var path = directory.resolve("take.mnm");
 
-        runner.setFrameInputSource(() -> Controller.BUTTON_A);
+        // Different masks on the two pads, so a second lane wired to the first would show.
+        runner.setFrameInputSource(() -> Controller.BUTTON_A, () -> Controller.BUTTON_RIGHT);
         runner.startRecording(List.of());
         runner.start();
 
@@ -377,6 +380,7 @@ class EmulatorRunnerTests {
 
         for (var i = 0L; i < movie.frameCount(); i++) {
             assertEquals(Controller.BUTTON_A, movie.buttonsAt(i), "frame " + i);
+            assertEquals(Controller.BUTTON_RIGHT, movie.buttons2At(i), "frame " + i + ", player two");
         }
     }
 
@@ -391,7 +395,7 @@ class EmulatorRunnerTests {
     void rewindingWhileRecordingDropsTheFramesItTookBack() throws Exception {
         var path = directory.resolve("rewound.mnm");
 
-        runner.setFrameInputSource(() -> 0);
+        runner.setFrameInputSource(() -> 0, () -> 0);
         runner.startRecording(List.of());
         runner.start();
 
@@ -424,7 +428,7 @@ class EmulatorRunnerTests {
     void aMoviePlaysBackAndHandsControlBackAtTheEnd() throws Exception {
         var path = directory.resolve("take.mnm");
 
-        runner.setFrameInputSource(() -> Controller.BUTTON_A);
+        runner.setFrameInputSource(() -> Controller.BUTTON_A, () -> Controller.BUTTON_RIGHT);
         runner.startRecording(List.of());
         runner.start();
 
@@ -448,6 +452,9 @@ class EmulatorRunnerTests {
                 "the movie never finished, or never said so");
         assertTrue(second.getPPU().getFrame() >= movie.frameCount(),
                 "and every frame of it was played");
+        assertEquals(Controller.BUTTON_A, second.getController1().getButtons());
+        assertEquals(Controller.BUTTON_RIGHT, second.getController2().getButtons(),
+                "the second lane was played into the second pad rather than nowhere");
     }
 
     /**

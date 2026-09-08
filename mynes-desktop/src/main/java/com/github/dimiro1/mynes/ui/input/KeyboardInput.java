@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.input;
 
 import com.github.dimiro1.mynes.Controller;
+import com.github.dimiro1.mynes.ui.input.KeyBindings.Port;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.MenuSelectionManager;
@@ -8,31 +9,38 @@ import java.awt.KeyEventDispatcher;
 import java.awt.Window;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * The keyboard, wired to player one's controller.
+ * The keyboard, wired to both of the console's controllers.
  * <p>
  * This sits on the {@link java.awt.KeyboardFocusManager} rather than on the screen component,
  * because the screen component is not focusable and the frame carries a menu bar that wants the
  * arrow keys for itself. A dispatcher sees every key event in the application before anything else
  * does, which is the position needed to answer both questions here -- is this keystroke the game's
- * at all, and which button is it -- for arbitrary rebindable keys, which an InputMap of press and
- * release pairs would make hard work of.
+ * at all, and which button on which pad is it -- for arbitrary rebindable keys, which an InputMap
+ * of press and release pairs would make hard work of.
+ * <p>
+ * The two pads are kept apart all the way down: a {@link Pad} each, holding what is held down and
+ * what the game is being told, and nothing shared between them but the bindings that decide which
+ * of the two a key belongs to. So player two costs a player one session an {@link EnumMap} lookup
+ * per keystroke and nothing else, and neither player can leave a button stuck on the other's pad.
  * <p>
  * Everything below runs on the event dispatch thread: key events arrive on it, and the frame calls
- * {@link #setController(Controller)}, {@link #setBindings(KeyBindings)} and {@link #releaseAll()}
- * from it. So none of the state here is shared, and the only thing that crosses to the emulation
- * thread is the button mask handed to {@link Controller#setButtons(int)}, which is that class's
- * problem.
+ * {@link #setControllers}, {@link #setBindings(KeyBindings)} and {@link #releaseAll()} from it. So
+ * none of the state here is shared, and the only thing that crosses to the emulation thread is the
+ * button mask handed to {@link Controller#setButtons(int)}, which is that class's problem.
  * <p>
- * Two exceptions to that, and both belong to movies. {@link #heldMask()} is read from the emulation
- * thread once a frame, which is why the mask has a field of its own and is {@code volatile}. And
- * {@link #setLatching(boolean)} switches off the immediate hand-off above: while a movie is being
- * recorded or played, what the game sees has to change exactly once per frame, on the thread that
- * clocks it -- a press that landed half way through a frame would be written down as belonging to a
- * frame it was only half of, and a replay of it would be a different game. When neither is
- * happening the immediate path is left exactly as it was, because that is the one a player feels.
+ * Two exceptions to that, and both belong to movies. {@link #heldMask(Port)} is read from the
+ * emulation thread once a frame, which is why each pad's mask has a field of its own and is
+ * {@code volatile}. And {@link #setLatching(boolean)} switches off the immediate hand-off above:
+ * while a movie is being recorded or played, what the game sees has to change exactly once per
+ * frame, on the thread that clocks it -- a press that landed half way through a frame would be
+ * written down as belonging to a frame it was only half of, and a replay of it would be a different
+ * game. When neither is happening the immediate path is left exactly as it was, because that is the
+ * one a player feels.
  */
 public final class KeyboardInput implements KeyEventDispatcher {
     /**
@@ -45,30 +53,55 @@ public final class KeyboardInput implements KeyEventDispatcher {
     private static final int LEFT_AND_RIGHT = Controller.BUTTON_LEFT | Controller.BUTTON_RIGHT;
     private static final int UP_AND_DOWN = Controller.BUTTON_UP | Controller.BUTTON_DOWN;
 
+    /**
+     * One port's worth of keyboard: the chip it is wired to, what is held down on it, and what the
+     * game is being told about it.
+     */
+    private static final class Pad {
+        /**
+         * The controller in this port, or null when no machine is running. Both are pointed at a
+         * machine together, since a console arrives with both of them.
+         */
+        private @Nullable Controller controller;
+
+        /**
+         * The keys held down, before the opposing directions are taken out. Kept raw so that letting
+         * go of one of two opposing directions leaves the other one pressed.
+         */
+        private int pressed;
+
+        /**
+         * What {@link #pressed} comes to once the opposing directions are taken out, which is the
+         * mask the game actually sees.
+         * <p>
+         * A field rather than a local because the emulation thread reads it once a frame while a
+         * movie is being recorded. {@code volatile} for that one reader; every writer is the event
+         * dispatch thread.
+         */
+        private volatile int mask;
+
+        /**
+         * Lets go of everything on this pad, and tells the game so.
+         */
+        void release() {
+            pressed = 0;
+            mask = 0;
+
+            if (controller != null) {
+                controller.setButtons(0);
+            }
+        }
+    }
+
     private final Window gameWindow;
 
+    private final Map<Port, Pad> pads = new EnumMap<>(Port.class);
+
     private KeyBindings bindings;
-    private @Nullable Controller controller;
 
     /**
-     * The keys held down, before the opposing directions are taken out. Kept raw so that letting
-     * go of one of two opposing directions leaves the other one pressed.
-     */
-    private int pressed;
-
-    /**
-     * What {@link #pressed} comes to once the opposing directions are taken out, which is the mask
-     * the game actually sees.
-     * <p>
-     * A field rather than a local because the emulation thread reads it once a frame while a movie
-     * is being recorded. {@code volatile} for that one reader; every writer is the event dispatch
-     * thread.
-     */
-    private volatile int mask;
-
-    /**
-     * Whether the emulation thread is latching the mask itself, once a frame, instead of taking it
-     * from here the moment a key moves. True exactly while a movie is being recorded or played.
+     * Whether the emulation thread is latching the masks itself, once a frame, instead of taking
+     * them from here the moment a key moves. True exactly while a movie is being recorded or played.
      */
     private boolean latching;
 
@@ -105,14 +138,24 @@ public final class KeyboardInput implements KeyEventDispatcher {
     public KeyboardInput(final Window gameWindow, final KeyBindings bindings) {
         this.gameWindow = gameWindow;
         this.bindings = bindings;
+
+        for (var port : Port.values()) {
+            pads.put(port, new Pad());
+        }
     }
 
     /**
-     * Points the keyboard at a controller, or at nothing when {@code controller} is null. Called
-     * every time a ROM is loaded, since each machine brings its own controllers.
+     * Points the keyboard at a machine's controllers, or at nothing when they are null. Called every
+     * time a ROM is loaded, since each machine brings its own pair.
+     * <p>
+     * Both at once rather than one at a time: a console has two ports whether or not anybody is
+     * using the second, and a caller that could wire one of them is a caller that can forget the
+     * other.
      */
-    public void setController(final @Nullable Controller controller) {
-        this.controller = controller;
+    public void setControllers(
+            final @Nullable Controller one, final @Nullable Controller two) {
+        pads.get(Port.ONE).controller = one;
+        pads.get(Port.TWO).controller = two;
     }
 
     /**
@@ -143,15 +186,15 @@ public final class KeyboardInput implements KeyEventDispatcher {
     }
 
     /**
-     * What the player is holding down right now, ready for the emulation thread to latch at a frame
-     * boundary. The one thing here that another thread may call.
+     * What the player on {@code port} is holding down right now, ready for the emulation thread to
+     * latch at a frame boundary. The one thing here that another thread may call.
      */
-    public int heldMask() {
-        return mask;
+    public int heldMask(final Port port) {
+        return pads.get(port).mask;
     }
 
     /**
-     * Hands the timing of the pad over to the emulation thread, or takes it back.
+     * Hands the timing of the pads over to the emulation thread, or takes it back.
      * <p>
      * Taking it back pushes whatever is held down straight away, because the last thing the game was
      * told is whatever the last latch happened to catch -- and a button that stuck down when a
@@ -160,8 +203,14 @@ public final class KeyboardInput implements KeyEventDispatcher {
     public void setLatching(final boolean latching) {
         this.latching = latching;
 
-        if (!latching && controller != null) {
-            controller.setButtons(mask);
+        if (latching) {
+            return;
+        }
+
+        for (var pad : pads.values()) {
+            if (pad.controller != null) {
+                pad.controller.setButtons(pad.mask);
+            }
         }
     }
 
@@ -176,28 +225,24 @@ public final class KeyboardInput implements KeyEventDispatcher {
      */
     public void setPlaybackMuted(final boolean muted) {
         playbackMuted = muted;
-        pressed = 0;
-        mask = 0;
 
-        if (controller != null) {
-            controller.setButtons(0);
+        for (var pad : pads.values()) {
+            pad.release();
         }
     }
 
     /**
-     * Lets go of everything. Wired to the game window losing focus, so that cmd-tabbing away in
-     * the middle of a jump does not leave the button held down for as long as the window is gone.
+     * Lets go of everything, on both pads. Wired to the game window losing focus, so that
+     * cmd-tabbing away in the middle of a jump does not leave the button held down for as long as
+     * the window is gone.
      * <p>
      * Rewind goes with the buttons, and for a sharper version of the same reason: a held button
      * costs a life, where a rewind key stuck down empties the whole history and leaves the game
      * sitting half a minute in the past.
      */
     public void releaseAll() {
-        pressed = 0;
-        mask = 0;
-
-        if (controller != null) {
-            controller.setButtons(0);
+        for (var pad : pads.values()) {
+            pad.release();
         }
 
         if (rewinding) {
@@ -211,9 +256,9 @@ public final class KeyboardInput implements KeyEventDispatcher {
 
     @Override
     public boolean dispatchKeyEvent(final KeyEvent e) {
-        var target = controller;
-
-        if (target == null || !gameWindow.isActive()) {
+        // The two ports are wired to a machine together, so an empty first one means there is no
+        // machine rather than a pad nobody plugged in.
+        if (pads.get(Port.ONE).controller == null || !gameWindow.isActive()) {
             // Either nothing is running or the keystroke belongs to another window. The second
             // half is also what keeps the settings dialog, the file chooser and the CHR viewer
             // from playing the game while they are up.
@@ -225,12 +270,14 @@ public final class KeyboardInput implements KeyEventDispatcher {
             return false;
         }
 
-        var button = bindings.buttonFor(e.getKeyCode());
-        if (button == null) {
+        var press = bindings.pressFor(e.getKeyCode());
+        if (press == null) {
             // Asked second, so a key somebody has put a controller button on stays that button.
             // Rewind is the emulator's key rather than the game's, and the game wins.
             return dispatchRewind(e);
         }
+
+        var pad = pads.get(press.port());
 
         switch (e.getID()) {
             case KeyEvent.KEY_PRESSED -> {
@@ -247,7 +294,7 @@ public final class KeyboardInput implements KeyEventDispatcher {
                 }
 
                 // Setting a bit that is already set is what makes the key repeat a non-event.
-                pressed |= button.mask();
+                pad.pressed |= press.button().mask();
             }
             // Releases are taken whatever else is held down, so a key let go of after reaching for
             // a modifier cannot leave its button stuck.
@@ -256,7 +303,7 @@ public final class KeyboardInput implements KeyEventDispatcher {
                     return true;
                 }
 
-                pressed &= ~button.mask();
+                pad.pressed &= ~press.button().mask();
             }
             // KEY_TYPED carries a character and no key code.
             default -> {
@@ -264,12 +311,12 @@ public final class KeyboardInput implements KeyEventDispatcher {
             }
         }
 
-        mask = withoutOpposingDirections(pressed);
+        pad.mask = withoutOpposingDirections(pad.pressed);
 
         // Left to the emulation thread while a movie is involved, which is the whole of the
         // difference: it takes this same mask at the next frame boundary instead.
-        if (!latching) {
-            target.setButtons(mask);
+        if (!latching && pad.controller != null) {
+            pad.controller.setButtons(pad.mask);
         }
 
         return true;
