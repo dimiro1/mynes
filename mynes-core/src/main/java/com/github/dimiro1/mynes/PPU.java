@@ -1466,6 +1466,11 @@ public class PPU {
                 case Y_POSITION -> evaluateYPosition(full);
                 case TILE, ATTRIBUTES -> copyByte(full);
                 case X_POSITION -> evaluateXPosition(full);
+
+                // Returned above, before the byte was written, since a finished evaluation has
+                // nowhere to put one. Named rather than swept up by a default, so that a step
+                // added later has to be answered for here rather than silently doing nothing.
+                case FINISHED -> throw new AssertionError("the evaluation was over at dot " + dot);
             }
         }
 
