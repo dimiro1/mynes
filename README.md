@@ -30,6 +30,7 @@ either onto the window. No ROMs are included, so bring your own.
 | B | Z |
 | Start | Enter |
 | Select | Shift |
+| Player two | Nothing until you bind it |
 | Quick Save | F5 |
 | Quick Load | F7 |
 | Rewind (hold) | Backspace |
@@ -38,8 +39,12 @@ either onto the window. No ROMs are included, so bring your own.
 | Full Screen | F11 (Esc leaves) |
 | Louder / Quieter | Cmd/Ctrl+= and Cmd/Ctrl+- |
 
-Remap anything under **Settings > Controller...** — click a button, press a key, done. Everything
-lands in `~/.mynes/config.properties`, which you can also edit by hand:
+Remap anything under **Settings > Controller...** — click a button, press a key, done. Player two
+is the second column in the same dialog, and starts empty: any default for it would be eight keys
+taken off somebody playing on their own, and there is nowhere to put them that is the same place
+on every keyboard. Reset to Defaults gives them all back.
+
+Everything lands in `~/.mynes/config.properties`, which you can also edit by hand:
 
 ```properties
 video.palette=nesdev
@@ -48,6 +53,7 @@ emulation.fast-forward=4x
 audio.latency-ms=60
 rewind.seconds=30
 controller1.a=VK_X
+controller2.a=VK_G
 ```
 
 Key names are the `VK_` constants from `java.awt.event.KeyEvent`. `rewind.seconds=0` switches
@@ -111,8 +117,9 @@ file is where they live.
 - Fast forward at 2x, 4x, 8x or unlimited.
 - Pause when the window goes behind another application, under **Machine > Pause in Background**.
   The emulator's own windows don't count, so the control panel keeps the game running.
+- Two players on one keyboard, both pads rebindable from **Settings > Controller...**.
 - Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
-  video, so it is a few kilobytes a minute and replays byte for byte.
+  video — both pads of them — so it is a few kilobytes a minute and replays byte for byte.
 - Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip
   holding more than one cartridge asks which.
 - IPS patches via **File > Open with Patch...**. The patch is applied in memory, the ROM on disk

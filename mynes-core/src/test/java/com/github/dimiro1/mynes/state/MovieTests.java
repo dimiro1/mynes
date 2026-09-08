@@ -103,7 +103,7 @@ class MovieTests {
             nes.getController1().setButtons(0);
             advanceFrame(nes);
             rewind.capture(nes);
-            recorder.frame(0);
+            recorder.frame(0, 0);
         }
 
         var moved = rewind.rewind(nes, 30);
@@ -120,7 +120,7 @@ class MovieTests {
             nes.getController1().setButtons(Controller.BUTTON_START);
             advanceFrame(nes);
             rewind.capture(nes);
-            recorder.frame(Controller.BUTTON_START);
+            recorder.frame(Controller.BUTTON_START, 0);
         }
 
         var movie = roundTrip(recorder.movie());
@@ -160,7 +160,7 @@ class MovieTests {
         for (var i = 0; i < 10; i++) {
             advanceFrame(nes);
             rewind.capture(nes);
-            recorder.frame(0);
+            recorder.frame(0, 0);
         }
 
         var moved = rewind.rewind(nes, 30);
@@ -342,6 +342,63 @@ class MovieTests {
         assertEquals(0, movie.buttonsAt(-1));
     }
 
+    // =============================================================================== two players
+
+    /**
+     * Two people at one keyboard, which is the whole reason there is a second lane. A movie that
+     * carried only the first would replay the second player standing still through a game somebody
+     * played with them, and nothing in the file would say why the two machines came apart.
+     */
+    @Test
+    void bothPadsAreRecordedAndBothAreReplayed() throws IOException {
+        var nes = load();
+        var recorder = MovieRecorder.atPowerOn(nes, List.of());
+
+        // Deliberately not the same masks on the same frames: two lanes that held the same bytes
+        // would pass this test with the second one wired to the first.
+        for (var i = 0; i < 40; i++) {
+            var one = i < 20 ? Controller.BUTTON_A : 0;
+            var two = i < 20 ? 0 : Controller.BUTTON_B | Controller.BUTTON_LEFT;
+
+            nes.getController1().setButtons(one);
+            nes.getController2().setButtons(two);
+            advanceFrame(nes);
+            recorder.frame(one, two);
+        }
+
+        var movie = roundTrip(recorder.movie());
+
+        assertEquals(2, movie.header().ports());
+        assertEquals(Controller.BUTTON_A, movie.buttonsAt(19));
+        assertEquals(0, movie.buttons2At(19));
+        assertEquals(0, movie.buttonsAt(20));
+        assertEquals(Controller.BUTTON_B | Controller.BUTTON_LEFT, movie.buttons2At(20));
+
+        var replayed = load();
+        replay(replayed, movie, movie.frameCount());
+
+        assertEquals(Controller.BUTTON_B | Controller.BUTTON_LEFT,
+                replayed.getController2().getButtons(),
+                "the second lane reached the second pad rather than nowhere");
+        assertArrayEquals(save(nes), save(replayed));
+    }
+
+    /**
+     * A movie recorded before there was anything to play the second pad with. It says one lane and
+     * carries one, which is not damage -- and the honest answer for a pad nobody could have been
+     * holding is that nobody was.
+     */
+    @Test
+    void aMovieFromBeforeThereWasASecondPadStillPlays() throws IOException {
+        var lane = new byte[]{Controller.BUTTON_A, Controller.BUTTON_A, 0};
+        var read = roundTrip(onePortMovie(lane));
+
+        assertEquals(1, read.header().ports());
+        assertEquals(Controller.BUTTON_A, read.buttonsAt(0));
+        assertEquals(0, read.buttons2At(0));
+        assertEquals(0, read.buttons2At(2));
+    }
+
     // ================================================================================== the file
 
     @Test
@@ -364,7 +421,7 @@ class MovieTests {
         assertEquals(nes.getCart().sha256(), read.header().romSHA256());
         assertEquals(0, read.header().mapperNumber());
         assertEquals(Region.NTSC, read.header().region());
-        assertEquals(1, read.header().ports());
+        assertEquals(2, read.header().ports());
         assertEquals(40, read.frameCount());
         assertFalse(read.anchored());
         assertArrayEquals(new long[]{20}, read.resets());
@@ -485,6 +542,37 @@ class MovieTests {
                 MovieException.class, () -> Movie.read(new ByteArrayInputStream(file)));
 
         assertTrue(refused.getMessage().contains("31 frames"));
+    }
+
+    /**
+     * The refusal that keeps a two player movie from quietly becoming a one player one: a header
+     * that counts two lanes and a body that holds one is a file whose second player would silently
+     * stand still.
+     */
+    @Test
+    void aMovieThatCountsTwoLanesAndCarriesOneIsRefused() throws IOException {
+        var file = new ByteArrayOutputStream();
+
+        movie(2, new byte[10], null).write(file);
+
+        var refused = assertThrows(
+                MovieException.class,
+                () -> Movie.read(new ByteArrayInputStream(file.toByteArray())));
+
+        assertTrue(refused.getMessage().contains("CTL2"), refused.getMessage());
+    }
+
+    @Test
+    void aMovieWhoseSecondLaneIsShortIsRefused() throws IOException {
+        var file = new ByteArrayOutputStream();
+
+        movie(2, new byte[10], new byte[9]).write(file);
+
+        var refused = assertThrows(
+                MovieException.class,
+                () -> Movie.read(new ByteArrayInputStream(file.toByteArray())));
+
+        assertTrue(refused.getMessage().contains("player two"), refused.getMessage());
     }
 
     @Test
@@ -636,7 +724,7 @@ class MovieTests {
         for (var i = 0; i < frames; i++) {
             nes.getController1().setButtons(mask);
             advanceFrame(nes);
-            recorder.frame(mask);
+            recorder.frame(mask, 0);
         }
     }
 
@@ -653,6 +741,7 @@ class MovieTests {
             }
 
             nes.getController1().setButtons(movie.buttonsAt(i));
+            nes.getController2().setButtons(movie.buttons2At(i));
             advanceFrame(nes);
         }
     }
@@ -667,6 +756,41 @@ class MovieTests {
         movie.write(out);
 
         return Movie.read(new ByteArrayInputStream(out.toByteArray()));
+    }
+
+    /**
+     * A movie nobody could record through a {@link MovieRecorder}: this is where a file that is
+     * wrong about its own lanes comes from, and where a movie from an older build is imitated.
+     * <p>
+     * Straight through the package-private constructor, since every other way in writes both lanes
+     * and writes them the right length -- which is the point of them, and the reason the mistakes
+     * below have to be built by hand.
+     */
+    private static Movie movie(
+            final int ports, final byte[] player1, final byte[] player2) throws IOException {
+        return new Movie(
+                new Movie.Header(
+                        Movie.VERSION,
+                        load().getCart().sha256(),
+                        0,
+                        Region.NTSC,
+                        false,
+                        0,
+                        player1.length,
+                        ports),
+                null,
+                player1,
+                player2,
+                new long[0],
+                List.of(),
+                Overclock.NONE);
+    }
+
+    /**
+     * What a build that had never heard of a second pad wrote: one lane, and a header that says so.
+     */
+    private static Movie onePortMovie(final byte[] player1) throws IOException {
+        return movie(1, player1, null);
     }
 
     private static byte[] recorded(final int frames) throws IOException {

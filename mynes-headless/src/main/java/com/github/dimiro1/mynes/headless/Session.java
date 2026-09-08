@@ -172,7 +172,12 @@ public final class Session {
     private long frameChanges;
     private long lastChangeFrame;
 
+    /**
+     * What each pad is being held down as, so that a frame can be written into a movie with exactly
+     * what was held for it whichever loop ran the frame.
+     */
     private int buttons;
+    private int buttons2;
 
     /**
      * @param nes      the machine, already built from a cartridge.
@@ -298,11 +303,24 @@ public final class Session {
     }
 
     /**
-     * Holds these buttons down from the next frame until told otherwise.
+     * Holds these buttons down on player one's pad from the next frame until told otherwise.
      */
     public void setButtons(final int mask) {
         buttons = mask;
         nes.getController1().setButtons(mask);
+    }
+
+    /**
+     * The same for player two.
+     * <p>
+     * Its own method rather than a second argument to the one above, because nothing that authors
+     * input here has a second player to author for -- {@code --input} and the REPL's {@code press}
+     * are one pad's worth apiece. What moves this is a movie, which carries a lane for each pad and
+     * would replay a two player session as a one player one without it.
+     */
+    public void setButtons2(final int mask) {
+        buttons2 = mask;
+        nes.getController2().setButtons(mask);
     }
 
     /**
@@ -426,7 +444,7 @@ public final class Session {
         // force whether the frame finished inside advanceFrame or inside stepInstructions, so a
         // frame somebody stepped their way through is recorded with exactly what was held for it.
         if (recorder != null) {
-            recorder.frame(buttons);
+            recorder.frame(buttons, buttons2);
         }
 
         var hash = FrameAnalysis.hash(ppu.getFrameBuffer());

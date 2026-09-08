@@ -639,6 +639,18 @@ two seconds under the pads is the before and after for it -- a mark every other 
 overrunning by a little, a solid run is a level loading, and one mark every few seconds is the host
 stopping rather than the game.
 
+**Player two is the same keyboard, and it starts with no keys on it.** **Settings > Controller...**
+is a column per port now, and a key belongs to one button on one pad: putting it on a second takes
+it off the first, across the two ports as readily as within one, since a key that pressed A on both
+would walk both players at once. The second column is empty on a fresh install because a default
+for it would be eight keys taken off somebody playing alone, and there is nowhere to put them that
+is the same place on a Colemak or a Dvorak keyboard as on a QWERTY one -- where the arrows and Z/X
+player one has are the same keys everywhere. **Reset to Defaults is the whole of the unbinding
+story**, and is why there is no per-key clear: it hands a keyboard given away to player two back in
+one click. `KeyBindings.Port` is the enum all of it hangs off -- the config file's `controller1.`
+and `controller2.` prefixes, the dialog's two columns, and which of `KeyboardInput`'s two pads a
+keystroke lands on.
+
 **The two ports are told apart by their reads rather than by their polls.** `Controller.getPolls()`
 counts the falling edge of the strobe, which is the moment the shift register stops following the
 buttons -- and one write to $4016 drives the latch line of both ports, so both pads always answer
@@ -940,9 +952,9 @@ twice speed. The REPL stays at one so that `rewind N` means N frames.
 ### Recording a session, and playing it back
 
 `--record FILE` writes a `.mnm` movie of the run: where it started, one button mask per finished
-frame, and a sparse list of the frames Reset was pressed at. `--play FILE` plays one instead of a
-schedule. A replay is byte-identical, which is the whole claim and the thing to check after touching
-any of it:
+frame **per pad**, and a sparse list of the frames Reset was pressed at. `--play FILE` plays one
+instead of a schedule. A replay is byte-identical, which is the whole claim and the thing to check
+after touching any of it:
 
 ```sh
 java -jar $JAR --headless --rom ROM.nes --frames 900 --input 60/40x3:start --reset-at 500 \
@@ -955,6 +967,15 @@ cmp a.mn b.mn        # byte-identical end state
 so a movie holds the timeline that was finally played and a replay never re-enacts the revert. That
 composes out of the rewind claim above: a rewound machine is byte for byte the machine that never
 went forward, so there is nothing lost by truncating the log to match.
+
+**Both lanes are in the file always**, since a pad nobody touched is a run of zeros the gzip
+crushes to nothing, and counting the lanes a take happened to use would make "no second player" and
+"a second player who stood still" two different files for one session. A movie from before there
+was a second pad says one lane and carries one, and answers nothing pressed for player two; one
+that says two lanes and holds one is refused as damaged rather than quietly played as a one player
+session. **`--input` authors player one's buttons alone** -- there is no command line for a second
+player's -- but a movie recorded in the window carries both pads and `--play` plays both, wherever
+it is played.
 
 `--play` is the input, so it refuses `--record`, `--input`, `--input-file`, `--reset-at`, `--genie`,
 `--hack overclock`, `--load-state`, `--sram-in` and `--interactive` -- each of those would be a

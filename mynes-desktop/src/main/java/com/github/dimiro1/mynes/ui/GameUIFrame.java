@@ -22,6 +22,7 @@ import com.github.dimiro1.mynes.state.SaveState;
 import com.github.dimiro1.mynes.state.SaveStateException;
 import com.github.dimiro1.mynes.ui.controlpanel.ControlPanelFrame;
 import com.github.dimiro1.mynes.ui.input.ControllerSettingsDialog;
+import com.github.dimiro1.mynes.ui.input.KeyBindings.Port;
 import com.github.dimiro1.mynes.video.FrameRenderer;
 import com.github.dimiro1.mynes.video.VideoFilter;
 import com.github.dimiro1.mynes.ui.input.KeyboardInput;
@@ -2686,10 +2687,10 @@ public class GameUIFrame extends JFrame {
         batteryShadow = nes.getBus().getMapper().prgRAM().clone();
 
         // Each machine brings its own controllers, so the keyboard has to be pointed at the new
-        // one. Nothing races: the old runner has already stopped and this is the event dispatch
+        // pair. Nothing races: the old runner has already stopped and this is the event dispatch
         // thread, which is the only thread the dispatcher runs on.
         keyboardInput.releaseAll();
-        keyboardInput.setController(nes.getController1());
+        keyboardInput.setControllers(nes.getController1(), nes.getController2());
 
         // A machine that has just been switched on is running, and running at normal speed. Both
         // menu items have to agree with that; the runner is already built that way.
@@ -2714,8 +2715,12 @@ public class GameUIFrame extends JFrame {
         // history, and the key must not still be rewinding a game that has been switched off.
         keyboardInput.setRewind(runner::setRewinding);
 
-        // And so is where a recorded frame's buttons come from, for the same reason again.
-        runner.setFrameInputSource(keyboardInput::heldMask);
+        // And so is where a recorded frame's buttons come from, for the same reason again -- both
+        // pads of them, since a movie that dropped the second would replay a game two people played
+        // as a game one of them did.
+        runner.setFrameInputSource(
+                () -> keyboardInput.heldMask(Port.ONE),
+                () -> keyboardInput.heldMask(Port.TWO));
 
         var playing = runner;
         runner.setPlaybackEndedListener(() -> playbackEnded(playing));

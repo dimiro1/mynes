@@ -46,7 +46,6 @@ record MachineSnapshot(Readout machine, int[] bus, int[] trail) {
      */
     static MachineSnapshot of(final NES nes, final Debugger debugger) {
         var memory = nes.getMemory();
-        var ppu = nes.getPPU();
         var bus = new int[0x10000];
 
         for (var address = 0; address < bus.length; address++) {
@@ -90,12 +89,6 @@ record MachineSnapshot(Readout machine, int[] bus, int[] trail) {
         return bus[address & 0xFFFF];
     }
 
-    /**
-     * The address of the byte on top of the stack, or $0200 when there is nothing on it.
-     * <p>
-     * The pointer names the next free slot rather than the last used one, so the top is one above
-     * it -- and an empty stack's top would be $0200, which is the first address that is not stack.
-     */
     /**
      * What is on the stack, top first, which is the order it will come off in.
      */

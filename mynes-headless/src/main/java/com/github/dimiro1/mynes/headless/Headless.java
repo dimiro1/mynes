@@ -546,6 +546,7 @@ public final class Headless {
                 }
 
                 session.setButtons(movie.buttonsAt(frame - 1));
+                session.setButtons2(movie.buttons2At(frame - 1));
             } else {
                 if (resets.contains(frame)) {
                     session.reset();

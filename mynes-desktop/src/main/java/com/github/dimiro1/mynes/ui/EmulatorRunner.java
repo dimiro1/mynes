@@ -297,18 +297,20 @@ public class EmulatorRunner {
     private long playCursor;
 
     /**
-     * The mask latched for the frame now running, which is what gets written down when it finishes.
+     * The masks latched for the frame now running, which are what get written down when it finishes.
      * Held rather than read twice, so the frame a recorder is told about is exactly the frame the
      * game saw.
      */
-    private int pendingMask;
+    private int pendingMask1;
+    private int pendingMask2;
 
     /**
-     * Where a latched mask comes from while recording: the keyboard, in practice. Never null, so the
-     * loop has nothing to check -- a machine with no keyboard pointed at it records nothing pressed,
-     * which is true.
+     * Where a latched mask comes from while recording: the keyboard, in practice, one supplier per
+     * port. Never null, so the loop has nothing to check -- a machine with no keyboard pointed at it
+     * records nothing pressed, which is true.
      */
-    private IntSupplier inputSource = () -> 0;
+    private IntSupplier inputSource1 = () -> 0;
+    private IntSupplier inputSource2 = () -> 0;
 
     /**
      * Whether the next time round the loop starts a frame rather than resuming one a breakpoint
@@ -616,11 +618,18 @@ public class EmulatorRunner {
     // ==================================================================================== movies
 
     /**
-     * Where the mask comes from while a movie is being recorded, latched once a frame on this
-     * thread. Wired to the keyboard per machine, the way the controller and the rewind key are.
+     * Where the masks come from while a movie is being recorded, latched once a frame on this
+     * thread. Wired to the keyboard per machine, the way the controllers and the rewind key are.
+     * <p>
+     * Both ports together, for the reason {@code MovieRecorder.frame} takes both: a caller that
+     * could wire one of them is a caller that can forget the other, and a movie missing a player
+     * replays as a session nobody played.
      */
-    public void setFrameInputSource(final IntSupplier source) {
-        post(() -> inputSource = source);
+    public void setFrameInputSource(final IntSupplier player1, final IntSupplier player2) {
+        post(() -> {
+            inputSource1 = player1;
+            inputSource2 = player2;
+        });
     }
 
     /**
@@ -990,7 +999,7 @@ public class EmulatorRunner {
                     }
                 }
 
-                // The pad, changed exactly once per frame and on this thread, whenever a movie is
+                // The pads, changed exactly once per frame and on this thread, whenever a movie is
                 // involved. Skipped on a frame that is being resumed after a breakpoint stopped it
                 // part way through: latching again in flight would change what the game is holding
                 // inside a single frame, which is a frame neither a recording nor a replay could
@@ -1001,11 +1010,15 @@ public class EmulatorRunner {
                             nes.reset();
                         }
 
-                        pendingMask = playing.buttonsAt(playCursor);
-                        nes.getController1().setButtons(pendingMask);
+                        pendingMask1 = playing.buttonsAt(playCursor);
+                        pendingMask2 = playing.buttons2At(playCursor);
+
+                        hold(pendingMask1, pendingMask2);
                     } else if (recorder != null) {
-                        pendingMask = inputSource.getAsInt();
-                        nes.getController1().setButtons(pendingMask);
+                        pendingMask1 = inputSource1.getAsInt();
+                        pendingMask2 = inputSource2.getAsInt();
+
+                        hold(pendingMask1, pendingMask2);
                     }
                 }
 
@@ -1072,7 +1085,7 @@ public class EmulatorRunner {
                 // be fed on exactly the same frames or none of the three describes the same second
                 // of the game as the others.
                 if (completed && recorder != null) {
-                    recorder.frame(pendingMask);
+                    recorder.frame(pendingMask1, pendingMask2);
                 }
 
                 if (completed && playing != null) {
@@ -1306,6 +1319,18 @@ public class EmulatorRunner {
         nes.getAPU().clearPeaks();
 
         SwingUtilities.invokeLater(() -> observer.accept(readout));
+    }
+
+    /**
+     * Hands both pads the masks the frame about to run is being played with.
+     * <p>
+     * The two together and nowhere else, because a movie is one row of frames rather than one per
+     * port: a replay that set the pads on different frames would be playing back a session nobody
+     * played.
+     */
+    private void hold(final int player1, final int player2) {
+        nes.getController1().setButtons(player1);
+        nes.getController2().setButtons(player2);
     }
 
     /**

@@ -14,10 +14,15 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * Which key presses which button.
+ * Which key presses which button, on which of the console's two pads.
  * <p>
- * Immutable: {@link #with(Button, int)} returns a new set rather than editing this one, so the
+ * Immutable: {@link #with(Port, Button, int)} returns a new set rather than editing this one, so the
  * dispatcher reading the bindings on the event dispatch thread never sees a half applied remap.
+ * <p>
+ * <b>A key belongs to one button on one pad.</b> Putting it on a second takes it off the first,
+ * across the two ports as well as within one -- a key that pressed A on both pads would walk both
+ * players at once, which is a bug rather than a shortcut, and stealing rather than refusing is what
+ * makes swapping a pair possible.
  * <p>
  * A value type, and one section of a larger file: {@code com.github.dimiro1.mynes.ui.Config} owns
  * {@code ~/.mynes/config.properties} and hands the properties down here. That file is meant to be
@@ -39,8 +44,44 @@ public final class KeyBindings {
     private static final String HEADER = """
             # Which key presses which button. Values are the names of the VK_ constants in
             # java.awt.event.KeyEvent, for instance VK_X, VK_LEFT or VK_ENTER; an empty value
-            # leaves the button unbound.
+            # leaves the button unbound. No key presses two buttons: giving one to a second
+            # takes it off the first, on the other pad as readily as on the same one.
+            #
+            # Player two is empty on a fresh install. A second pad is worth nothing to somebody
+            # playing alone, and any default for it would be eight keys taken off their keyboard
+            # to buy them that -- and eight keys that would land somewhere else again on a
+            # keyboard that is not laid out like this one.
             """;
+
+    /**
+     * The console's two controller ports.
+     * <p>
+     * The prefix is also the name of that pad's entries in the config file, so a port cannot appear
+     * here without the file gaining a section for it.
+     */
+    public enum Port {
+        ONE("Player One", "controller1."),
+        TWO("Player Two", "controller2.");
+
+        private final String label;
+        private final String prefix;
+
+        Port(final String label, final String prefix) {
+            this.label = label;
+            this.prefix = prefix;
+        }
+
+        /**
+         * How the port is spelled in the settings dialog.
+         */
+        public String label() {
+            return label;
+        }
+
+        String propertyKey(final Button button) {
+            return prefix + button.name().toLowerCase(Locale.ROOT);
+        }
+    }
 
     /**
      * The eight buttons, in the order the shift register clocks them out and the settings dialog
@@ -79,10 +120,15 @@ public final class KeyBindings {
         public String label() {
             return label;
         }
+    }
 
-        String propertyKey() {
-            return "controller1." + name().toLowerCase(Locale.ROOT);
-        }
+    /**
+     * What a key does: one button, on one pad.
+     * <p>
+     * A pair rather than a button on its own, because "what does this keystroke press" stopped
+     * having an answer that a caller could assume belonged to player one.
+     */
+    public record Press(Port port, Button button) {
     }
 
     private static final Map<String, Integer> CODES_BY_NAME;
@@ -115,30 +161,44 @@ public final class KeyBindings {
     }
 
     /**
-     * Arrows and Z/X, which sit on the same physical keys on QWERTY and on Colemak-DH.
+     * Arrows and Z/X for player one, which sit on the same physical keys on QWERTY and on
+     * Colemak-DH, and nothing at all for player two.
      */
-    private static final Map<Button, Integer> DEFAULTS = defaultKeys();
+    private static final Map<Port, Map<Button, Integer>> DEFAULTS = defaultKeys();
 
-    private final Map<Button, Integer> keys;
+    private final Map<Port, Map<Button, Integer>> keys;
 
     /**
-     * Takes ownership of {@code keys}; every caller builds a fresh map and keeps no reference.
+     * Takes ownership of {@code keys}; every caller builds fresh maps and keeps no reference.
      */
-    private KeyBindings(final Map<Button, Integer> keys) {
+    private KeyBindings(final Map<Port, Map<Button, Integer>> keys) {
         this.keys = keys;
     }
 
-    private static Map<Button, Integer> defaultKeys() {
-        var keys = new EnumMap<Button, Integer>(Button.class);
+    private static Map<Port, Map<Button, Integer>> defaultKeys() {
+        var one = new EnumMap<Button, Integer>(Button.class);
 
-        keys.put(Button.A, KeyEvent.VK_X);
-        keys.put(Button.B, KeyEvent.VK_Z);
-        keys.put(Button.SELECT, KeyEvent.VK_SHIFT);
-        keys.put(Button.START, KeyEvent.VK_ENTER);
-        keys.put(Button.UP, KeyEvent.VK_UP);
-        keys.put(Button.DOWN, KeyEvent.VK_DOWN);
-        keys.put(Button.LEFT, KeyEvent.VK_LEFT);
-        keys.put(Button.RIGHT, KeyEvent.VK_RIGHT);
+        one.put(Button.A, KeyEvent.VK_X);
+        one.put(Button.B, KeyEvent.VK_Z);
+        one.put(Button.SELECT, KeyEvent.VK_SHIFT);
+        one.put(Button.START, KeyEvent.VK_ENTER);
+        one.put(Button.UP, KeyEvent.VK_UP);
+        one.put(Button.DOWN, KeyEvent.VK_DOWN);
+        one.put(Button.LEFT, KeyEvent.VK_LEFT);
+        one.put(Button.RIGHT, KeyEvent.VK_RIGHT);
+
+        var keys = new EnumMap<Port, Map<Button, Integer>>(Port.class);
+
+        keys.put(Port.ONE, one);
+
+        // Player two is deliberately empty rather than sat on a second set of keys. Two people at
+        // one keyboard is the rarer half of the rare case -- most cartridges have no two player
+        // mode at all -- and a default for it would take eight keys away from every session that
+        // is not one. There is nowhere obvious to put them either: WASD is four different keys on
+        // a Colemak or a Dvorak keyboard and a numeric keypad is missing from every laptop, where
+        // the arrows and Z/X above are the same keys everywhere. So this is one dialog away rather
+        // than guessed at.
+        keys.put(Port.TWO, new EnumMap<>(Button.class));
 
         return keys;
     }
@@ -152,15 +212,21 @@ public final class KeyBindings {
      * it does not answer for. Properties that answer for nothing at all give the defaults.
      */
     public static KeyBindings from(final Properties properties) {
-        var keys = new EnumMap<Button, Integer>(Button.class);
+        var keys = new EnumMap<Port, Map<Button, Integer>>(Port.class);
 
-        for (var button : Button.values()) {
-            keys.put(
-                    button,
-                    codeOf(
-                            properties.getProperty(button.propertyKey()),
-                            DEFAULTS.get(button),
-                            button.propertyKey()));
+        for (var port : Port.values()) {
+            var buttons = new EnumMap<Button, Integer>(Button.class);
+
+            for (var button : Button.values()) {
+                buttons.put(
+                        button,
+                        codeOf(
+                                properties.getProperty(port.propertyKey(button)),
+                                DEFAULTS.get(port).getOrDefault(button, UNBOUND),
+                                port.propertyKey(button)));
+            }
+
+            keys.put(port, buttons);
         }
 
         return new KeyBindings(keys);
@@ -208,16 +274,19 @@ public final class KeyBindings {
      * <p>
      * Written by hand rather than through {@link Properties#store} so that the buttons come out in
      * a fixed, readable order -- the order the shift register clocks them out in -- instead of
-     * whatever order the hash table holds them in.
+     * whatever order the hash table holds them in. Both pads are written every time, empty values
+     * and all, so that the file says what can be remapped rather than only what has been.
      */
     public void appendTo(final StringBuilder text) {
         text.append(HEADER);
 
-        for (var button : Button.values()) {
-            text.append(button.propertyKey())
-                    .append('=')
-                    .append(nameOf(keyFor(button)))
-                    .append('\n');
+        for (var port : Port.values()) {
+            for (var button : Button.values()) {
+                text.append(port.propertyKey(button))
+                        .append('=')
+                        .append(nameOf(keyFor(port, button)))
+                        .append('\n');
+            }
         }
     }
 
@@ -243,23 +312,29 @@ public final class KeyBindings {
     }
 
     /**
-     * The key bound to {@code button}, or {@link #UNBOUND}.
+     * The key bound to {@code button} on {@code port}, or {@link #UNBOUND}.
      */
-    public int keyFor(final Button button) {
-        return keys.getOrDefault(button, UNBOUND);
+    public int keyFor(final Port port, final Button button) {
+        return keys.get(port).getOrDefault(button, UNBOUND);
     }
 
     /**
-     * The button {@code keyCode} presses, or null if nothing is bound to that key.
+     * The pad and button {@code keyCode} presses, or null if nothing is bound to that key.
+     * <p>
+     * The guard on {@link #UNBOUND} is load-bearing rather than tidy: an empty player two holds
+     * that code in all eight of its buttons, so asking what "no key at all" presses would come back
+     * with player two's A.
      */
-    public @Nullable Button buttonFor(final int keyCode) {
+    public @Nullable Press pressFor(final int keyCode) {
         if (keyCode == UNBOUND) {
             return null;
         }
 
-        for (var button : Button.values()) {
-            if (keyFor(button) == keyCode) {
-                return button;
+        for (var port : Port.values()) {
+            for (var button : Button.values()) {
+                if (keyFor(port, button) == keyCode) {
+                    return new Press(port, button);
+                }
             }
         }
 
@@ -267,24 +342,32 @@ public final class KeyBindings {
     }
 
     /**
-     * A copy with {@code button} moved to {@code keyCode}, taking that key off whatever else was
-     * using it.
+     * A copy with {@code button} on {@code port} moved to {@code keyCode}, taking that key off
+     * whatever else was using it -- on either pad.
      * <p>
      * Stealing rather than refusing is what makes swapping two buttons possible: give A the key B
-     * is on, which leaves B unbound, then give B the key A used to be on.
+     * is on, which leaves B unbound, then give B the key A used to be on. Across the two pads it is
+     * also the only honest answer, since a key on both would press both.
      */
-    public KeyBindings with(final Button button, final int keyCode) {
-        var updated = new EnumMap<>(keys);
+    public KeyBindings with(final Port port, final Button button, final int keyCode) {
+        var updated = new EnumMap<Port, Map<Button, Integer>>(Port.class);
+
+        for (var each : Port.values()) {
+            updated.put(each, new EnumMap<>(keys.get(each)));
+        }
 
         if (keyCode != UNBOUND) {
-            for (var other : Button.values()) {
-                if (other != button && keyFor(other) == keyCode) {
-                    updated.put(other, UNBOUND);
+            for (var otherPort : Port.values()) {
+                for (var otherButton : Button.values()) {
+                    if ((otherPort != port || otherButton != button)
+                            && keyFor(otherPort, otherButton) == keyCode) {
+                        updated.get(otherPort).put(otherButton, UNBOUND);
+                    }
                 }
             }
         }
 
-        updated.put(button, keyCode);
+        updated.get(port).put(button, keyCode);
 
         return new KeyBindings(updated);
     }

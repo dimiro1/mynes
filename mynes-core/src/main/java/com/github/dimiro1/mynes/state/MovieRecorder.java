@@ -48,7 +48,7 @@ public final class MovieRecorder {
 
     /**
      * How many frames of masks to make room for up front. Twenty seconds or so, doubled from there
-     * -- the array is one byte a frame, so even an hour of play is under a quarter of a megabyte and
+     * -- a lane is one byte a frame, so even an hour of play on both pads is half a megabyte and
      * nothing here is worth a smarter structure.
      */
     private static final int INITIAL_FRAMES = 1024;
@@ -73,9 +73,12 @@ public final class MovieRecorder {
     private long anchorFrame;
 
     /**
-     * One mask per finished frame, of which the first {@link #recorded} are real.
+     * One mask per finished frame per pad, of which the first {@link #recorded} are real. Two lanes
+     * of one length rather than a lane each of their own, because both pads are latched at the same
+     * frame boundary: a frame either happened for both of them or for neither.
      */
-    private byte[] buttons = new byte[INITIAL_FRAMES];
+    private byte[] player1 = new byte[INITIAL_FRAMES];
+    private byte[] player2 = new byte[INITIAL_FRAMES];
 
     private int recorded;
 
@@ -134,19 +137,29 @@ public final class MovieRecorder {
     }
 
     /**
-     * Writes down the mask that was in force for the frame that has just finished.
+     * Writes down the masks that were in force for the frame that has just finished.
      * <p>
      * To be called at the end of every finished frame and nowhere else, which is the same contract
      * {@link Rewind#capture} has and for a sharper reason: this counts in frames, so a call from
      * anywhere but a frame boundary puts every later index out by one and the replay diverges from
      * that point on.
+     * <p>
+     * Both pads at once rather than one call each, which is not a convenience: a caller that could
+     * write down one of them is a caller that can forget the other, and a movie missing a player is
+     * a replay that comes apart with nothing in the file to say why.
+     *
+     * @param one what player one was holding for it.
+     * @param two what player two was, which is 0 for every front end that drives one pad.
      */
-    public void frame(final int mask) {
-        if (recorded == buttons.length) {
-            buttons = Arrays.copyOf(buttons, buttons.length * 2);
+    public void frame(final int one, final int two) {
+        if (recorded == player1.length) {
+            player1 = Arrays.copyOf(player1, player1.length * 2);
+            player2 = Arrays.copyOf(player2, player2.length * 2);
         }
 
-        buttons[recorded++] = (byte) mask;
+        player1[recorded] = (byte) one;
+        player2[recorded] = (byte) two;
+        recorded++;
     }
 
     /**
@@ -245,8 +258,8 @@ public final class MovieRecorder {
                         recorded,
                         Movie.PORTS),
                 anchor,
-                Arrays.copyOf(buttons, recorded),
-                null,
+                Arrays.copyOf(player1, recorded),
+                Arrays.copyOf(player2, recorded),
                 Arrays.copyOf(resets, resetCount),
                 genie,
                 overclock);
