@@ -130,7 +130,17 @@ public final class Headless {
             // Everything Cart.load throws is unchecked, and a file that is not a cartridge can
             // fail in several ways -- a bad magic number, a mapper nobody has written, a truncated
             // image that runs the buffer out. They are all the same answer to the caller.
-            System.err.println(options.rom() + " is not a cartridge this can run: " + e);
+            //
+            // The message rather than the exception, because printing the object puts a
+            // package-qualified class name in front of it, which is the one part of this nobody
+            // running a script can use. The first two name the file themselves; the third is
+            // whatever the array threw and may carry no message at all, which is what the framing
+            // is kept for.
+            var because = e.getMessage();
+
+            System.err.println(because != null ? because
+                    : options.rom() + " is not a cartridge this can run: " + e);
+
             return EXIT_ROM;
         }
 

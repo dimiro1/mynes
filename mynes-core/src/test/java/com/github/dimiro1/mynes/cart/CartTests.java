@@ -60,20 +60,43 @@ public class CartTests {
     }
 
     /**
-     * The mapper number is split across the high nibbles of flags 6 and 7. Reading it wrongly is
-     * silent: an unsupported cart loads as mapper 0 and then misbehaves at run time instead of
-     * being rejected here.
+     * A board nobody has written is refused here rather than run wrongly, which is the whole of why
+     * this is an exception and not a warning: reading the mapper number wrongly is otherwise silent,
+     * and an unsupported cart that loaded as mapper 0 would misbehave at run time instead.
+     * <p>
+     * The number alone means nothing to somebody holding a cartridge, so a board this knows the name
+     * of is named. Both halves are asserted: a message that dropped the file would leave somebody
+     * with a collection open guessing which of it failed.
      */
     @Test
-    void loadUnsupportedMapper() {
-        var rom = synthesizeRom(0x50, 0x00);  // mapper 5, MMC5
+    void theRefusalNamesTheBoardWhenItKnowsWhatOneIsCalled() {
+        var rom = synthesizeRom(0x50, 0x00);  // mapper 5
 
         var thrown = assertThrowsExactly(
-                UnsupportedMapperException.class,
-                () -> Cart.load(rom, "mapper5.nes")
-        );
+                UnsupportedMapperException.class, () -> Cart.load(rom, "mapper5.nes"));
 
-        assertTrue(thrown.getMessage().contains("5"), "should name the mapper: " + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("MMC5"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("mapper5.nes"), thrown.getMessage());
+    }
+
+    /**
+     * The table stops at the boards a real release shipped on, so most numbers are not in it. That
+     * is the common case rather than the edge one -- the refusal still has to read as a sentence,
+     * with no gap where the name would have gone.
+     */
+    @Test
+    void theRefusalReadsAsASentenceForABoardNobodyHasNamed() {
+        var rom = synthesizeRom(0xE0, 0xC0);  // mapper 206, which is named
+        var named = assertThrowsExactly(
+                UnsupportedMapperException.class, () -> Cart.load(rom, "known.nes"));
+
+        var unknown = synthesizeRom(0x80, 0xD0);  // mapper 216, which is not
+        var bare = assertThrowsExactly(
+                UnsupportedMapperException.class, () -> Cart.load(unknown, "unknown.nes"));
+
+        assertEquals("known.nes wants mapper 206, DxROM, or Namco 118, which this does not run.",
+                named.getMessage());
+        assertEquals("unknown.nes wants mapper 216, which this does not run.", bare.getMessage());
     }
 
     @ParameterizedTest(name = "mapper ${0} loads as ${1}")
