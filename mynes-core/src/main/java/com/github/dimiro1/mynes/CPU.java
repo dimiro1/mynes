@@ -318,7 +318,9 @@ public class CPU {
      * that a freshly constructed CPU starts with. After this call the next {@link #tick()}
      * fetches an opcode from the supplied program counter.
      * <p>
-     * This method is primarily for testing purposes.
+     * Nothing in a running console ever does this: a machine reaches a state by having run to it.
+     * It is here for the Tom Harte fixtures, which hand over a whole architectural state and one
+     * instruction and ask what comes back out.
      *
      * @param state the state to load.
      */

@@ -1,16 +1,13 @@
 package com.github.dimiro1.mynes;
 
 /**
- * Exception thrown when attempting to load an invalid or malformed NES ROM file.
+ * A file that is not a cartridge at all.
  * <p>
- * This exception is thrown when a file fails to meet the iNES format specifications,
- * such as:
- * <ul>
- *   <li>Invalid magic number (file doesn't start with "NES\x1A")</li>
- *   <li>Missing or invalid PRG-ROM data</li>
- *   <li>Truncated file (insufficient data for declared banks)</li>
- *   <li>Corrupted header information</li>
- * </ul>
+ * The sibling of {@link UnsupportedMapperException}, and the line between the two is worth keeping.
+ * This one means the bytes are not an iNES or NES 2.0 image -- the wrong four at the front, or a
+ * header promising more banks than the file has left to give. That one means the image parsed
+ * perfectly and named a board nobody has written. The first is somebody's file being wrong; the
+ * second is this emulator being unfinished, and only one of them is worth reporting.
  */
 public class InvalidNesFileException extends RuntimeException {
     /**

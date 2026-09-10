@@ -175,8 +175,8 @@ public record Options(
     public static final Set<String> HACKS = Set.of(UNLIMITED_SPRITES, OVERCLOCK);
 
     /**
-     * Ten seconds of emulated time, which is about a second of real time and long enough for most
-     * cartridges to have drawn something.
+     * Ten seconds of emulated time, which is two or three seconds of real time and long enough for
+     * most cartridges to have drawn something.
      */
     private static final long DEFAULT_FRAMES = 600;
 

@@ -3,7 +3,18 @@ package com.github.dimiro1.mynes;
 import com.github.dimiro1.mynes.state.StateIO;
 
 /**
- * Represents a NES controller/joypad.
+ * A pad on one of the two ports: eight buttons, a shift register, and the strobe line that decides
+ * which of the two the register is following.
+ * <p>
+ * <b>Shaped like the hardware rather than like a set of button getters</b>, because that is what
+ * every awkward case here turns on. A game never asks which buttons are down. It raises the strobe
+ * to make the register follow them, drops it to make the register hold them, and then clocks the
+ * bits out one read at a time -- so "what is being held" and "what the game has been told" are two
+ * different questions, which is why {@link #getButtons()} and {@link #read()} are both here and
+ * answer differently for most of a frame.
+ * <p>
+ * Only the second of them is state the machine owns, and {@link #serialize} saves accordingly: the
+ * register and the strobe come back, and whose fingers were on what does not.
  */
 public interface Controller {
     /**

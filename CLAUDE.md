@@ -1207,7 +1207,7 @@ Seven Maven modules, and the arrows between them only point one way.
 mynes-core/           depends on nothing
   mynes/              the console: CPU, PPU, APU, BUS, MMU, VRAM, Cart, Region, Overclock,
                       controllers
-  mynes/mappers/      mappers 0 to 4
+  mynes/mappers/      the twelve boards: 0 to 4, 7, 9 to 11, 66, 71, and 155 on MMC1's own class
   mynes/state/        save states, battery .sav files, and .mnm session recordings
   mynes/debug/        the disassembler, the breakpoints and their conditions, the tracer, and
                       the meter that says how much of its frame the program used and which

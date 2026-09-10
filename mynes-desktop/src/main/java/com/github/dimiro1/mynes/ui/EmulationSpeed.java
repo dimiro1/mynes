@@ -22,9 +22,11 @@ import java.util.stream.Stream;
  * <p>
  * {@link #UNLIMITED} is the odd one out, and deliberately so: it does not wait at all, so how fast
  * it goes is a fact about the computer rather than about the setting. On the machine this was
- * written on that is around ten times, which is also the ceiling the numbered speeds sit under.
- * Asking for more than the host can manage is not an error -- the loop simply never catches up with
- * its deadline and the machine runs at whatever the host does manage.
+ * written on the console runs at about four times -- unpaced, with nothing hashed and no picture
+ * drawn -- and that is the ceiling the numbered speeds sit under too, so {@link #EIGHT_TIMES} is
+ * above it and comes out wherever {@link #UNLIMITED} does. Asking for more than the host can manage
+ * is not an error: the loop simply never catches up with its deadline and the machine runs at
+ * whatever the host does manage.
  */
 public enum EmulationSpeed {
     NORMAL("1x", "Normal", 1),
