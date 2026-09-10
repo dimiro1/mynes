@@ -121,12 +121,20 @@ class RomHackTests {
         assertArrayEquals(shotIn(first), shotIn(second));
     }
 
+    /**
+     * The path is compared through {@link Path}, not against {@link #PATCH} itself.
+     * <p>
+     * The report writes what {@code Path.toString()} gives, which is the separator of whatever
+     * machine ran it: {@code Path.of("a/b")} on Windows is {@code a\b}, and the same path. Asserting
+     * the string that went in would be asserting that this test was run on a platform whose
+     * separator is a slash, which is a different claim and one nobody wants to make.
+     */
     @Test
     void theReportSaysWhichHackItWas() throws Exception {
         var patches = report(run("hacked", "--patch", PATCH)).at("/cart/patches");
 
         assertEquals(1, patches.size());
-        assertEquals(PATCH, patches.get(0).get("path").asText());
+        assertEquals(Path.of(PATCH).toString(), patches.get(0).get("path").asText());
         assertEquals(1, patches.get(0).get("records").asInt());
         assertEquals(HACKED.length(), patches.get(0).get("bytes").asInt());
     }

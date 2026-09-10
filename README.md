@@ -178,7 +178,7 @@ file is where they live.
 - Toggles to hide the background or the sprite layer, and to take any of the five sound channels
   out of the mixer (`--mute pulse1,dmc` headless).
 
-Not there yet: a second player, and Dendy (run as PAL for now).
+Not there yet: a gamepad, the Zapper, and Dendy (run as PAL for now).
 
 ## Screenshots
 
@@ -315,10 +315,10 @@ mvn -B package -DskipTests
 java -jar mynes-desktop/target/mynes.jar
 ```
 
-Four Maven modules — `mynes-core` (the console, no dependencies), `mynes-patch` (IPS),
-`mynes-headless` (the command line) and `mynes-desktop` (the window) — flattened into one jar.
-The same `mvn package` also produces the release zip. A fifth, `mynes-shots`, takes the pictures
-above and is not in the jar.
+Six Maven modules — `mynes-core` (the console, no dependencies), `mynes-patch` (IPS),
+`mynes-archive` (zips), `mynes-midi` (MIDI files), `mynes-headless` (the command line) and
+`mynes-desktop` (the window) — flattened into one jar. The same `mvn package` also produces the
+release zip. A seventh, `mynes-shots`, takes the pictures above and is not in the jar.
 
 ## Tests
 

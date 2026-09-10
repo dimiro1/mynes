@@ -14,7 +14,6 @@ import com.github.dimiro1.mynes.cheat.GameGenieCode;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.debug.Tracer;
 import com.github.dimiro1.mynes.patch.IPSPatch;
-import com.github.dimiro1.mynes.state.BatteryRAM;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieException;
 import com.github.dimiro1.mynes.state.Rewind;
@@ -46,24 +45,13 @@ import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
-import java.util.Locale;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
 
 public class GameUIFrame extends JFrame {
     private static final Logger logger = System.getLogger("UI");
-
-    /**
-     * How many save state slots there are. Nine because that is how many fit on the number row, and
-     * because a tenth would be the one nobody could remember what they put in.
-     */
-    private static final int SLOTS = 9;
 
     /**
      * What a cartridge inside a zip is called. The only one: this runs iNES and NES 2.0 images, and
@@ -71,17 +59,6 @@ public class GameUIFrame extends JFrame {
      * opened on whichever file happened to be first.
      */
     private static final String ROM_EXTENSION = "nes";
-
-    /**
-     * How often the cartridge RAM is checked and written out while a game is running.
-     * <p>
-     * There is a save on quit and one on changing cartridges, and neither helps the laptop that runs
-     * out of power mid-dungeon. A minute of lost progress is a tolerable worst case, and the check
-     * costs an {@link java.util.Arrays#equals} against a shadow copy -- so nothing is written unless
-     * the game has actually saved something, and nothing is added to the hot path of every store to
-     * $6000, which a dirty flag on the mapper would have been.
-     */
-    private static final int BATTERY_AUTOSAVE_MILLIS = 60_000;
 
     /**
      * How often the status bar is worked out again, and so the window the frame rate is measured
@@ -131,6 +108,18 @@ public class GameUIFrame extends JFrame {
      */
     private final SystemFileChooser traceChooser;
     private final SystemFileChooser musicChooser;
+
+    /**
+     * The cartridge's {@code .sav} file. Holds the copy the autosave compares against, which is why
+     * it is an object rather than three methods here.
+     */
+    private final BatterySaves battery = new BatterySaves(this);
+
+    /**
+     * The nine slots and the two quick items. Holds which slot is current and what each one says;
+     * the writing and the reading stay here, since they need the machine and its thread.
+     */
+    private final SaveSlots slots = new SaveSlots(this::saveSlot, this::loadSlot);
 
     private final ScreenComponent screen = new ScreenComponent();
     private final StatusBar statusBar = new StatusBar();
@@ -184,11 +173,6 @@ public class GameUIFrame extends JFrame {
      * The Load State items, kept so the menu can relabel them with what is in each slot and grey out
      * the ones with nothing in them.
      */
-    private final JMenuItem[] loadSlotItems = new JMenuItem[SLOTS];
-
-    private final JMenuItem machineMenuQuickSave = new JMenuItem("Quick Save");
-    private final JMenuItem machineMenuQuickLoad = new JMenuItem("Quick Load");
-
     /**
      * The four movie items, and the two things a movie will not survive.
      * <p>
@@ -309,18 +293,6 @@ public class GameUIFrame extends JFrame {
      * running is: {@link #gamePath} names this game's files after it, and the title says so.
      */
     private Path patchPath;
-
-    /**
-     * Which slot the two quick items use. Whichever was last picked from either submenu, so the pair
-     * of keys and the menus are one setting rather than two.
-     */
-    private int currentSlot = 1;
-
-    /**
-     * What the cartridge RAM held when it was last written to disk, so the autosave can tell whether
-     * the game has saved anything since. Touched only on the emulation thread.
-     */
-    private byte[] batteryShadow = new byte[0];
 
     /**
      * Whether a movie is being recorded, and where it is going when it stops.
@@ -497,19 +469,11 @@ public class GameUIFrame extends JFrame {
 
         machineMenu.addSeparator();
 
-        machineMenu.add(slotMenu("Save State", this::saveSlot, null));
-        machineMenu.add(slotMenu("Load State", this::loadSlot, loadSlotItems));
+        machineMenu.add(slots.saveMenu());
+        machineMenu.add(slots.loadMenu());
 
-        // Function keys, for three reasons. They sit in the same physical place on every keyboard
-        // layout, which a letter does not -- this one is Colemak-DH. F5 and F7 are what ZSNES and
-        // SNES9x used, so they are the keys a player already has in their fingers. And they need no
-        // modifier, which matters here: Shift is bound to Select, so KeyboardInput deliberately does
-        // not treat it as a shortcut modifier and any Shift+key shortcut would be a hazard.
-        machineMenuQuickSave.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0));
-        machineMenu.add(machineMenuQuickSave);
-
-        machineMenuQuickLoad.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0));
-        machineMenu.add(machineMenuQuickLoad);
+        machineMenu.add(slots.quickSaveItem());
+        machineMenu.add(slots.quickLoadItem());
 
         machineMenu.addSeparator();
 
@@ -737,9 +701,6 @@ public class GameUIFrame extends JFrame {
             }
         });
 
-        machineMenuQuickSave.addActionListener(e -> saveSlot(currentSlot));
-        machineMenuQuickLoad.addActionListener(e -> loadSlot(currentSlot));
-
         machineMenuRecord.addActionListener(e -> startRecording());
         machineMenuStopRecording.addActionListener(e -> stopRecording());
         machineMenuPlay.addActionListener(e -> playMovie());
@@ -774,7 +735,7 @@ public class GameUIFrame extends JFrame {
         machineMenu.addMenuListener(new MenuListener() {
             @Override
             public void menuSelected(final MenuEvent e) {
-                describeSlots();
+                slots.describe(romPath == null ? null : gamePath());
             }
 
             @Override
@@ -838,7 +799,7 @@ public class GameUIFrame extends JFrame {
                 // After the runner has stopped, so the machine is this thread's to read. Last chance:
                 // the process is about to go, and a battery game that was not written here is an hour
                 // of somebody's evening.
-                saveBattery();
+                battery.save(nes, gamePath());
 
                 // And a trace holds up to sixty-four kilobytes of instructions that have not reached
                 // the disk yet, which is the end of whatever the file was opened to look at.
@@ -871,9 +832,18 @@ public class GameUIFrame extends JFrame {
         // A minute is far too long to be worth its own thread, and a Swing timer only fires on the
         // event dispatch thread -- so all it does is post the real work to the machine's own thread,
         // the same way the CHR viewer's refresh does.
-        var autosave = new Timer(BATTERY_AUTOSAVE_MILLIS, e -> {
+        //
+        // Which machine and which file are both read here rather than inside the posted task,
+        // because this is the thread that writes them: startMachine runs on the event dispatch
+        // thread, so a pair taken here is a machine and the path its own saves go to, where two
+        // reads on the far side could straddle a cartridge being swapped and file one game's RAM
+        // under another's name.
+        var autosave = new Timer(BatterySaves.AUTOSAVE_MILLIS, e -> {
             if (runner != null) {
-                runner.post(this::autosaveBattery);
+                var machine = nes;
+                var path = gamePath();
+
+                runner.post(() -> battery.autosave(machine, path));
             }
         });
 
@@ -1375,13 +1345,32 @@ public class GameUIFrame extends JFrame {
      * for.
      */
     private void applyCrop() {
-        // Asked of the content pane on either side of the change, the way applyStatusBar asks it
-        // and for the same reason: the difference is the rows and the columns, however big the
-        // magnification makes them.
+        repackAround(() -> {
+            screen.setOverscan(config.overscan());
+            screen.setLeftEdge(config.leftEdge());
+        });
+    }
+
+    /**
+     * Makes a change that moves how much room the picture asks for, and gives the window the
+     * difference.
+     * <p>
+     * <b>Written once because the two callers really are the same arithmetic.</b> Show Overscan and
+     * Show Left Edge decide how many of the chip's rows and columns are picture, and TV Aspect Ratio
+     * decides how wide one of those columns is drawn -- three questions about the same rectangle, so
+     * a window that answered them differently would be the bug. Which is also why the size is asked
+     * of the content pane on either side of the change rather than worked out: the difference is
+     * whatever moved, however big the magnification makes it, and neither reading has to know which
+     * of the three it was.
+     * <p>
+     * A full screen window is packed nowhere, because packing one would hand it back a size while
+     * the display still held it. What takes the difference there is the size it will be given back,
+     * so that leaving full screen does not land on a shape decided before any of this was asked for.
+     */
+    private void repackAround(final Runnable change) {
         var before = getContentPane().getPreferredSize();
 
-        screen.setOverscan(config.overscan());
-        screen.setLeftEdge(config.leftEdge());
+        change.run();
 
         var after = getContentPane().getPreferredSize();
 
@@ -1420,26 +1409,12 @@ public class GameUIFrame extends JFrame {
      * The same, for the tick rather than for the cartridge: the shape changes and the window is
      * given the columns rather than having them taken out of the picture.
      * <p>
-     * {@link #applyCrop} down to the arithmetic -- it measures the content pane on either side of
-     * the change and hands a full screen window's share to the size waiting for it, because a
-     * display decides how big a full screen window is and the four screen sizes are greyed out
-     * there for the same reason. What differs is only what moved: that one takes rows and columns
-     * off the frame, and this one stretches the columns that are left.
+     * {@link #applyCrop} down to the arithmetic, which is why both go through
+     * {@link #repackAround}. What differs is only what moved: that one takes rows and columns off
+     * the frame, and this one stretches the columns that are left.
      */
     private void applyTvAspect() {
-        var before = getContentPane().getPreferredSize();
-
-        applyPixelAspect();
-
-        var after = getContentPane().getPreferredSize();
-
-        if (switches.fullScreen().isOn()) {
-            growWindowedBounds(after.width - before.width, after.height - before.height);
-        } else {
-            pack();
-        }
-
-        updateStatusBar();
+        repackAround(this::applyPixelAspect);
     }
 
     /**
@@ -1537,6 +1512,10 @@ public class GameUIFrame extends JFrame {
      * remember to announce itself to the bar would be the one that eventually did not.
      */
     private void updateStatusBar() {
+        updateStatusBar(describe());
+    }
+
+    private void updateStatusBar(final MachineDescription description) {
         // With no machine there is no overclock on one, so the menu's answer stands in -- otherwise
         // the bar would say a machine is running the hardware's timing while the Hacks menu has
         // +50% ticked. Everything else here is read the same way for the same reason: what is on
@@ -1564,7 +1543,7 @@ public class GameUIFrame extends JFrame {
                 config.volume(),
                 config.audioLatencyMs()));
 
-        statusBar.setActivity(machineState());
+        statusBar.setActivity(description.state());
     }
 
     /**
@@ -1836,124 +1815,6 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * Fills the cartridge's RAM from its {@code .sav} file, if it has a battery and there is one.
-     * <p>
-     * Only ever called with the emulation thread stopped or not yet started.
-     */
-    private void loadBattery() {
-        if (romPath == null || !BatteryRAM.isWorthSaving(nes)) {
-            return;
-        }
-
-        var path = BatteryRAM.pathFor(gamePath());
-
-        try {
-            var read = BatteryRAM.read(nes, path);
-
-            if (read >= 0) {
-                logger.log(Level.INFO, "restored " + read + " bytes of save RAM from " + path.getFileName());
-            }
-        } catch (IOException e) {
-            // Worth a dialog rather than a log line: carrying on means the game says the save file is
-            // corrupt, and the player deserves to know it was the emulator that could not read it.
-            logger.log(Level.ERROR, "could not read the save file", e);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not read " + path.getFileName() + ": " + e.getMessage()
-                            + "\n\nThe game will start as though its battery were flat.",
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    /**
-     * Writes the cartridge's RAM out, if a real console would have kept it.
-     * <p>
-     * Only ever called with the emulation thread stopped, which is what makes reading the machine from
-     * the event dispatch thread safe here.
-     */
-    private void saveBattery() {
-        if (nes == null || romPath == null || !BatteryRAM.isWorthSaving(nes)) {
-            return;
-        }
-
-        var path = BatteryRAM.pathFor(gamePath());
-
-        try {
-            BatteryRAM.write(nes, path);
-            logger.log(Level.INFO, "wrote save RAM to " + path.getFileName());
-        } catch (IOException e) {
-            logger.log(Level.ERROR, "could not write the save file", e);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Could not write " + path.getFileName() + ": " + e.getMessage()
-                            + "\n\nThe game's progress since it was last saved may be lost.",
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    /**
-     * Writes the cartridge RAM out if the game has changed it since the last time.
-     * <p>
-     * Runs on the emulation thread, which is what makes reading the mapper's array safe. Comparing
-     * against a shadow copy rather than trusting a flag means a game that writes its save once an hour
-     * costs one file write an hour, and one array comparison a minute the rest of the time.
-     */
-    private void autosaveBattery() {
-        if (romPath == null || !BatteryRAM.isWorthSaving(nes)) {
-            return;
-        }
-
-        var ram = nes.getBus().getMapper().prgRAM();
-
-        if (Arrays.equals(ram, batteryShadow)) {
-            return;
-        }
-
-        var path = BatteryRAM.pathFor(gamePath());
-
-        try {
-            BatteryRAM.write(nes, path);
-            batteryShadow = ram.clone();
-            logger.log(Level.INFO, "the game saved, so " + path.getFileName() + " was written");
-        } catch (IOException e) {
-            report("Could not write " + path.getFileName(), e);
-        }
-    }
-
-    /**
-     * Builds one of the two slot submenus, nine items numbered from one.
-     *
-     * @param items where to keep the items for later relabelling, or null if they never change.
-     */
-    private JMenu slotMenu(final String title, final IntConsumer action, final JMenuItem[] items) {
-        var menu = new JMenu(title);
-
-        for (var slot = 1; slot <= SLOTS; slot++) {
-            var item = new JMenuItem("Slot " + slot);
-            var chosen = slot;
-
-            // No accelerators on these eighteen. Command-1 to Command-9 is "switch tab" everywhere
-            // else, and eighteen global shortcuts for something two keys already do would be
-            // eighteen chances to collide with a game's controls.
-            item.addActionListener(e -> {
-                currentSlot = chosen;
-                action.accept(chosen);
-                describeQuickItems();
-            });
-
-            if (items != null) {
-                items[slot - 1] = item;
-            }
-
-            menu.add(item);
-        }
-
-        return menu;
-    }
-
-    /**
      * Writes the machine into a slot.
      * <p>
      * The file is written on the emulation thread rather than this one, because that is the only
@@ -1967,7 +1828,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = slotPath(slot);
+        var path = SaveState.slotPath(gamePath(), slot);
 
         runner.post(() -> {
             try {
@@ -1984,7 +1845,7 @@ public class GameUIFrame extends JFrame {
             return;
         }
 
-        var path = slotPath(slot);
+        var path = SaveState.slotPath(gamePath(), slot);
 
         if (!Files.exists(path)) {
             // Worth saying out loud rather than doing nothing: the keys are one press apart, and a
@@ -2212,48 +2073,11 @@ public class GameUIFrame extends JFrame {
     }
 
     /**
-     * Puts what is in each slot onto its menu item, and greys out the empty ones.
-     * <p>
-     * This is what makes nine numbered slots usable instead of a guessing game, and it is why the
-     * state's header is not compressed: nine files get their frame number read without any of them
-     * being inflated.
-     */
-    private void describeSlots() {
-        describeQuickItems();
-
-        for (var slot = 1; slot <= SLOTS; slot++) {
-            var item = loadSlotItems[slot - 1];
-            var path = romPath == null ? null : slotPath(slot);
-
-            if (path == null || !Files.exists(path)) {
-                item.setText("Slot " + slot);
-                item.setEnabled(false);
-                continue;
-            }
-
-            item.setEnabled(true);
-
-            try {
-                var header = SaveState.header(path);
-                var when = Files.getLastModifiedTime(path).toInstant()
-                        .atZone(ZoneId.systemDefault())
-                        .format(DateTimeFormatter.ofPattern("d MMM HH:mm"));
-
-                item.setText("Slot " + slot + " — frame " + header.frame() + ", " + when);
-            } catch (IOException | SaveStateException ex) {
-                // A file that will not even give up its header is still offered, because refusing to
-                // list it would hide the only clue that something is wrong with it.
-                item.setText("Slot " + slot + " — unreadable");
-            }
-        }
-    }
-
-    /**
      * Puts the games somebody has opened onto Open Recent, and greys out the ones whose files are
      * not where they were left.
      * <p>
-     * Greyed rather than dropped, which is the same answer {@link #describeSlots} gives for a slot
-     * with nothing in it: a cartridge on a volume that is not mounted this afternoon is still the
+     * Greyed rather than dropped, which is the same answer {@link SaveSlots#describe} gives for a
+     * slot with nothing in it: a cartridge on a volume that is not mounted this afternoon is still the
      * game somebody was playing, and a list that quietly shortened itself every time a drive was
      * unplugged would be worse than one with a dead entry in it.
      */
@@ -2298,18 +2122,6 @@ public class GameUIFrame extends JFrame {
         });
 
         fileMenuOpenRecent.add(clear);
-    }
-
-    private void describeQuickItems() {
-        machineMenuQuickSave.setText("Quick Save (Slot " + currentSlot + ")");
-        machineMenuQuickLoad.setText("Quick Load (Slot " + currentSlot + ")");
-    }
-
-    /**
-     * Where a slot lives: beside the ROM, numbered, with {@code .mn} for "MyNES".
-     */
-    private Path slotPath(final int slot) {
-        return SaveState.slotPath(gamePath(), slot);
     }
 
     /**
@@ -2564,7 +2376,7 @@ public class GameUIFrame extends JFrame {
         // fields still name the outgoing game, and saving after they had moved would write the
         // outgoing game's RAM into the incoming game's .sav -- which the incoming game would then
         // read back as its own progress.
-        saveBattery();
+        battery.save(nes, gamePath());
 
         // Power Cycle and Region are greyed out while a movie is running, so the only way here with
         // one in progress is a new cartridge -- which is a decision worth honouring rather than
@@ -2680,11 +2492,11 @@ public class GameUIFrame extends JFrame {
         // The cartridge finds its battery already charged, which is what a real one did. In the same
         // window as the two lines above: the runner does not exist yet, so this thread owns the
         // machine.
-        loadBattery();
+        battery.load(nes, gamePath());
 
         // What the autosave compares against from here on: whatever the battery arrived holding, so
         // the first check after a load does not rewrite an unchanged file.
-        batteryShadow = nes.getBus().getMapper().prgRAM().clone();
+        battery.track(nes);
 
         // Each machine brings its own controllers, so the keyboard has to be pointed at the new
         // pair. Nothing races: the old runner has already stopped and this is the event dispatch
@@ -2793,125 +2605,36 @@ public class GameUIFrame extends JFrame {
      * disagreeing with itself.
      */
     private void describeMachine() {
-        updateTitle();
-        updateStatusBar();
+        var description = describe();
+
+        setTitle(description.title());
+        updateStatusBar(description);
 
         if (controlPanel != null) {
-            controlPanel.setRunning(dashboardLine());
+            controlPanel.setRunning(description.dashboard());
         }
     }
 
     /**
-     * The control panel's first line: how the machine is being run.
-     * <p>
-     * Everything on it is the window's rather than the machine's -- whether the loop is paused,
-     * what the rate has measured, which cartridge somebody put in, whether a movie is going -- and
-     * none of it can be read off the NES at all, which is why the panel is handed it written rather
-     * than working it out. Whichever frame the machine has reached is on the line below, with the
-     * rest of what the machine is doing.
+     * Gathers what the window has to say about itself into one value, so that the three places it
+     * says anything are saying the same thing.
      */
-    private String dashboardLine() {
-        var parts = new java.util.ArrayList<String>();
-
-        parts.add(runner == null ? "No machine" : runner.isPaused() ? "Paused" : "Running");
-
-        if (lastFrameRate != FrameRate.UNKNOWN) {
-            parts.add(lastFrameRate + " fps");
-        }
-
-        parts.add(currentRegion().label());
-
-        if (cart != null) {
-            parts.add(String.format(
-                    "%s  (mapper %d, %dK+%dK)",
-                    cart.filename(),
-                    cart.mapperNumber(),
-                    cart.prgROM().length / 1024,
-                    cart.chrROM().length / 1024));
-        }
-
-        var activity = machineState();
-
-        if (!activity.isEmpty() && !"Paused".equals(activity)) {
-            parts.add(activity);
-        }
-
-        return String.join("  ·  ", parts);
-    }
-
-    private void updateTitle() {
-        if (cart == null) {
-            setTitle("MyNES");
-            return;
-        }
-
-        var state = machineState();
-
-        setTitle("MyNES - " + cart.filename() + patched() + machineKind()
-                + (state.isEmpty() ? "" : " (" + state.toLowerCase(Locale.ROOT) + ")"));
-    }
-
-    /**
-     * Which hack is playing, when one is.
-     * <p>
-     * The cartridge's own name is still first: a patched game is that game plus a patch, and a title
-     * bar naming only the patch would leave nothing to say which ROM it was applied to.
-     */
-    private String patched() {
-        return patchPath == null ? "" : " + " + patchPath.getFileName();
-    }
-
-    /**
-     * The kind of machine, when it is not the usual one.
-     * <p>
-     * Only PAL is worth the words. A machine's region is invisible from the picture until something
-     * is wrong, and when it is wrong -- a game running fast because the header said nothing -- this
-     * is the line that says which way to reach for.
-     */
-    private String machineKind() {
-        return nes != null && nes.getRegion() == Region.PAL ? " (PAL)" : "";
-    }
-
-    /**
-     * What the machine is doing, when it is doing anything other than simply running. Pause wins
-     * over fast forward: a machine that is not running is not running fast.
-     * <p>
-     * One sentence for two places. The status bar shows it as it is and the title bar puts it in
-     * brackets in lower case, which is what keeps the two from drifting into describing the same
-     * machine differently.
-     */
-    private String machineState() {
-        if (runner == null) {
-            return "";
-        }
-
-        if (runner.isPaused()) {
-            return "Paused";
-        }
-
-        // Above fast forward, because what the machine is doing to a file is a bigger surprise than
-        // how fast it is going -- and a recording somebody has forgotten about is the one state
-        // worth being reminded of on every glance at the window.
-        if (moviePlaying) {
-            return "Playback";
-        }
-
-        if (movieRecording) {
-            return "Recording";
-        }
-
-        // Below the movie and above the speed, for the reason the movie is above the speed: a file
-        // growing at a couple of megabytes a second is a bigger surprise than how fast the game is
-        // going, and a trace somebody started an hour ago is the state most worth being reminded of.
-        if (tracer != null) {
-            return "Tracing";
-        }
-
-        if (runner.getSpeed() != EmulationSpeed.NORMAL) {
-            return "Fast forward";
-        }
-
-        return "";
+    private MachineDescription describe() {
+        return new MachineDescription(
+                runner != null,
+                runner != null && runner.isPaused(),
+                moviePlaying,
+                movieRecording,
+                tracer != null,
+                runner != null && runner.getSpeed() != EmulationSpeed.NORMAL,
+                lastFrameRate,
+                currentRegion(),
+                nes == null ? null : nes.getRegion(),
+                cart == null ? null : cart.filename(),
+                cart == null ? 0 : cart.mapperNumber(),
+                cart == null ? 0 : cart.prgROM().length,
+                cart == null ? 0 : cart.chrROM().length,
+                patchPath == null ? null : patchPath.getFileName().toString());
     }
 
     /**
@@ -3171,7 +2894,7 @@ public class GameUIFrame extends JFrame {
             controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
         }
 
-        controlPanel.setRunning(dashboardLine());
+        controlPanel.setRunning(describe().dashboard());
 
         controlPanel.setVisible(true);
         controlPanel.toFront();

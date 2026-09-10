@@ -21,10 +21,18 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * Represents a NES game cartridge (ROM).
+ * A cartridge: the two ROMs on the board, the mapper wired to switch between them, and what the
+ * header said to build both from.
  * <p>
- * A Cart contains the program ROM (PRG-ROM), character ROM (CHR-ROM), and the
- * memory mapper implementation that controls bank switching and special hardware features.
+ * <b>The header is kept beside the mapper rather than thrown away once it has been read</b>,
+ * because the two disagree in ways worth being able to see. {@link #ram()} is what the header
+ * <em>claimed</em> is fitted, where {@link Mapper#prgRAM()} is what the board actually got -- and
+ * they differ wherever a header said nothing and the mapper fell back to the 8KB every board here
+ * has. {@link #mapperNumber()} and the class of {@link #mapper()} part company the same way, since
+ * 1 and 155 build one class between them.
+ * <p>
+ * {@link #sha256()} is taken over the file as it arrived, header and any patch included, so it
+ * names what ran rather than what is on disk.
  *
  * @param filename the original filename of the ROM
  * @param prgROM program ROM data (CPU-addressable)

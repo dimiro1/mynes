@@ -166,6 +166,7 @@ class ControlPanelTests {
         assumeFalse(GraphicsEnvironment.isHeadless(), "no display to put a window on");
 
         var remembered = new Layout[1];
+        var actual = new Rectangle[1];
 
         onSwingThread(() -> {
             var panel = new ControlPanelFrame(
@@ -175,13 +176,19 @@ class ControlPanelTests {
                 panel.setMachine(nes, runner, debugger, cart, Palettes.defaultPalette());
                 panel.setBounds(new Rectangle(40, 60, 1200, 800));
 
+                // What the window actually became, which is not always what it was asked for: a
+                // window manager may clamp one to the display it is on, and a CI runner's display
+                // is smaller than this asks for. currentLayout() reads getBounds(), so the claim
+                // worth making is that it reports the window rather than the request -- asserting
+                // the rectangle that went in would be asserting the screen is big enough.
+                actual[0] = panel.getBounds();
                 remembered[0] = panel.currentLayout();
             } finally {
                 panel.dispose();
             }
         });
 
-        assertEquals(new Rectangle(40, 60, 1200, 800), remembered[0].bounds());
+        assertEquals(actual[0], remembered[0].bounds(), "what the window is, not what it was asked");
         assertNotNull(remembered[0].tab(), "and which instrument was in front");
 
         var back = new Layout[1];

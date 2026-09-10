@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.awt.event.KeyEvent;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Tests for {@code ~/.mynes/config.properties} and everything kept in it.
@@ -1124,11 +1126,20 @@ class ConfigTests {
         }
 
         /**
-         * A filename may hold one on every platform this runs on, and a value split over two lines
-         * is a file that will not read back.
+         * A value split over two lines is a file that will not read back, and a tab is the
+         * character that would do it.
+         * <p>
+         * <b>Not on Windows, and the assumption is the point rather than a way round it.</b> This
+         * said a filename may hold a tab on every platform it runs on, which the CI matrix
+         * disproved the day it was widened: Windows forbids one outright, so {@code Path.of}
+         * refuses the name before any of this is reached. The case cannot arise there, which is a
+         * different thing from arising and being mishandled -- and {@link Config} still escapes a
+         * tab, since what it escapes is a value rather than a filename.
          */
         @Test
         void aTabInAPathSurvivesTheRoundTrip() throws IOException {
+            assumeTrue(File.separatorChar == '/', "no filename on Windows holds a tab");
+
             var game = game("two\twords.nes");
 
             var config = Config.load(config());
@@ -1206,7 +1217,14 @@ class ConfigTests {
             assertTrue(text.contains("rewind.seconds=45"), text);
             assertTrue(text.contains("rewind.key=VK_BACK_SPACE"), text);
             assertTrue(text.contains("controller1.a=VK_L"), text);
-            assertTrue(text.contains("recent.1=" + directory.resolve("a.nes")), text);
+            // The key and the file name rather than the whole path, which is the one value in this
+            // file that is not written verbatim: Properties reads a backslash as an escape, so a
+            // Windows path goes in doubled and comparing the raw text against Path.toString would
+            // be asserting that the separator is a slash. That the escaping round-trips is
+            // aBackslashInAPathSurvivesTheRoundTrip's claim, and one rule wants one owner -- what
+            // is being asked here is whether the section was written at all.
+            assertTrue(text.contains("recent.1="), text);
+            assertTrue(text.contains("a.nes"), text);
         }
 
         @Test
