@@ -12,7 +12,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The three the README hands the same zip to. The console is the same bytes on all of them --
+    # nothing in mynes-core knows what a file separator is -- so what the second and third runner
+    # buy is everything that is not the console: the Swing panels every desktop test builds without
+    # a display, the sound card, the config file under a home directory, and the saves filed beside
+    # a ROM. Those are exactly the places a Java program still manages to be platform-specific.
+    strategy:
+      # One runner failing is a fact about that runner. Stopping the other two would throw away the
+      # thing worth knowing, which is whether it failed everywhere or only there.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 25
@@ -22,18 +35,24 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # ~1.4GB of Tom Harte fixtures. The committed subset covers every opcode without
-      # this, so a cache miss that fails to download is not fatal to the test run.
+      # ~1.4GB of Tom Harte fixtures, on one runner rather than three. What they exercise is the
+      # 6502, which is the one part of this that cannot tell which machine it is running on, so
+      # fetching them again for the other two would cost three times the bandwidth to answer the
+      # same question. The committed subset covers every opcode everywhere, which is why the
+      # download is allowed to fail here at all: the other two runners test all 256 opcodes too,
+      # with 500 cases each instead of 10,000.
       #
       # Inside the module because HarteCaseLoader resolves the path relative to wherever
       # Surefire runs, which is the module rather than the checkout.
       - name: Cache 6502 test data
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/cache@v6
         with:
           path: mynes-core/testdata/nes6502
           key: nes6502-${{ hashFiles('scripts/download-6502-tests.sh') }}
 
       - name: Download 6502 test data
+        if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: ./scripts/download-6502-tests.sh
 
@@ -42,7 +61,13 @@ jobs:
 
       # Here rather than only in the release workflow, so that a distribution somebody has broken
       # fails on the pull request that broke it instead of at the moment a tag is pushed.
+      #
+      # Not on Windows, and not because bash is missing there: what this checks is that the
+      # launcher came out of the zip still executable, and a file mode is a question about the
+      # machine that wrote the zip rather than about the machine reading it. Windows has no answer
+      # to give, so asking it would be a step that either fails for no reason or passes for none.
       - name: Smoke test the distribution
+        if: runner.os != 'Windows'
         run: ./scripts/smoke-distribution.sh
 
       - name: Run tests
