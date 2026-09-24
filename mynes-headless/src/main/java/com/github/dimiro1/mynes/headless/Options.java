@@ -77,6 +77,15 @@ import java.util.TreeSet;
  *                         a number rather than a yes. {@link Overclock#NONE} unless one was named.
  * @param genie            Game Genie codes to put in the cartridge slot, already decoded.
  * @param dumps            which memories to write out when the run ends.
+ * @param logEvents        where to write down every PPU, audio and mapper write and both
+ *                         interrupts, with the beam position each happened at, or null. Costs the
+ *                         machine nothing and stops it never, which is what separates it from a
+ *                         watchpoint. No limit goes with it, unlike the REPL's {@code events},
+ *                         because a run that walks a schedule is already bounded by
+ *                         {@code --frames} and a session is not.
+ * @param logReads         whether that log also holds the reads -- the $2002 and $4016 polls.
+ *                         Refused without somewhere to write them, since a setting on a thing
+ *                         nobody switched on is a thing that quietly does nothing.
  * @param loadState        a save state to start from instead of power on, or null.
  * @param saveState        where to write a save state when the run ends, or null.
  * @param sramIn           a battery file to fill the cartridge's RAM from before starting, or null.
@@ -126,6 +135,8 @@ public record Options(
         Overclock overclock,
         List<GameGenieCode> genie,
         List<String> dumps,
+        Path logEvents,
+        boolean logReads,
         Path loadState,
         Path saveState,
         Path sramIn,
@@ -215,6 +226,23 @@ public record Options(
             The machine is deterministic. The same ROM, the same input and the same frame count
             produce byte-identical artifacts on every run and on every computer, which is what makes
             a frame hash worth writing down and two reports worth diffing.
+
+            This is long, and the half of it people miss is the half below the picture. What is
+            further down, and what each part answers:
+              Input                Nothing starts on its own. --input 60/40x3:start.
+              Picture              Screenshots, the crops, the palette, and the two filters.
+              Sound                --audio writes a WAV; --mute takes a voice out of the mixer.
+              Hacks                Unlimited sprites, and the overclock that stops a dropped frame.
+              Memory               --dump ram,oam,palette,nametables,prgram,chr, once it has
+                                   finished.
+              Where in the frame   --log-events writes down every register write with the scanline
+                                   and the dot it landed on, and stops nothing to do it.
+              Saved games          --load-state to skip the title screen, --save-state to make one.
+              Movies               --record and --play a whole session, byte for byte.
+              Interactive          --interactive is the debugger: breakpoints and their conditions,
+                                   watchpoints, single steps, disassembly, standing on a scanline,
+                                   the instruction trace, the event log, rewind. "help" inside it
+                                   lists the lot.
 
             Cartridge and length
               --rom FILE            The .nes file to run, or a .zip holding one -- which is how
@@ -393,6 +421,30 @@ public record Options(
                                     one file each, under <out>. Palette RAM is in the report as
                                     well, being 32 bytes.
 
+            Where in the frame
+              --log-events FILE     Write down every PPU, audio and mapper register write, and both
+                                    interrupts, one record a line, with the frame, scanline and dot
+                                    each landed on:
+                                      # frame line  dot   event         address value   pc
+                                             64   23   82   ppu-write     $2005     $00   $80FF
+                                    Nothing is stopped and the machine does not slow down, which is
+                                    what makes this rather than a watchpoint the way to ask where a
+                                    raster split lands on every frame of a long run. The dot is good
+                                    to within two: three dots go past in one CPU cycle, so it is the
+                                    last of the three the cycle covered. Work RAM and instruction
+                                    fetches are deliberately not in it -- those are the game
+                                    thinking, and the REPL's watch and read are for them.
+                                    A few hundred records a frame for a game with a music driver and
+                                    a split, so a long run is a few megabytes. The REPL's "events"
+                                    takes a limit as well; a run of a schedule is already bounded by
+                                    --frames.
+              --log-reads           Put the reads in it too -- the $2002 wait and the $4016 pad
+                                    poll, which are worth seeing exactly when the question is why a
+                                    game is waiting. This is the one part a machine can feel, since
+                                    recording reads puts a hook on the line every instruction fetch
+                                    comes past, so it is off unless asked for. Refused without
+                                    --log-events.
+
             Saved games and save states
               --sram-in FILE        Fill the cartridge's battery RAM from FILE before the run. Raw
                                     8KB of $6000-$7FFF, which is what every other emulator writes,
@@ -500,6 +552,8 @@ public record Options(
         var overclock = Overclock.NONE;
         var genie = new ArrayList<GameGenieCode>();
         var dumps = new LinkedHashSet<String>();
+        Path logEvents = null;
+        var logReads = false;
         Path loadState = null;
         Path saveState = null;
         Path sramIn = null;
@@ -564,6 +618,8 @@ public record Options(
                         parseHacks(value(args, ++i, flag), hacks, overclock);
                 case "--genie" -> parseGenie(value(args, ++i, flag), genie);
                 case "--dump" -> parseDumps(value(args, ++i, flag), dumps);
+                case "--log-events" -> logEvents = Path.of(value(args, ++i, flag));
+                case "--log-reads" -> logReads = true;
                 case "--load-state" -> loadState = Path.of(value(args, ++i, flag));
                 case "--save-state" -> saveState = Path.of(value(args, ++i, flag));
                 case "--sram-in" -> sramIn = Path.of(value(args, ++i, flag));
@@ -608,6 +664,15 @@ public record Options(
         if (warp && filter != VideoFilter.CRT) {
             throw new UsageException("--warp is the curve of a picture tube's glass, and --filter "
                     + filter.id() + " does not draw on one. --filter crt does.");
+        }
+
+        // And for the same reason again: the reads are the expensive half of the log and the half
+        // somebody asks for deliberately, so a run that asked for them and wrote no log at all
+        // would have been given the one thing it did not want -- silence.
+        if (logReads && logEvents == null) {
+            throw new UsageException(
+                    "--log-reads says what goes in the event log, and there is no --log-events"
+                            + " FILE to put it in.");
         }
 
         if (play != null) {
@@ -670,6 +735,8 @@ public record Options(
                 overclock,
                 List.copyOf(genie),
                 List.copyOf(dumps),
+                logEvents,
+                logReads,
                 loadState,
                 saveState,
                 sramIn,

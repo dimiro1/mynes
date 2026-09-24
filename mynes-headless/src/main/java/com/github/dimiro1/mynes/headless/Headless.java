@@ -301,6 +301,17 @@ public final class Headless {
                 session.startRecording(options.loadState() == null && options.sramIn() == null);
             }
 
+            // Beside the recorder rather than with the hacks above, because it is the same kind of
+            // thing: something watching a run rather than something the run depends on. It does not
+            // arm the machine and costs it nothing, which is why it is safe to have on for a run
+            // that is also being measured.
+            if (options.logEvents() != null) {
+                session.startEventLog(options.logEvents(), options.logReads(), 0);
+                logger.log(Level.INFO, "writing down what the machine is told, to "
+                        + options.logEvents()
+                        + (options.logReads() ? ", reads included" : ""));
+            }
+
             var outcome = options.interactive()
                     ? interactive(options, session)
                     : oneShot(options, session, frames, movie);
@@ -308,6 +319,13 @@ public final class Headless {
             // Read before the movie is written, so what the report calls the run is the run and not
             // the few milliseconds of filing that follow it.
             var wallClockMillis = (System.nanoTime() - startedNanos) / 1_000_000;
+
+            // After that, for the same reason: flushing the last of a log is filing rather than
+            // running. For both modes, since either can have started one -- --log-events opens it
+            // above and the REPL's "events on" opens it half way through a session -- and doing
+            // nothing when nothing is being written is what lets one line cover both. The file is
+            // still described in the report afterwards.
+            session.stopEventLog();
 
             var recorded = outcome.recorded();
             var recordedTo = outcome.recordedTo();

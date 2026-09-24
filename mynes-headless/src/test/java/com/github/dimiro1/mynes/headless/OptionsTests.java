@@ -201,6 +201,24 @@ class OptionsTests {
     }
 
     /**
+     * The same refusal for the same reason: the reads are the expensive half of an event log and
+     * the half somebody asks for deliberately, so a run that asked for them and wrote no log at all
+     * would have been handed the one thing it did not want.
+     */
+    @Test
+    void theReadsAreRefusedWithoutSomewhereToLogThem() {
+        assertNull(parse("--rom", "x.nes").logEvents());
+        assertFalse(parse("--rom", "x.nes").logReads());
+
+        var both = parse("--rom", "x.nes", "--log-events", "ev.log", "--log-reads");
+
+        assertEquals(Path.of("ev.log"), both.logEvents());
+        assertTrue(both.logReads());
+
+        assertTrue(refused("--rom", "x.nes", "--log-reads").getMessage().contains("--log-events"));
+    }
+
+    /**
      * The one video flag that is refused beside nothing, which is the difference between the shape
      * of a pixel and the two settings above it: those are things a particular filter does, and this
      * is a fact about the screen the picture went to whichever of the three drew it.

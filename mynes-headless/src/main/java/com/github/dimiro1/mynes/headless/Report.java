@@ -420,6 +420,25 @@ public final class Report {
             InputSchedule.describe(event.buttons()).forEach(buttons::add);
         }
 
+        // Beside the dumps because it is the same kind of thing -- a file this run wrote that is
+        // too big to put in here -- and not on the comparability checklist above, because logging
+        // does not arm the machine and changes nothing it does. Always present, with explicit
+        // nulls, so two reports line up key for key whether either run logged anything. The record
+        // count is the whole point of its being here: a log that came back empty is a question
+        // about what was expected rather than a file worth opening.
+        var eventLog = report.putObject("eventLog");
+        put(eventLog, "path", session.eventLogPath());
+
+        if (session.eventLog() == null) {
+            eventLog.putNull("reads");
+            eventLog.putNull("records");
+            eventLog.putNull("full");
+        } else {
+            eventLog.put("reads", session.eventLogReads());
+            eventLog.put("records", session.eventLog().records());
+            eventLog.put("full", session.eventLog().isFull());
+        }
+
         var dumps = report.putArray("dumps");
         for (var dump : outcome.dumps()) {
             var node = dumps.addObject();
