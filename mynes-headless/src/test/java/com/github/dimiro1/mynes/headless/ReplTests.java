@@ -82,6 +82,20 @@ class ReplTests {
         return replies;
     }
 
+    /**
+     * A one-shot run of the same cartridge, so that a reply and a report can be held against each
+     * other. They describe one machine and should say so in one vocabulary.
+     */
+    private String reportOf(final String... extra) throws IOException {
+        var args = new ArrayList<>(
+                List.of("--rom", ROM, "--out", directory.toString(), "--quiet"));
+
+        args.addAll(List.of(extra));
+        Headless.run(args.toArray(new String[0]));
+
+        return Files.readString(directory.resolve("report.json"));
+    }
+
     @Test
     void everyCommandGetsOneLineOfJsonBack() throws Exception {
         var replies = session("run 10", "run 10", "quit");
@@ -176,6 +190,92 @@ class ReplTests {
         assertTrue(reply.at("/ppu/renderingEnabled").isBoolean());
         assertTrue(reply.at("/video/uniqueColours").asInt() > 0);
         assertTrue(reply.at("/audio/samples").asLong() > 0);
+    }
+
+    /**
+     * The scanline and the dot say where the beam is, which for anything to do with a raster is the
+     * symptom rather than the answer. These four are what explains it: the whole reason to stop a
+     * machine part way down a frame is to find out what the chip is about to scroll from, and a
+     * coarse-X that is one tile out says so here and nowhere else in the program.
+     */
+    @Test
+    void stateCarriesTheRegistersTheChipScrollsWith() throws Exception {
+        var reply = session("run 60", "state", "quit").get(1);
+
+        assertTrue(reply.at("/ppu/v").isNumber());
+        assertTrue(reply.at("/ppu/t").isNumber());
+        assertTrue(reply.at("/ppu/fineX").isNumber());
+        assertTrue(reply.at("/ppu/writeLatch").isBoolean());
+    }
+
+    /**
+     * The same four the report has, spelled the same way. Two names for one register would be two
+     * things to learn and one of them wrong.
+     */
+    @Test
+    void thoseAreSpelledTheWayTheReportSpellsThem() throws Exception {
+        var state = session("run 60", "state", "quit").get(1).get("ppu");
+        var report = MAPPER.readTree(reportOf("--frames", "60")).get("ppu");
+
+        for (var field : List.of("scanline", "dot", "v", "t", "fineX", "writeLatch")) {
+            assertEquals(
+                    report.get(field),
+                    state.get(field),
+                    field + " after sixty frames of the same cartridge");
+        }
+    }
+
+    /**
+     * The whole of the run-until family's third member: stand on a scanline and look. It lands a
+     * few dots in rather than on dot 0, because it stops between instructions so that everything
+     * else -- a disassembly, a breakpoint, the program counter -- still means something there.
+     */
+    @Test
+    void runUntilScanlineStandsOnTheLineItWasAskedFor() throws Exception {
+        var reply = session("run 60", "run-until-scanline 167", "quit").get(1);
+
+        assertTrue(reply.get("reached").asBoolean());
+        assertEquals(167, reply.get("scanline").asInt());
+        assertTrue(reply.get("dot").asInt() < 30, "a few dots in, not most of a line");
+        assertTrue(reply.get("instructions").asLong() > 0);
+    }
+
+    /**
+     * Asked for the line it is already on, it goes round rather than answering with the moment it
+     * is already standing in -- which is what makes calling it in a loop a way of watching one line
+     * over successive frames.
+     */
+    @Test
+    void askingTwiceGivesTwoFrames() throws Exception {
+        var replies = session(
+                "run 60", "run-until-scanline 167", "run-until-scanline 167", "quit");
+
+        assertEquals(0, replies.get(1).get("framesRun").asLong());
+        assertEquals(1, replies.get(2).get("framesRun").asLong());
+    }
+
+    /**
+     * Refused rather than waited for: a line the region has is reached inside a frame whatever the
+     * program is doing, and a line it has not would spin forever.
+     */
+    @Test
+    void aScanlineTheMachineDoesNotHaveIsRefused() throws Exception {
+        var reply = session("run-until-scanline 400", "quit").getFirst();
+
+        assertFalse(reply.get("ok").asBoolean());
+        assertTrue(reply.get("error").asText().contains("262"), reply.get("error").asText());
+    }
+
+    /**
+     * It composes with the debugger rather than replacing it: whichever of the two comes first
+     * stops the run and is reported, so both can be set and the answer is which happened.
+     */
+    @Test
+    void aBreakpointStopsItBeforeTheLineArrives() throws Exception {
+        var reply = session("break $C008", "run-until-scanline 167", "quit").get(1);
+
+        assertEquals("breakpoint", reply.get("stopped").asText());
+        assertFalse(reply.get("reached").asBoolean());
     }
 
     @Test

@@ -26,7 +26,10 @@ The jar is under `mynes-desktop/` because that is the module with a main class i
 still one file and still the whole emulator: the fat jar flattens all three modules and their
 dependencies into it.
 
-`java -jar $JAR --headless --help` lists every option. Maven can run it too --
+`java -jar $JAR --headless --help` lists every option. **It is long, and the half people miss is
+the half below the picture**, so it opens with a map of its own sections -- which is worth reading
+before reimplementing something that is already a flag a hundred and fifty lines further down.
+Maven can run it too --
 `mvn -q compile exec:exec@headless -Dmynes.args="--rom ROM.nes --frames 300"` -- but it costs a
 couple of seconds a run against the jar's third of one, so build the jar for anything iterative.
 `mvn -q compile exec:exec` opens the window, which a cloud workspace has nowhere to put. Neither
@@ -87,6 +90,7 @@ frame boundary is too coarse for:
 
 ```
 step [N]                   advance N instructions rather than N frames
+run-until-scanline N       advance until the beam next reaches scanline N
 disasm [ADDR] [COUNT]      disassemble, from the PC by default
 break ADDR [if COND]       stop before the instruction at ADDR, where COND holds
 unbreak ADDR               forget that one
@@ -135,6 +139,43 @@ DMC's sample fetches are the processor reading, so they are invisible to a read 
 first `step` is the reset sequence**, which runs no instruction: it leaves the CPU standing on the
 first one rather than past it.
 
+### Standing part way down a frame
+
+`run-until-scanline N` is the third of the `run-until` family, and the only one that stops
+*somewhere* rather than when something happens: the other two watch the picture and this watches the
+beam. What it is for is reading the chip's own state mid-frame -- `run-until-scanline 167` then
+`state`, where **`ppu.v`, `ppu.t`, `ppu.fineX` and `ppu.writeLatch`** are, beside the scanline and
+the dot. Those four are the answer and the beam position is the symptom: `v`'s low five bits are the
+coarse X the next tile comes from, so a background that is one tile out on exactly one scanline says
+so there and nowhere else in the program. The report has had the same four under `ppu` all along.
+
+**It stops between instructions, so it lands a few dots into the line rather than on dot 0.** That
+is the price of everything else still meaning something where it stops -- a machine halted
+mid-instruction has no program counter a disassembly can start from. Seven CPU cycles is the usual
+overshoot, twenty-one dots; a step that swallows an OAM transfer is five hundred, which is the one
+case it overshoots the line altogether, so **read the `scanline` it came back with** rather than
+assuming. There is no maximum, unlike the other two: the PPU is clocked whatever the program does,
+so a line the region has arrives inside a frame -- and a line it has not, `run-until-scanline 300`
+on NTSC, is refused rather than waited for. Asked for the line it is already on it goes round,
+which is what makes calling it in a loop a way of watching one line over successive frames.
+
+**A watchpoint is usually the better question, and it is worth knowing which one is being asked.**
+"Where does this write land" is `watch $2005` and needs no line guessed in advance; this asks "what
+does the machine look like at line 167", which nothing else here can. They compose: a breakpoint
+that fires first stops it and is reported, so both can be set and the answer is which happened.
+
+```sh
+printf 'run 60\nrun-until-scanline 167\nstate\nquit\n' \
+  | java -jar $JAR --headless --rom ROM.nes --interactive
+```
+
+**Beam terms are deliberately not in a `break` condition.** `break $C000 if scanline >= 167` reads
+well and is not expressible, and the reason is the one `Condition`'s own javadoc gives: a condition
+is answerable from a `CPU.State` and a `peek`, which is what keeps it cheap and what makes it
+testable without a machine. The escape hatch is `run-until-scanline 167`, then `break $C000`, then
+`run` -- and the question raster work actually asks has no address in it at all, which is what this
+command is.
+
 ### Writing down every instruction
 
 `trace PATH [LINES]` logs one line per instruction in nestest's format, `trace off` stops, and a bare
@@ -161,6 +202,62 @@ a read, and a tracer that performed one would be changing the machine it is desc
 three times its cycle count -- so a cross-emulator diff belongs on the CPU columns, which line up
 exactly. `Tracer` is where all of it lives, and the window has the same thing under **Debug > Start
 Trace...**
+
+### Writing down where in the frame the machine was touched
+
+The other half of that trade, and the one raster work wants. `--log-events FILE` writes down every
+PPU, audio and mapper register write and both interrupts -- the accesses that are the machine being
+*told* something -- one record a line, with the frame, the scanline and the dot each landed on:
+
+```
+# frame line  dot   event         address value   pc
+      64   23   82   ppu-write     $2005     $00   $80FF
+      64  241   19   nmi           $FFFA      --   $8057
+```
+
+**Nothing is stopped and the machine does not slow down**, which is the whole point and is what
+separates it from a watchpoint. `Debugger.setEventSink` rides on hooks `MMU` already carries and is
+deliberately outside `Debugger.isArmed()`, so a game being logged is a game running at full speed --
+which it has to be, since which line a game writes `$2005` on is a question about a main loop that
+is finishing on time. A `watch $2006` in a game whose NMI handler writes it forty times a frame is
+forty stops and forty resumes for one frame's worth of answer; a `trace` of the same 200 frames is a
+gigabyte. This is the middle, and it is a few hundred records a frame.
+
+Which turns "where does this write land, on every frame, for two hundred frames" from a stop and a
+`state` and a `run` per write into one run:
+
+```sh
+java -jar $JAR --headless --rom ROM.nes --frames 200 --input 60/40x3:start --log-events ev.log
+grep '\$2005' ev.log            # every split, every frame, with the line it landed on
+```
+
+**Seven whitespace separated fields on every line, whatever happened**, which is why the event is
+written as `Debugger.EventKind.id()` -- `ppu-write`, `mapper-write`, `nmi` -- rather than as the
+label the window's tooltips use: five of the seven are two words, and a reader cutting the line up
+would read the value of a PPU write as the word "write". `awk '$2 == 167 {print $5}'` works. The
+single `#` header is the only line that is not a record, is marked the way the REPL marks a comment
+and does not count against the limit. An interrupt has `--` where a byte would be, since a zero
+there is a byte somebody could believe.
+
+**Writes always, reads only when asked.** `--log-reads` adds the `$2002` and `$4016` polls, which
+are worth seeing exactly when the question is why a game is waiting -- and which are the one part of
+this a machine can feel, since recording reads puts a hook on the line every instruction fetch comes
+past. It is refused without `--log-events`, for the reason `--filter none=low` is. Work RAM and
+cartridge RAM are never in it either way: a game writes those thousands of times a frame and all of
+it is the game thinking, which is what `watch` and `read` are for.
+
+`events on PATH [LINES]`, `events reads PATH [LINES]` and `events off` do it inside an interactive
+session, and a bare `events` says how far it has got -- the shape of `trace`, since it is the same
+kind of thing. The limit is the session's because a session is open ended; a run of a schedule is
+already bounded by `--frames`.
+
+**It is not on the comparability checklist**, for the reason the video filters are not: a logged run
+and an unlogged one are byte for byte the same run, which `EventLogRunTests` holds to the frame hash
+and the cycle count. `eventLog` in the report says what was written, always present with explicit
+nulls -- and `eventLog.records` is the number worth reading, since a log that came back empty is a
+question about what was expected rather than a file worth opening. `EventTracer` in core is where it
+lives, beside `Tracer`, and the window draws the same events as a raster under **Debug > Control
+Panel**'s Events tab.
 
 ### Failing on purpose
 
@@ -1209,9 +1306,11 @@ mynes-core/           depends on nothing
                       controllers
   mynes/mappers/      the twelve boards: 0 to 4, 7, 9 to 11, 66, 71, and 155 on MMC1's own class
   mynes/state/        save states, battery .sav files, and .mnm session recordings
-  mynes/debug/        the disassembler, the breakpoints and their conditions, the tracer, and
-                      the meter that says how much of its frame the program used and which
-                      bytes of memory it has -- all shared by the window and the REPL
+  mynes/debug/        the disassembler, the breakpoints and their conditions, the two logs --
+                      every instruction, and every register write with the beam position it
+                      landed on -- and the meter that says how much of its frame the program
+                      used and which bytes of memory it has; all shared by the window and the
+                      REPL
   mynes/cheat/        Game Genie codes, and the device MMU asks on every read of PRG ROM
   mynes/video/        colour indices to pixels: the overscan crop, the frame renderer, the NTSC
                       filter that decodes the signal instead of reading a palette, and the tube

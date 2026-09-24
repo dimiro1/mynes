@@ -293,7 +293,8 @@ hash, colour counts, how many frames showed motion. `--expect-not-blank`, `--exp
 deterministic, a frame hash makes a fair regression test.
 
 There is also `--interactive`, a JSON-per-line REPL with the whole debugger in it: breakpoints,
-watchpoints, stepping, disassembly, tracing, rewind, movies.
+watchpoints, stepping, disassembly, tracing, rewind, movies, and a log of every register write with
+the scanline it landed on.
 
 `--headless --help` lists every option, and [CLAUDE.md](CLAUDE.md) covers it all in detail. That
 file is written for coding agents, but it is just as accurate for people.

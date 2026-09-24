@@ -47,6 +47,10 @@ public final class Repl {
             run [N]                    advance N frames, default 1
             run-until-change [MAX]     advance until the picture differs, at most MAX frames
             run-until-still [N] [MAX]  advance until the picture has held for N frames
+            run-until-scanline N       advance until the beam next reaches scanline N, which is
+                                       where to stand to read the PPU's own state part way down a
+                                       frame. Instruction granularity, so the dot it lands on is a
+                                       few past the start of the line rather than 0
             step [N]                   advance N instructions, default 1
             disasm [ADDR] [COUNT]      disassemble, from the PC by default
             break ADDR [if COND]       stop before the instruction at ADDR, on the passes where
@@ -64,6 +68,16 @@ public final class Repl {
             trace [PATH [LINES]]       write every instruction to PATH in nestest's format, at most
                                        LINES of them; "trace off" stops, and bare "trace" says how
                                        far it has got. A frame is about two megabytes of it
+            events on PATH [LINES]     write down every PPU, audio and mapper write and both
+                                       interrupts, one a line, with the frame, scanline and dot
+                                       each happened at. Nothing is stopped and the machine does
+                                       not slow down, which is what makes this rather than watch
+                                       the way to ask where a split lands every frame for 200
+                                       frames
+            events reads PATH [LINES]  the same, and the $2002 and $4016 polls as well. The read
+                                       hook sees every instruction fetch, so this is the one form
+                                       the machine can feel
+            events off                 stop; bare "events" says how far it has got
             press BUTTONS [N]          hold BUTTONS for the next N frames
             hold BUTTONS               hold BUTTONS until released
             release                    let go of everything
@@ -265,6 +279,10 @@ public final class Repl {
             detachTracer();
         }
 
+        // And the event log, for the same reason and in the same breath: one that reached its limit
+        // closed its file and went quiet, but it has no debugger to take itself off.
+        session.sweepEventLog();
+
         switch (name) {
             case "run" -> run(words.length > 1 ? number(words[1], name) : 1);
             case "run-until-change" -> runUntilChange(
@@ -272,6 +290,7 @@ public final class Repl {
             case "run-until-still" -> runUntilStill(
                     words.length > 1 ? number(words[1], name) : DEFAULT_STILL_FRAMES,
                     words.length > 2 ? number(words[2], name) : DEFAULT_MAX_FRAMES);
+            case "run-until-scanline" -> runUntilScanline(words);
             case "step" -> stepInstructions(words.length > 1 ? number(words[1], name) : 1);
             case "disasm" -> disasm(words);
             case "break" -> breakpoint(words);
@@ -279,6 +298,7 @@ public final class Repl {
             case "unbreak", "unwatch" -> unpoint(name, words);
             case "points" -> points(words);
             case "trace" -> trace(words);
+            case "events" -> events(words);
             case "press" -> press(words);
             case "hold" -> hold(words);
             case "release" -> release();
@@ -369,6 +389,58 @@ public final class Repl {
             node.put("still", didSettle);
             node.put("framesRun", session.frame() - start);
             describe(node, stopped);
+        });
+    }
+
+    /**
+     * Advances until the beam next reaches a scanline.
+     * <p>
+     * The third of the {@code run-until} family, and the one that stops somewhere rather than when
+     * something happens: the other two watch the picture, and this watches the beam. It is the way
+     * to read what the chip is scrolling with part way down a frame -- {@code run-until-scanline
+     * 167} then {@code state}, and {@code ppu.v} says which tile column the next line will come
+     * from.
+     * <p>
+     * <b>A watchpoint is a different question and usually the better one.</b> "Where does this
+     * write land" is {@code watch $2005} and needs no number guessed in advance; this answers
+     * "what does the machine look like at line 167", which nothing else here can ask. It composes
+     * with the rest: a breakpoint that fires first stops it and is reported, so the two can be set
+     * together and whichever comes first wins.
+     * <p>
+     * No maximum, unlike the other two, because there is nothing to wait for that might not happen:
+     * the PPU is clocked whatever the program does, so the beam reaches every line its region has
+     * inside a frame -- and a line the region does not have is refused rather than waited for.
+     */
+    private void runUntilScanline(final String[] words) throws IOException {
+        if (words.length < 2) {
+            throw new UsageException(
+                    "run-until-scanline wants a scanline, as in \"run-until-scanline 167\".");
+        }
+
+        var region = session.nes().getRegion();
+        var target = (int) number(words[1], "run-until-scanline");
+
+        if (target < 0 || target >= region.scanlinesPerFrame()) {
+            throw new UsageException(
+                    "a frame on this " + region.label() + " machine is "
+                            + region.scanlinesPerFrame() + " scanlines, so there is no line "
+                            + target + " for the beam to reach.");
+        }
+
+        var start = session.frame();
+        var stepped = session.runUntilScanline(target);
+        var ppu = session.nes().getPPU();
+
+        reply("run-until-scanline", node -> {
+            // Where it actually stopped rather than what was asked for, because the two differ:
+            // this lands a few dots into the line, and an OAM transfer in the way can carry it
+            // past the line altogether.
+            node.put("scanline", ppu.getScanline());
+            node.put("dot", ppu.getDot());
+            node.put("reached", ppu.getScanline() == target);
+            node.put("instructions", stepped.instructions());
+            node.put("framesRun", session.frame() - start);
+            describe(node, stepped.stop());
         });
     }
 
@@ -612,6 +684,93 @@ public final class Repl {
         }
     }
 
+    /**
+     * Starts writing down what the machine does to its hardware, stops, or says how far it has got.
+     * <p>
+     * The shape of {@code trace} beside it, because it is the same kind of thing -- a file that
+     * fills up while the machine runs -- and the difference between the two is the whole reason
+     * both exist. A trace is every instruction, which is a couple of megabytes a frame and answers
+     * what the program did; this is only the accesses that are the machine being <em>told</em>
+     * something, which is a few hundred a frame, and it stamps each one with where the beam was.
+     * <p>
+     * <b>It stops nothing.</b> A {@code watch} on $2006 in a game whose NMI handler writes it forty
+     * times a frame is forty stops and forty resumes for one frame's worth of answer; this runs the
+     * machine at full speed and hands back all two hundred frames of it to grep. Which is also why
+     * the reads are a separate form rather than a flag: they are the one part of this a machine can
+     * feel, since recording them puts a hook on the line every instruction fetch comes past.
+     */
+    private void events(final String[] words) throws IOException {
+        if (words.length < 2) {
+            reply("events", this::putEvents);
+            return;
+        }
+
+        var what = words[1].toLowerCase(Locale.ROOT);
+
+        if (what.equals("off")) {
+            if (!session.loggingEvents()) {
+                throw new UsageException("nothing is being logged.");
+            }
+
+            session.stopEventLog();
+
+            // Reported in the reply rather than thrown, the same as "trace off": a log that stopped
+            // early still wrote everything up to the point it stopped.
+            reply("events", this::putEvents);
+
+            return;
+        }
+
+        if (!what.equals("on") && !what.equals("reads")) {
+            throw new UsageException(
+                    "events takes \"on\", \"reads\", \"off\" or nothing, not \"" + words[1]
+                            + "\".");
+        }
+
+        if (words.length < 3) {
+            throw new UsageException(
+                    "events " + what + " wants somewhere to write it, as in \"events " + what
+                            + " events.log\".");
+        }
+
+        var path = Path.of(words[2]);
+        var limit = words.length > 3 ? number(words[3], "events") : 0;
+
+        // A file that cannot be opened is a bad command rather than the end of the session, the
+        // same as a misspelled address.
+        try {
+            session.startEventLog(path, what.equals("reads"), limit);
+        } catch (IOException e) {
+            throw new UsageException("could not write " + path + ": " + e.getMessage());
+        }
+
+        reply("events", node -> {
+            node.put("limit", limit);
+            putEvents(node);
+        });
+    }
+
+    private void putEvents(final Json.Object node) {
+        node.put("on", session.loggingEvents());
+
+        var log = session.eventLog();
+
+        if (log == null) {
+            return;
+        }
+
+        node.put("path", session.eventLogPath().toString());
+        node.put("records", log.records());
+        node.put("full", log.isFull());
+
+        // Only when there was one, the same as the trace's: a caller asking "did this go wrong?"
+        // should not have to compare against null on every reply.
+        if (log.failure() != null) {
+            node.put("failed", true);
+            node.put("failure", String.valueOf(log.failure().getMessage()));
+        }
+    }
+
     private void press(final String[] words) {
         if (words.length < 2) {
             throw new UsageException("press wants buttons, as in \"press start\".");
@@ -690,6 +849,18 @@ public final class Repl {
             var picture = node.putObject("ppu");
             picture.put("scanline", ppu.getScanline());
             picture.put("dot", ppu.getDot());
+
+            // The four the chip scrolls with, and the reason this reply is worth taking at a
+            // breakpoint at all. Where the beam is is the symptom; v is the answer -- its low five
+            // bits are the coarse X the next tile comes from, so a background that is eight pixels
+            // out on one scanline says so here and says it nowhere else. t is what the next
+            // $2006/$2005 pair is assembling, fineX the scroll within the tile, and writeLatch
+            // which half of a two-write register the next write will be: a split that wrote an odd
+            // number of bytes leaves that true and puts every later write in the wrong half.
+            picture.put("v", ppu.getV());
+            picture.put("t", ppu.getT());
+            picture.put("fineX", ppu.getFineX());
+            picture.put("writeLatch", ppu.isWriteLatchSet());
             picture.put("renderingEnabled", ppu.isRenderingEnabled());
 
             var video = node.putObject("video");

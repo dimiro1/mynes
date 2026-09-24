@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.headless;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.cheat.GameGenie;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.EventTracer;
 import com.github.dimiro1.mynes.state.Movie;
 import com.github.dimiro1.mynes.state.MovieRecorder;
 import com.github.dimiro1.mynes.state.Rewind;
@@ -146,6 +147,32 @@ public final class Session {
      * walked into and shredded by {@code SaveStateCompletenessTests}.
      */
     private @Nullable MovieRecorder recorder;
+
+    /**
+     * Where what the machine does to its hardware is being written down, and where that went. Null
+     * until somebody asks, and kept after it has been stopped so that the report and the REPL can
+     * still say how long the file is -- which is the question somebody asks straight after stopping
+     * one.
+     * <p>
+     * Here rather than in {@link Repl} beside the instruction tracer, because both headless modes
+     * can start one: {@code --log-events} on a run that walks a schedule, and {@code events on} in
+     * a session. Two owners would be two answers to "is one running".
+     */
+    private @Nullable EventTracer events;
+
+    private @Nullable Path eventsPath;
+
+    /**
+     * Whether that log holds the reads as well. Kept beside it rather than left on the command
+     * line, so that a session which opened one half way through is described by what it asked for
+     * rather than by what the run started as.
+     */
+    private boolean eventsReads;
+
+    /**
+     * Whether {@link #events} is still attached to the debugger and still writing.
+     */
+    private boolean logging;
 
     /**
      * How many frames this session has gone back over its whole life, which is what the report
@@ -396,32 +423,84 @@ public final class Session {
 
     /**
      * Runs instructions rather than frames, stopping early if the debugger says to.
-     * <p>
-     * Frames still finish underneath -- the sound is collected and the picture counted whenever the
-     * PPU crosses a boundary -- because the APU's ring holds only a few frames of samples and a long
-     * step that never drained it would lose the end of them.
      */
     public Stepped stepInstructions(final long count) throws IOException {
-        var ppu = nes.getPPU();
-        var cpu = nes.getCPU();
         Debugger.Stop stop = null;
         var ran = 0L;
 
         while (ran < count && stop == null) {
-            var completed = ppu.getFrame();
-            var wasPC = cpu.getPC();
-
-            nes.step();
+            stop = stepOne();
             ran++;
-
-            if (ppu.getFrame() != completed) {
-                endOfFrame(null);
-            }
-
-            stop = debugger.afterInstruction(cpu.getPC(), wasPC);
         }
 
         return new Stepped(ran, stop);
+    }
+
+    /**
+     * Runs instructions until the beam next reaches a scanline, which is how to stand somewhere in
+     * particular part way down a frame.
+     * <p>
+     * <b>The beam has to leave the line before it can arrive at it.</b> Asked for the line it is
+     * already on, this runs most of a frame and comes back on the next pass rather than returning
+     * the same moment twice -- which is what makes calling it in a loop a way to watch one line
+     * over successive frames.
+     * <p>
+     * <b>Instruction granularity, so it lands a few dots into the line rather than on dot 0.</b>
+     * That is the price of every other instrument still meaning something where it stops: a machine
+     * halted between instructions has a program counter a disassembly can start from and a
+     * breakpoint can be checked against, and one halted mid-instruction has neither. Seven CPU
+     * cycles is the usual overshoot, which is twenty-one dots; a step that swallows an OAM
+     * transfer is five hundred, which is the one case this overshoots the line altogether, so the
+     * scanline it actually stopped on is worth reading rather than assuming.
+     * <p>
+     * Nothing bounds it but the line itself. The PPU is clocked by every tick whatever the program
+     * is doing, so a line the region has is reached inside a frame and a line it has not is
+     * refused before this is called.
+     *
+     * @param target which scanline to stop on.
+     * @return how many instructions that took, and whatever stopped it sooner.
+     */
+    public Stepped runUntilScanline(final int target) throws IOException {
+        var ppu = nes.getPPU();
+        Debugger.Stop stop = null;
+        var ran = 0L;
+        var away = ppu.getScanline() != target;
+        var arrived = false;
+
+        while (!arrived && stop == null) {
+            stop = stepOne();
+            ran++;
+
+            if (ppu.getScanline() == target) {
+                arrived = away;
+            } else {
+                away = true;
+            }
+        }
+
+        return new Stepped(ran, stop);
+    }
+
+    /**
+     * One instruction, with the bookkeeping a frame that ended underneath it owes.
+     * <p>
+     * Frames still finish here -- the sound is collected and the picture counted whenever the PPU
+     * crosses a boundary -- because the APU's ring holds only a few frames of samples and a long
+     * walk that never drained it would lose the end of them.
+     */
+    private Debugger.Stop stepOne() throws IOException {
+        var ppu = nes.getPPU();
+        var cpu = nes.getCPU();
+        var completed = ppu.getFrame();
+        var wasPC = cpu.getPC();
+
+        nes.step();
+
+        if (ppu.getFrame() != completed) {
+            endOfFrame(null);
+        }
+
+        return debugger.afterInstruction(cpu.getPC(), wasPC);
     }
 
     /**
@@ -808,6 +887,100 @@ public final class Session {
         movie.applyAnchor(nes);
 
         previousHash = FrameAnalysis.hash(nes.getPPU().getFrameBuffer());
+    }
+
+    // ============================================================================== the event log
+
+    /**
+     * Starts writing down every PPU, audio and mapper write, and both interrupts, with the beam
+     * position each happened at.
+     * <p>
+     * <b>The machine is not armed by this and does not slow down.</b> That is the whole reason to
+     * reach for it rather than for a watchpoint: where in the frame a game writes $2005 is a
+     * question about a game whose main loop is finishing on time, and a gauge that stopped the
+     * machine a hundred times a frame to ask would be measuring itself.
+     *
+     * @param path  where to write it.
+     * @param reads whether to log the reads as well. Off unless it is wanted: the read hook sees
+     *              every instruction fetch, so this is the one setting here a machine can feel, and
+     *              what it buys is the $2002 and $4016 polls.
+     * @param limit how many records to write before going quiet, or 0 for no limit.
+     * @throws UsageException if one is already being written, since two logs would be two answers
+     *                        to where the events are going.
+     */
+    public void startEventLog(final Path path, final boolean reads, final long limit)
+            throws IOException {
+
+        if (logging) {
+            throw new UsageException(
+                    "the machine's events are already being written to " + eventsPath + ".");
+        }
+
+        events = EventTracer.to(path, nes.getPPU(), limit);
+        eventsPath = path;
+        eventsReads = reads;
+        logging = true;
+
+        debugger.setEventSink(events, reads);
+    }
+
+    /**
+     * Stops writing it and closes the file, leaving it where it can still be described.
+     * <p>
+     * Doing it when nothing is being written is not an error, which is what lets the end of a
+     * session and an explicit {@code events off} take the same path.
+     */
+    public void stopEventLog() throws IOException {
+        if (!logging) {
+            return;
+        }
+
+        logging = false;
+        debugger.setEventSink(null, false);
+        events.close();
+    }
+
+    /**
+     * Takes a log that has written all it was asked for off the debugger.
+     * <p>
+     * A full one has already closed its file and gone quiet, but it cannot take itself off the
+     * debugger -- it has no reference to one -- so until somebody does, the machine pays for a
+     * sink that is doing nothing. Whoever is driving calls this between commands, the same way the
+     * REPL picks up a finished instruction trace.
+     */
+    public void sweepEventLog() {
+        if (logging && events.isFull()) {
+            logging = false;
+            debugger.setEventSink(null, false);
+        }
+    }
+
+    /**
+     * Whether one is still being written.
+     */
+    public boolean loggingEvents() {
+        return logging;
+    }
+
+    /**
+     * The log this session last opened, live or finished, or null if it opened none.
+     */
+    public @Nullable EventTracer eventLog() {
+        return events;
+    }
+
+    /**
+     * Where that went.
+     */
+    public @Nullable Path eventLogPath() {
+        return eventsPath;
+    }
+
+    /**
+     * Whether it holds the reads as well as the writes.
+     */
+    public boolean eventLogReads() {
+        return eventsReads;
     }
 
     /**

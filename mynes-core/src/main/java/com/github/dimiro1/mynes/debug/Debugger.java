@@ -150,20 +150,36 @@ public final class Debugger {
      * program being fetched, and neither is a thing the machine <em>did</em>.
      */
     public enum EventKind {
-        PPU_READ("PPU read"),
-        PPU_WRITE("PPU write"),
-        AUDIO_READ("audio read"),
-        AUDIO_WRITE("audio write"),
-        CARTRIDGE_WRITE("mapper write"),
-        NMI("NMI"),
-        IRQ("IRQ");
+        PPU_READ("ppu-read", "PPU read"),
+        PPU_WRITE("ppu-write", "PPU write"),
+        AUDIO_READ("audio-read", "audio read"),
+        AUDIO_WRITE("audio-write", "audio write"),
+        CARTRIDGE_WRITE("mapper-write", "mapper write"),
+        NMI("nmi", "NMI"),
+        IRQ("irq", "IRQ");
 
+        private final String id;
         private final String label;
 
-        EventKind(final String label) {
+        EventKind(final String id, final String label) {
+            this.id = id;
             this.label = label;
         }
 
+        /**
+         * One word, for a file. The same split the regions and the video filters make, and here it
+         * earns itself twice over: a log written with the labels below would put two words in one
+         * column for five of the seven, so a line of it would have six fields or seven depending on
+         * what happened -- and a reader that cut it up on whitespace would read the value of a PPU
+         * write as the word "write".
+         */
+        public String id() {
+            return id;
+        }
+
+        /**
+         * How it is spelled for somebody reading a tooltip.
+         */
         public String label() {
             return label;
         }
