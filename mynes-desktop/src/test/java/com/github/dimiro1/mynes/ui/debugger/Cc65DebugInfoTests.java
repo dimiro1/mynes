@@ -184,6 +184,22 @@ class Cc65DebugInfoTests {
         assertNotNull(program.lineAt(0));
     }
 
+    @Test
+    void aQuotedWindowsPathKeepsItsBackslashSeparators() throws Exception {
+        var debug = directory.resolve("game.dbg");
+        var recorded = "C:\\Users\\builder\\src\\game.s";
+
+        Files.writeString(debug, """
+                version\tmajor=2,minor=0
+                file\tid=0,name="%s",size=1,mtime=0
+                line\tid=0,file=0,line=1
+                """.formatted(recorded));
+
+        var program = Cc65DebugInfo.read(debug, new byte[0x4000], null);
+
+        assertEquals(recorded, program.files().getFirst().recordedPath());
+    }
+
     private String debug(final Path source, final Path rom) throws Exception {
         return """
                 version\tmajor=2,minor=0

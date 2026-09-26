@@ -519,6 +519,13 @@ final class Cc65DebugInfo {
                     var c = text.charAt(at++);
 
                     if (escaped) {
+                        // ld65 quotes a literal backslash and quote as \\ and \". Preserve the
+                        // slash for every other pair: a Windows path written as C:\Users must not
+                        // silently turn into C:Users when a producer did not double its separators.
+                        if (c != '\\' && c != '"') {
+                            quoted.append('\\');
+                        }
+
                         quoted.append(c);
                         escaped = false;
                     } else if (c == '\\') {
