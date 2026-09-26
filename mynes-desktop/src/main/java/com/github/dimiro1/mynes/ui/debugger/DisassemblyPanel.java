@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Disassembler;
 import net.miginfocom.swing.MigLayout;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -78,7 +79,7 @@ final class DisassemblyPanel extends JPanel {
      * @param current whether this is the instruction about to run.
      * @param ran     whether it is one that already has, which is what greys the history out.
      */
-    record Row(int address, String bytes, String text, boolean current, boolean ran) {
+    record Row(int address, String bytes, String text, @Nullable String symbol, boolean current, boolean ran) {
     }
 
     private final DefaultListModel<Row> model = new DefaultListModel<>();
@@ -90,6 +91,7 @@ final class DisassemblyPanel extends JPanel {
     private Map<Integer, Condition> conditions = Map.of();
 
     private MachineSnapshot snapshot;
+    private SourceProgram sourceProgram;
 
     /**
      * Where to list from, or -1 to follow the PC.
@@ -191,6 +193,16 @@ final class DisassemblyPanel extends JPanel {
         model.clear();
     }
 
+    /** Lists from an address selected in the source view. */
+    void goTo(final int address) {
+        origin = address & 0xFFFF;
+        from.setText(String.format("$%04X", origin));
+
+        if (snapshot != null) {
+            rebuild();
+        }
+    }
+
     /**
      * Redraws the gutter after a point has been put down or picked up, without disturbing the
      * listing itself -- which still describes wherever the machine stopped.
@@ -200,6 +212,14 @@ final class DisassemblyPanel extends JPanel {
         this.conditions = conditions;
 
         list.repaint();
+    }
+
+    void setSourceProgram(final SourceProgram sourceProgram) {
+        this.sourceProgram = sourceProgram;
+
+        if (snapshot != null) {
+            rebuild();
+        }
     }
 
     // ================================================================================== internals
@@ -238,7 +258,7 @@ final class DisassemblyPanel extends JPanel {
 
             var line = Disassembler.at(snapshot::read, at);
 
-            model.addElement(new Row(at, line.hex(), line.text(), current, false));
+            model.addElement(row(at, current, false));
             at = (at + line.bytes().length) & 0xFFFF;
         }
 
@@ -293,8 +313,13 @@ final class DisassemblyPanel extends JPanel {
 
     private Row row(final int address, final boolean current, final boolean ran) {
         var line = Disassembler.at(snapshot::read, address);
+        String symbol = null;
 
-        return new Row(address, line.hex(), line.text(), current, ran);
+        if (sourceProgram != null) {
+            symbol = sourceProgram.firstSymbolAt(snapshot.prgOffset(address), address);
+        }
+
+        return new Row(address, line.hex(), line.text(), symbol, current, ran);
     }
 
     /**
@@ -498,6 +523,12 @@ final class DisassemblyPanel extends JPanel {
             g2.setColor(colour(Theme.dim()));
             g2.drawString(row.bytes(), x, baseline);
             x += column * 10;
+
+            if (row.symbol() != null) {
+                g2.setColor(colour(Theme.accent()));
+                g2.drawString(row.symbol() + ":", x, baseline);
+                x += metrics.stringWidth(row.symbol() + ": ");
+            }
 
             for (var token : Syntax.tokens(row.text())) {
                 g2.setColor(colour(Theme.colourFor(token.kind())));

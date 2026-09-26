@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.MMU;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.mappers.Mapper;
 
 import java.util.Collections;
 import java.util.Locale;
@@ -261,7 +262,18 @@ public final class Debugger {
     private final boolean[] watchReadAt = new boolean[0x10000];
     private final boolean[] watchWriteAt = new boolean[0x10000];
 
+    /**
+     * Breakpoints on bytes of the program ROM rather than on CPU addresses.
+     * <p>
+     * A CPU address is not the identity of a line of code on a banked cartridge: half a dozen
+     * different banks may all spend part of a frame at $8000. The offset is. Kept as the same flat
+     * lookup the address breakpoints use, because this is asked once per instruction while any one
+     * of these is down.
+     */
+    private boolean[] breakAtPRG = new boolean[0];
+
     private final Set<Integer> breakpoints = new TreeSet<>();
+    private final Set<Integer> prgBreakpoints = new TreeSet<>();
 
     /**
      * The conditional breakpoints only, which is nearly always none of them.
@@ -296,6 +308,7 @@ public final class Debugger {
     private MMU memory;
     private CPU cpu;
     private PPU ppu;
+    private Mapper mapper;
 
     /**
      * Whoever is collecting a frame's worth of what the machine did, or null when nobody is.
@@ -347,6 +360,15 @@ public final class Debugger {
         memory = nes.getMemory();
         cpu = nes.getCPU();
         ppu = nes.getPPU();
+        mapper = nes.getBus().getMapper();
+
+        // A debugger outlives a power cycle, so rebuild the fast lookup over the new cartridge
+        // without throwing away the user's points. A genuinely new cartridge is cleared by the
+        // window before it is attached; discard impossible points for direct callers too.
+        breakAtPRG = new boolean[nes.getCart().prgROM().length];
+        prgBreakpoints.removeIf(offset -> offset >= breakAtPRG.length);
+        prgBreakpoints.stream()
+                .forEach(offset -> breakAtPRG[offset] = true);
 
         wireHooks();
     }
@@ -364,6 +386,7 @@ public final class Debugger {
         return stepping != Stepping.NONE
                 || haltAsked
                 || !breakpoints.isEmpty()
+                || !prgBreakpoints.isEmpty()
                 || !watchpoints.isEmpty();
     }
 
@@ -404,6 +427,16 @@ public final class Debugger {
             stepping = Stepping.NONE;
 
             return new Stop(Reason.BREAKPOINT, pc, null, -1, -1, -1);
+        }
+
+        if (pc >= 0x8000 && !prgBreakpoints.isEmpty()) {
+            var offset = mapper.prgOffset(pc);
+
+            if (offset >= 0 && offset < breakAtPRG.length && breakAtPRG[offset]) {
+                stepping = Stepping.NONE;
+
+                return new Stop(Reason.BREAKPOINT, pc, null, -1, -1, -1);
+            }
         }
 
         if (stepping == Stepping.INSTRUCTION) {
@@ -581,6 +614,39 @@ public final class Debugger {
     }
 
     /**
+     * Stops before whichever CPU address is currently backed by this byte of program ROM.
+     * <p>
+     * This is the breakpoint a source line wants. On a banked board it follows the code rather
+     * than the window the code happens to be showing through; on a mirrored NROM it deliberately
+     * fires through either alias, since both execute the same byte.
+     */
+    public void addPRGBreakpoint(final int offset) {
+        checkPRGOffset(offset);
+        prgBreakpoints.add(offset);
+        breakAtPRG[offset] = true;
+    }
+
+    public void removePRGBreakpoint(final int offset) {
+        prgBreakpoints.remove(offset);
+
+        if (offset >= 0 && offset < breakAtPRG.length) {
+            breakAtPRG[offset] = false;
+        }
+    }
+
+    public boolean togglePRGBreakpoint(final int offset) {
+        if (prgBreakpoints.contains(offset)) {
+            removePRGBreakpoint(offset);
+
+            return false;
+        }
+
+        addPRGBreakpoint(offset);
+
+        return true;
+    }
+
+    /**
      * Stops the machine after an instruction writes to this address.
      */
     public void addWatchpoint(final int address) {
@@ -713,12 +779,18 @@ public final class Debugger {
      */
     public void clear() {
         breakpoints.forEach(pc -> breakAt[pc] = false);
+        prgBreakpoints.forEach(offset -> {
+            if (offset < breakAtPRG.length) {
+                breakAtPRG[offset] = false;
+            }
+        });
         watchpoints.keySet().forEach(address -> {
             watchReadAt[address] = false;
             watchWriteAt[address] = false;
         });
 
         breakpoints.clear();
+        prgBreakpoints.clear();
         conditions.clear();
         watchpoints.clear();
 
@@ -730,6 +802,13 @@ public final class Debugger {
 
     public Set<Integer> breakpoints() {
         return Collections.unmodifiableSet(breakpoints);
+    }
+
+    /**
+     * Breakpoints whose identity is an offset into {@link com.github.dimiro1.mynes.Cart#prgROM()}.
+     */
+    public Set<Integer> prgBreakpoints() {
+        return Collections.unmodifiableSet(prgBreakpoints);
     }
 
     /**
@@ -783,6 +862,15 @@ public final class Debugger {
         var condition = conditions.get(pc);
 
         return condition == null || condition.holds(cpu.getState(), memory::peek);
+    }
+
+    private void checkPRGOffset(final int offset) {
+        if (offset < 0 || offset >= breakAtPRG.length) {
+            throw new IllegalArgumentException(String.format(
+                    "PRG offset $%X is outside this cartridge's $%X bytes",
+                    offset,
+                    breakAtPRG.length));
+        }
     }
 
     /**

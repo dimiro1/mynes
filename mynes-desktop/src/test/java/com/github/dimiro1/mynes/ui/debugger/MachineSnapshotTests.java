@@ -91,6 +91,17 @@ class MachineSnapshotTests {
         assertNotEquals(0, MachineSnapshot.of(nes, debugger).trail().length);
     }
 
+    @Test
+    void itCarriesThePhysicalProgramRomOffsetBehindTheCpuAddress() {
+        var snapshot = MachineSnapshot.of(nes, debugger);
+
+        assertEquals(0, snapshot.prgOffset(0x8000));
+        assertEquals(0, snapshot.prgOffset(0xC000),
+                "a 16KB NROM mirrors the same byte through both halves");
+        assertEquals(0x2000, snapshot.prgOffset(0xA000));
+        assertEquals(-1, snapshot.prgOffset(0x7FFF));
+    }
+
     /**
      * The pointer names the next free slot, so a byte pushed is one above it -- and the listing
      * shows the top first, because that is the order the bytes come off in.

@@ -95,6 +95,50 @@ class DebuggerTests {
     }
 
     @Test
+    void aProgramRomBreakpointStopsAtTheByteBehindTheCpuAddress() {
+        debugger.addPRGBreakpoint(8);
+
+        var stop = run(10);
+
+        assertNotNull(stop);
+        assertEquals(LDX, stop.pc());
+        assertEquals(java.util.Set.of(8), debugger.prgBreakpoints());
+    }
+
+    @Test
+    void aProgramRomBreakpointArmsAndCanBeRemoved() {
+        debugger.addPRGBreakpoint(8);
+
+        assertTrue(debugger.isArmed());
+
+        debugger.removePRGBreakpoint(8);
+
+        assertFalse(debugger.isArmed());
+        assertNull(run(20));
+    }
+
+    @Test
+    void aProgramRomBreakpointFollowsTheBankRatherThanTheCpuAddress() {
+        var banked = new NES(Cart.load(mapper2ROM(), "banked-debugger.nes"));
+        var watching = new Debugger();
+
+        watching.attach(banked);
+        watching.addPRGBreakpoint(0);
+
+        assertNotNull(watching.afterInstruction(0x8000, 0xC000),
+                "bank zero initially occupies $8000");
+
+        banked.getMemory().write(0x8000, 1);
+
+        assertNull(watching.afterInstruction(0x8000, 0xC000),
+                "the same CPU address now names bank one");
+
+        watching.addPRGBreakpoint(0x4000);
+        assertNotNull(watching.afterInstruction(0x8000, 0xC000),
+                "and a point on bank one follows it into the window");
+    }
+
+    @Test
     void aRemovedBreakpointStopsStopping() {
         debugger.addBreakpoint(LDX);
         debugger.removeBreakpoint(LDX);
@@ -309,11 +353,13 @@ class DebuggerTests {
     @Test
     void clearingForgetsEveryPoint() {
         debugger.addBreakpoint(LDX);
+        debugger.addPRGBreakpoint(8);
         debugger.addWatchpoint(0x0300);
 
         debugger.clear();
 
         assertEquals(java.util.Set.of(), debugger.breakpoints());
+        assertEquals(java.util.Set.of(), debugger.prgBreakpoints());
         assertEquals(java.util.Map.of(), debugger.watchpoints());
         assertFalse(debugger.isArmed());
         assertNull(run(20));
@@ -461,6 +507,21 @@ class DebuggerTests {
 
         image[16 + 0x3FFC] = (byte) (PROGRAM & 0xFF);
         image[16 + 0x3FFD] = (byte) (PROGRAM >> 8);
+
+        return image;
+    }
+
+    /** A two-bank UxROM image: bank zero is switchable at $8000, bank one fixed at $C000. */
+    private static byte[] mapper2ROM() {
+        var image = new byte[16 + 0x8000 + 0x2000];
+
+        image[0] = 'N';
+        image[1] = 'E';
+        image[2] = 'S';
+        image[3] = 0x1A;
+        image[4] = 2;
+        image[5] = 1;
+        image[6] = 0x20;
 
         return image;
     }
