@@ -201,10 +201,10 @@ public final class ControlPanelFrame extends JFrame {
         observeTheMachine();
 
         if (debugger == null) {
-            debugger = new DebuggerPanel(nes, runner, points);
+            debugger = new DebuggerPanel(nes, runner, points, cart);
             debugger.installKeysIn(getRootPane());
         } else {
-            debugger.setMachine(nes, runner);
+            debugger.setMachine(nes, runner, cart);
         }
 
         var inFront = tabs.getSelectedIndex();

@@ -59,6 +59,8 @@ final class PointsPanel extends JPanel {
 
         void removeBreakpoint(int address);
 
+        void removePRGBreakpoint(int offset);
+
         void removeWatchpoint(int address);
 
         void clear();
@@ -68,10 +70,11 @@ final class PointsPanel extends JPanel {
      * One line of either table: an address, and whatever else there is to say about it -- the
      * condition on a breakpoint, the direction of a watchpoint.
      */
-    private record Point(int address, String detail) {
+    private record Point(int key, String place, String detail) {
     }
 
     private final PointTable breakpoints;
+    private final PointTable sourceBreakpoints;
     private final PointTable watchpoints;
 
     private final JTextField entry = new JTextField(12);
@@ -82,9 +85,11 @@ final class PointsPanel extends JPanel {
         super(new MigLayout(
                 "insets 4 8 8 8, fill, wrap 1, gapy 4",
                 "[grow,fill]",
-                "[][grow,fill][][grow,fill][]4[][]"));
+                "[][grow,fill][][grow,fill][][grow,fill][]4[][]"));
 
         breakpoints = new PointTable("Breakpoints", "Condition", points::removeBreakpoint);
+        sourceBreakpoints = new PointTable(
+                "Source Breakpoints", "Source", points::removePRGBreakpoint);
         watchpoints = new PointTable("Watchpoints", "On", points::removeWatchpoint);
 
         entry.setFont(Theme.MONOSPACED);
@@ -134,6 +139,8 @@ final class PointsPanel extends JPanel {
 
         add(breakpoints.header);
         add(breakpoints.scroll, "grow, hmin 60");
+        add(sourceBreakpoints.header, "gaptop 8");
+        add(sourceBreakpoints.scroll, "grow, hmin 44");
         add(watchpoints.header, "gaptop 8");
         add(watchpoints.scroll, "grow, hmin 60");
         add(entryRow, "growx");
@@ -157,6 +164,8 @@ final class PointsPanel extends JPanel {
     void show(
             final Set<Integer> breaks,
             final Map<Integer, Condition> conditions,
+            final Set<Integer> prgBreaks,
+            final SourceProgram source,
             final Map<Integer, Debugger.Access> watches) {
 
         var breakRows = new ArrayList<Point>(breaks.size());
@@ -164,14 +173,30 @@ final class PointsPanel extends JPanel {
         for (var address : breaks) {
             var condition = conditions.get(address);
 
-            breakRows.add(new Point(address, condition == null ? "" : "if " + condition.text()));
+            breakRows.add(new Point(
+                    address,
+                    String.format("$%04X", address),
+                    condition == null ? "" : "if " + condition.text()));
+        }
+
+        var sourceRows = new ArrayList<Point>(prgBreaks.size());
+
+        for (var offset : prgBreaks) {
+            var line = source == null ? null : source.lineForBreakpoint(offset);
+
+            sourceRows.add(new Point(
+                    offset,
+                    String.format("PRG+$%05X", offset),
+                    line == null ? "" : line.location()));
         }
 
         var watchRows = new ArrayList<Point>(watches.size());
 
-        watches.forEach((address, on) -> watchRows.add(new Point(address, on.id())));
+        watches.forEach((address, on) -> watchRows.add(new Point(
+                address, String.format("$%04X", address), on.id())));
 
         breakpoints.show(breakRows);
+        sourceBreakpoints.show(sourceRows);
         watchpoints.show(watchRows);
     }
 
@@ -233,7 +258,7 @@ final class PointsPanel extends JPanel {
             var metrics = table.getFontMetrics(Theme.MONOSPACED);
             var headerMetrics = table.getTableHeader().getFontMetrics(table.getTableHeader().getFont());
             var addressWidth = Math.max(
-                    metrics.stringWidth("$0000"), headerMetrics.stringWidth("Address"))
+                    metrics.stringWidth("PRG+$00000"), headerMetrics.stringWidth("Address"))
                     + metrics.charWidth('0') * 2;
 
             table.getColumnModel().getColumn(0).setMinWidth(addressWidth);
@@ -291,7 +316,7 @@ final class PointsPanel extends JPanel {
             var row = table.getSelectedRow();
 
             if (row >= 0 && row < model.rows.size()) {
-                onRemove.accept(model.rows.get(row).address());
+                onRemove.accept(model.rows.get(row).key());
             }
         }
 
@@ -317,7 +342,7 @@ final class PointsPanel extends JPanel {
             public Object getValueAt(final int row, final int column) {
                 var point = rows.get(row);
 
-                return column == 0 ? String.format("$%04X", point.address()) : point.detail();
+                return column == 0 ? point.place() : point.detail();
             }
         }
 

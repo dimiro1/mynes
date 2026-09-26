@@ -148,7 +148,14 @@ file is where they live.
   moment rather than a dozen.
 - A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
   watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
-  the address space.
+  the address space. A ca65/ld65 build can be attached from the Source tab with **Attach Debug Info…**: build
+  objects with `ca65 -g`, link with `ld65 --dbgfile game.dbg`, and the debugger follows the current
+  source line in a syntax-highlighted 6502 editor, shows symbols in the disassembly, and sets
+  breakpoints from the source gutter. Those breakpoints name bytes of PRG ROM rather than
+  `$8000`-style windows, so they follow the right code through bank switches. If the checkout moved
+  since the build, **Find Sources…** accepts either the project or a source folder and also finds
+  generated includes in nearby build folders. Hovering a symbol shows its linked value and source
+  definition; Cmd/Ctrl-click or **Go to Definition** follows it, including ca65's `@` local labels.
 - CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
 - **Start Music...** writes what the sound chip plays to a MIDI file — one part per pulse and one
   for the triangle, read a frame at a time so nothing in the melody is missed, with the tempo set so

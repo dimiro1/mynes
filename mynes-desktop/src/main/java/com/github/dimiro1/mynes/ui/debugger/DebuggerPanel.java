@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.formdev.flatlaf.util.SystemFileChooser;
+import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
@@ -15,6 +17,8 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JRootPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JOptionPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
@@ -24,6 +28,9 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -54,9 +61,13 @@ import java.util.Set;
  * a view that opened at a size chosen for the last bug is a small trap.
  */
 public final class DebuggerPanel extends JPanel {
+    private static final System.Logger logger = System.getLogger("Debugger");
+
     private final Debugger debugger;
 
     private final DisassemblyPanel disassembly = new DisassemblyPanel(new Listing());
+    private final SourcePanel source = new SourcePanel(new Sources());
+    private final JTabbedPane code = new JTabbedPane();
     private final RegistersPanel registers = new RegistersPanel();
     private final StackPanel stack = new StackPanel();
     private final MemoryPanel memory = new MemoryPanel();
@@ -71,6 +82,15 @@ public final class DebuggerPanel extends JPanel {
 
     private NES nes;
     private EmulatorRunner runner;
+    private Cart cart;
+    private MachineSnapshot snapshot;
+    private SourceProgram sourceProgram;
+    private Path sourceRoot;
+
+    private final SystemFileChooser debugChooser = new SystemFileChooser();
+    private final SystemFileChooser sourceChooser = new SystemFileChooser();
+    private final SourceAssociations associations =
+            SourceAssociations.load(SourceAssociations.DEFAULT_PATH);
 
     /**
      * Whether the machine is stopped because of something done in this view, which is what decides
@@ -83,21 +103,41 @@ public final class DebuggerPanel extends JPanel {
      * put down itself from one the user did and only take the first kind back up.
      */
     private Set<Integer> knownBreakpoints = Set.of();
+    private Set<Integer> knownPRGBreakpoints = Set.of();
 
     /**
      * A breakpoint this view put down for Run to Here and owes the debugger back, or -1.
      */
     private int runToAddress = -1;
+    private Set<Integer> runToPRG = Set.of();
 
     public DebuggerPanel(
             final NES nes, final EmulatorRunner runner, final Debugger debugger) {
 
+        this(nes, runner, debugger, nes.getCart());
+    }
+
+    public DebuggerPanel(
+            final NES nes, final EmulatorRunner runner, final Debugger debugger, final Cart cart) {
+
         this.nes = nes;
         this.runner = runner;
         this.debugger = debugger;
+        this.cart = cart;
         this.points = new PointsPanel(new Editing());
 
+        var filter = new SystemFileChooser.FileNameExtensionFilter("ld65 debug information", "dbg");
+        debugChooser.addChoosableFileFilter(filter);
+        debugChooser.setFileFilter(filter);
+        debugChooser.setDialogTitle("Attach Debug Information");
+        debugChooser.setApproveButtonText("Attach");
+
+        sourceChooser.setFileSelectionMode(SystemFileChooser.DIRECTORIES_ONLY);
+        sourceChooser.setDialogTitle("Find Source Files");
+        sourceChooser.setApproveButtonText("Use Folder");
+
         init();
+        restoreSources();
     }
 
     private void init() {
@@ -122,19 +162,23 @@ public final class DebuggerPanel extends JPanel {
         var side = new JPanel(new MigLayout("insets 0, fill, wrap 1, gap 0", "[grow,fill]", "[][grow,fill]"));
         side.add(registers);
         side.add(stack, "hmin 120");
+        code.addTab("Source", source);
+        code.addTab("Disassembly", disassembly);
+        code.setSelectedComponent(disassembly);
+
         // A split pane opens its divider at the first component's preferred width and never takes
         // one below its minimum, so both are said for every pane: the preferred sizes are where the
         // dividers start, and the minimums are what stops a drag from squashing a panel into
         // buttons drawn as "...". The points panel works its own minimum out from its rows.
-        disassembly.setPreferredSize(new Dimension(700, 400));
-        disassembly.setMinimumSize(new Dimension(380, 160));
+        code.setPreferredSize(new Dimension(700, 400));
+        code.setMinimumSize(new Dimension(380, 160));
         side.setPreferredSize(new Dimension(400, 400));
         side.setMinimumSize(new Dimension(300, 200));
         memory.setPreferredSize(new Dimension(660, 280));
         memory.setMinimumSize(new Dimension(420, 120));
         points.setPreferredSize(new Dimension(Math.max(440, points.getMinimumSize().width), 280));
 
-        var top = split(JSplitPane.HORIZONTAL_SPLIT, disassembly, side, 0.7);
+        var top = split(JSplitPane.HORIZONTAL_SPLIT, code, side, 0.7);
         var bottom = split(JSplitPane.HORIZONTAL_SPLIT, memory, points, 0.62);
         var body = split(JSplitPane.VERTICAL_SPLIT, top, bottom, 0.56);
 
@@ -212,8 +256,24 @@ public final class DebuggerPanel extends JPanel {
      * the power to test.
      */
     public void setMachine(final NES nes, final EmulatorRunner runner) {
+        setMachine(nes, runner, nes.getCart());
+    }
+
+    public void setMachine(final NES nes, final EmulatorRunner runner, final Cart cart) {
+        var sameCartridge = this.cart.sha256().equals(cart.sha256());
+
         this.nes = nes;
         this.runner = runner;
+        this.cart = cart;
+        snapshot = null;
+
+        if (!sameCartridge) {
+            sourceProgram = null;
+            sourceRoot = null;
+            source.detach();
+            disassembly.setSourceProgram(null);
+            code.setSelectedComponent(disassembly);
+        }
 
         // What is on show describes a machine that no longer exists. The points stay -- they are the
         // user's, and keeping them is the whole reason this view is repointed rather than closed --
@@ -226,14 +286,22 @@ public final class DebuggerPanel extends JPanel {
         // clears them: the points are the user's while the game is the same game, and a list of
         // breakpoints that are no longer set would be the worst kind of stale.
         var breaks = Set.copyOf(debugger.breakpoints());
+        var prgBreaks = Set.copyOf(debugger.prgBreakpoints());
         var conditions = Map.copyOf(debugger.conditions());
 
         knownBreakpoints = breaks;
+        knownPRGBreakpoints = prgBreaks;
 
-        points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
+        points.show(breaks, conditions, prgBreaks, sourceProgram,
+                Map.copyOf(debugger.watchpoints()));
         disassembly.setBreakpoints(breaks, conditions);
+        source.setBreakpoints(prgBreaks);
 
         running();
+
+        if (!sameCartridge) {
+            restoreSources();
+        }
     }
 
     /**
@@ -243,19 +311,28 @@ public final class DebuggerPanel extends JPanel {
     public void stopped(final Debugger.Stop stop) {
         stoppedByUs = true;
 
-        var snapshot = MachineSnapshot.of(nes, debugger);
+        snapshot = MachineSnapshot.of(nes, debugger);
         var breaks = Set.copyOf(debugger.breakpoints());
+        var prgBreaks = Set.copyOf(debugger.prgBreakpoints());
         var conditions = Map.copyOf(debugger.conditions());
 
         knownBreakpoints = breaks;
+        knownPRGBreakpoints = prgBreaks;
 
         disassembly.show(snapshot, breaks, conditions);
         registers.show(snapshot.machine());
         stack.show(snapshot);
         memory.show(snapshot, stop);
-        points.show(breaks, conditions, Map.copyOf(debugger.watchpoints()));
+        points.show(breaks, conditions, prgBreaks, sourceProgram,
+                Map.copyOf(debugger.watchpoints()));
 
-        status.setText(describe(stop));
+        SourceProgram.SourceLine sourceLine = null;
+        if (sourceProgram != null) {
+            sourceLine = sourceProgram.lineAt(snapshot.prgOffset(stop.pc()));
+            source.show(sourceProgram, sourceLine, prgBreaks);
+        }
+
+        status.setText(describe(stop, sourceLine));
         dot.setColour(Theme.stopped());
 
         run.setEnabled(true);
@@ -271,6 +348,12 @@ public final class DebuggerPanel extends JPanel {
 
             runToAddress = -1;
             edit(() -> debugger.removeBreakpoint(address));
+        }
+
+        if (!runToPRG.isEmpty()) {
+            var offsets = runToPRG;
+            runToPRG = Set.of();
+            edit(() -> offsets.forEach(debugger::removePRGBreakpoint));
         }
     }
 
@@ -295,6 +378,7 @@ public final class DebuggerPanel extends JPanel {
 
         registers.stale();
         stack.stale();
+        source.clearMachine();
         status.setText("Running");
         dot.setColour(Theme.running());
 
@@ -332,6 +416,16 @@ public final class DebuggerPanel extends JPanel {
     }
 
     private void toggleBreakpointAtSelection() {
+        if (code.getSelectedComponent() == source) {
+            var line = source.selectedLine();
+
+            if (line != null && line.hasCode()) {
+                toggleSourceBreakpoint(line);
+            }
+
+            return;
+        }
+
         var address = disassembly.selectedAddress();
 
         if (address >= 0) {
@@ -377,6 +471,160 @@ public final class DebuggerPanel extends JPanel {
         }
     }
 
+    private void toggleSourceBreakpoint(final SourceProgram.SourceLine line) {
+        var offsets = line.breakpointOffsets();
+        var remove = offsets.stream().allMatch(knownPRGBreakpoints::contains);
+
+        edit(() -> offsets.forEach(offset -> {
+            if (remove) {
+                debugger.removePRGBreakpoint(offset);
+            } else {
+                debugger.addPRGBreakpoint(offset);
+            }
+        }));
+    }
+
+    /** The source listing's file and breakpoint actions. */
+    private final class Sources implements SourcePanel.Actions {
+        @Override
+        public void attach() {
+            if (debugChooser.showOpenDialog(DebuggerPanel.this) == SystemFileChooser.APPROVE_OPTION) {
+                loadSources(debugChooser.getSelectedFile().toPath(), null, true);
+            }
+        }
+
+        @Override
+        public void locateSources() {
+            if (sourceProgram == null) {
+                return;
+            }
+
+            if (sourceRoot != null) {
+                sourceChooser.setCurrentDirectory(sourceRoot.toFile());
+            }
+
+            if (sourceChooser.showOpenDialog(DebuggerPanel.this)
+                    != SystemFileChooser.APPROVE_OPTION) {
+                return;
+            }
+
+            loadSources(sourceProgram.debugFile(), sourceChooser.getSelectedFile().toPath(), false);
+        }
+
+        @Override
+        public void detach() {
+            var offsets = Set.copyOf(knownPRGBreakpoints);
+
+            sourceProgram = null;
+            sourceRoot = null;
+            source.detach();
+            disassembly.setSourceProgram(null);
+            code.setSelectedComponent(disassembly);
+            edit(() -> offsets.forEach(debugger::removePRGBreakpoint));
+
+            try {
+                associations.forget(cart.sha256());
+            } catch (IOException e) {
+                logger.log(System.Logger.Level.WARNING, "could not forget source association", e);
+            }
+        }
+
+        @Override
+        public void toggleBreakpoint(final SourceProgram.SourceLine line) {
+            toggleSourceBreakpoint(line);
+        }
+
+        @Override
+        public void runTo(final SourceProgram.SourceLine line) {
+            var temporary = new LinkedHashSet<Integer>();
+
+            for (var offset : line.breakpointOffsets()) {
+                if (!knownPRGBreakpoints.contains(offset)) {
+                    temporary.add(offset);
+                }
+            }
+
+            runToPRG = Set.copyOf(temporary);
+            edit(() -> temporary.forEach(debugger::addPRGBreakpoint));
+            resume();
+        }
+
+        @Override
+        public void showInDisassembly(final SourceProgram.SourceLine line) {
+            if (!line.ranges().isEmpty()) {
+                disassembly.goTo(line.ranges().getFirst().cpuAddress());
+                code.setSelectedComponent(disassembly);
+            }
+        }
+    }
+
+    private void loadSources(
+            final Path debugFile, final Path root, final boolean offerRoot) {
+        try {
+            var resolvedRoot = root;
+            var loaded = Cc65DebugInfo.read(debugFile, cart.prgROM(), resolvedRoot);
+
+            if (offerRoot && loaded.hasMissingFiles()) {
+                var answer = JOptionPane.showConfirmDialog(
+                        this,
+                        "Some recorded source paths no longer exist. Choose the project folder?",
+                        "Find Source Files",
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.QUESTION_MESSAGE);
+
+                if (answer == JOptionPane.YES_OPTION
+                        && sourceChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
+                    resolvedRoot = sourceChooser.getSelectedFile().toPath();
+                    loaded = Cc65DebugInfo.read(debugFile, cart.prgROM(), resolvedRoot);
+                }
+            }
+
+            sourceProgram = loaded;
+            sourceRoot = resolvedRoot;
+            disassembly.setSourceProgram(loaded);
+
+            var line = snapshot == null ? null
+                    : loaded.lineAt(snapshot.prgOffset(snapshot.cpu().pc()));
+            source.show(loaded, line, knownPRGBreakpoints);
+            code.setSelectedComponent(source);
+
+            try {
+                associations.remember(cart.sha256(), debugFile, resolvedRoot);
+            } catch (IOException e) {
+                logger.log(System.Logger.Level.WARNING, "could not remember source association", e);
+            }
+        } catch (IOException | RuntimeException e) {
+            logger.log(System.Logger.Level.ERROR, "could not load " + debugFile, e);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Could not attach " + debugFile.getFileName() + ": " + e.getMessage(),
+                    "Debug Information",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void restoreSources() {
+        var remembered = associations.get(cart.sha256());
+
+        if (remembered == null || !java.nio.file.Files.isRegularFile(remembered.debugFile())) {
+            return;
+        }
+
+        try {
+            var loaded = Cc65DebugInfo.read(
+                    remembered.debugFile(), cart.prgROM(), remembered.sourceRoot());
+
+            sourceProgram = loaded;
+            sourceRoot = remembered.sourceRoot();
+            disassembly.setSourceProgram(loaded);
+            source.show(loaded, null, knownPRGBreakpoints);
+            code.setSelectedComponent(source);
+        } catch (IOException | RuntimeException e) {
+            logger.log(System.Logger.Level.WARNING,
+                    "could not restore " + remembered.debugFile(), e);
+        }
+    }
+
     /**
      * What the points panel asks for, all of it posted onto the emulation thread.
      */
@@ -394,6 +642,11 @@ public final class DebuggerPanel extends JPanel {
         @Override
         public void removeBreakpoint(final int address) {
             edit(() -> debugger.removeBreakpoint(address));
+        }
+
+        @Override
+        public void removePRGBreakpoint(final int offset) {
+            edit(() -> debugger.removePRGBreakpoint(offset));
         }
 
         @Override
@@ -419,19 +672,23 @@ public final class DebuggerPanel extends JPanel {
             change.run();
 
             var breaks = Set.copyOf(debugger.breakpoints());
+            var prgBreaks = Set.copyOf(debugger.prgBreakpoints());
             var conditions = Map.copyOf(debugger.conditions());
             var watches = Map.copyOf(debugger.watchpoints());
 
             SwingUtilities.invokeLater(() -> {
                 knownBreakpoints = breaks;
-                points.show(breaks, conditions, watches);
+                knownPRGBreakpoints = prgBreaks;
+                points.show(breaks, conditions, prgBreaks, sourceProgram, watches);
                 disassembly.setBreakpoints(breaks, conditions);
+                source.setBreakpoints(prgBreaks);
             });
         });
     }
 
-    private static String describe(final Debugger.Stop stop) {
-        return "Stopped  ·  " + switch (stop.reason()) {
+    private static String describe(
+            final Debugger.Stop stop, final SourceProgram.SourceLine sourceLine) {
+        var stopped = "Stopped  ·  " + switch (stop.reason()) {
             case BREAKPOINT -> String.format("breakpoint at $%04X", stop.pc());
             case WATCHPOINT -> String.format(
                     "watchpoint: $%04X %s $%02X by the instruction at $%04X",
@@ -443,6 +700,8 @@ public final class DebuggerPanel extends JPanel {
             case FRAME -> String.format("end of frame, at $%04X", stop.pc());
             case ASKED -> String.format("at $%04X", stop.pc());
         };
+
+        return sourceLine == null ? stopped : stopped + "  ·  " + sourceLine.location();
     }
 
     /**

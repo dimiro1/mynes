@@ -90,6 +90,26 @@ record MachineSnapshot(Readout machine, int[] bus, int[] trail) {
     }
 
     /**
+     * The stable byte of program ROM currently visible at a CPU address, or -1 outside PRG ROM.
+     * <p>
+     * Taken from the bank layout in the same readout as the PC, rather than by asking the live
+     * mapper later: the machine may have resumed by the time Swing paints the answer.
+     */
+    int prgOffset(final int address) {
+        var cpuAddress = address & 0xFFFF;
+
+        if (cpuAddress < 0x8000) {
+            return -1;
+        }
+
+        var window = (cpuAddress - 0x8000) / com.github.dimiro1.mynes.mappers.Mapper.Banks.PRG_WINDOW;
+        var within = cpuAddress & (com.github.dimiro1.mynes.mappers.Mapper.Banks.PRG_WINDOW - 1);
+
+        return machine.board().banks().prg()[window]
+                * com.github.dimiro1.mynes.mappers.Mapper.Banks.PRG_WINDOW + within;
+    }
+
+    /**
      * What is on the stack, top first, which is the order it will come off in.
      */
     int[] stack() {
