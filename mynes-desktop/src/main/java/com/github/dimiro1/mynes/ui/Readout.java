@@ -23,11 +23,11 @@ import java.util.List;
  * inside the stop callback, which is exact, once, with the machine halted -- spelled rather than
  * linked because that record is package private to the debugger and this cannot see it.
  * <p>
- * Neither works for a dashboard. What a dashboard shows is <em>scalars</em> -- $2000, the scroll,
+ * Neither works for live scalar readings -- $2000, the scroll,
  * the frame number, which voices are sounding -- and a dozen of them read one at a time off a
  * running machine is not a slightly stale picture but a machine that never existed: the scroll from
- * one frame beside the beam position from the next. And a dashboard that only refreshed when the
- * machine stopped would be blank exactly while somebody was watching a game.
+ * one frame beside the beam position from the next. A readout that only refreshed when the
+ * machine stopped would be stale exactly while somebody was watching a game.
  * <p>
  * So it is built here, on the emulation thread, at the boundary where a frame has just finished and
  * nothing is half written -- see {@link EmulatorRunner#setFrameObserver} -- and handed to the event

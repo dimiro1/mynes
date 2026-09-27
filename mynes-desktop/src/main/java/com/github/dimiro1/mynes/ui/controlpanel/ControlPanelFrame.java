@@ -71,8 +71,8 @@ import java.util.function.Consumer;
  * <p>
  * <b>One Pause tick and one {@code Cmd+P}</b>, both in the column. Every
  * {@code WHEN_IN_FOCUSED_WINDOW} binding in a window shares one map, so five instruments each
- * installing the shortcut would be five things fighting over it. The debugger's F5, F8, F9 and F10
- * are the only per-instrument keys there are, and there is only ever one debugger.
+ * installing the shortcut would be five things fighting over it. The debugger's F5, F8, F9, F10
+ * and Shift+F10 are the only per-instrument keys there are, and there is only ever one debugger.
  */
 public final class ControlPanelFrame extends JFrame {
     /**
@@ -139,7 +139,7 @@ public final class ControlPanelFrame extends JFrame {
         // which is the one thing a list of places has to not do.
         tabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
 
-        add(dashboard, BorderLayout.NORTH);
+        add(dashboard, BorderLayout.SOUTH);
         add(tabs, BorderLayout.CENTER);
         add(new JScrollPane(new ControlsColumn(switches, commands)), BorderLayout.EAST);
 
@@ -234,8 +234,7 @@ public final class ControlPanelFrame extends JFrame {
     }
 
     /**
-     * The first line of the dashboard: how the machine is being run, which only the thing running
-     * it knows. The other two lines come off the machine itself.
+     * The status line: how the machine is being run, which only the thing running it knows.
      */
     public void setRunning(final String text) {
         dashboard.setRunning(text);
@@ -429,8 +428,6 @@ public final class ControlPanelFrame extends JFrame {
      * stopped exactly where the picture wants it and has no thread clocking it to send one.
      */
     public void describe(final Readout readout) {
-        dashboard.show(readout);
-
         if (instruments != null) {
             instruments.show(readout);
         }

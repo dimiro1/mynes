@@ -42,6 +42,7 @@ public final class Theme {
     private static final Color RUNNING = new Color(0x2DA44E);
     private static final Color STOPPED = new Color(0xBF8700);
     private static final Color STACK_POINTER = new Color(0x1A7F37);
+    private static final Color CHANGED = new Color(0x9A6700);
 
     private Theme() {
     }
@@ -126,6 +127,14 @@ public final class Theme {
 
     static Color stackPointer() {
         return STACK_POINTER;
+    }
+
+    static Color changed() {
+        return CHANGED;
+    }
+
+    static Color changedRow() {
+        return tint(CHANGED, 0.14f);
     }
 
     /**

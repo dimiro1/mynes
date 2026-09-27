@@ -1,352 +1,115 @@
 # MyNES
 
-A NES emulator written in Java. Still a work in progress, but it plays games.
+MyNES is a NES emulator written in Java. It runs on macOS, Windows, and Linux. It includes save states, rewind, video filters, and a debugger with source code, memory, and hardware views.
 
-![Super Mario Bros. 3](shots/game-smb3.png)
+![Super Mario Bros. 3 running in MyNES](shots/game-smb3.png)
 
 ## Download
 
-Grab the zip from the [releases page](https://github.com/dimiro1/mynes/releases), unpack it, and
-run the launcher:
+Download the latest archive from [Releases](https://github.com/dimiro1/mynes/releases) and unpack it. Java 25 is required; builds are available from [Adoptium](https://adoptium.net/).
 
-```sh
-unzip mynes-0.8.0.zip
-cd mynes-0.8.0
-./mynes            # or mynes.bat on Windows, or: java -jar mynes.jar
-```
+Run `./mynes` on macOS or Linux, or `mynes.bat` on Windows. You can also run `java -jar mynes.jar` from the unpacked directory.
 
-The same zip works on macOS, Windows and Linux. You need Java 25 —
-[Adoptium](https://adoptium.net) has builds for everything.
+Open a `.nes` file or a `.zip` through **File > Open…**. Drag and drop also works. ROMs are not included.
 
-Then **File > Open...** and pick a `.nes` file, or the `.zip` a collection ships it in — or drag
-either onto the window. No ROMs are included, so bring your own.
+## Playing
 
-## Controls
+MyNES supports NTSC and PAL, iNES and NES 2.0, and twelve mapper families. If a game runs at the wrong speed, change the region under **Machine > Region**.
 
-| NES button | Key |
-|---|---|
+There are nine save state slots per game. F5 saves and F7 loads the current slot. Hold Backspace to rewind up to 30 seconds by default, including sound. Fast forward and movie recording are also available. Battery saves use standard `.sav` files.
+
+Video options include twelve palettes, NTSC and CRT filters, overscan, and TV aspect ratio. You can mute each of the five audio channels. Optional hacks remove the sprite limit or reduce slowdown. IPS patches and Game Genie codes do not change the ROM file.
+
+### Keys
+
+| Action | Default key |
+| :-- | :-- |
 | D-pad | Arrow keys |
-| A | X |
-| B | Z |
-| Start | Enter |
-| Select | Shift |
-| Player two | Nothing until you bind it |
-| Quick Save | F5 |
-| Quick Load | F7 |
-| Rewind (hold) | Backspace |
-| Screenshot | F12 |
-| Copy Screenshot | Cmd/Ctrl+F12 |
-| Full Screen | F11 (Esc leaves) |
-| Louder / Quieter | Cmd/Ctrl+= and Cmd/Ctrl+- |
+| A / B | X / Z |
+| Start / Select | Enter / Shift |
+| Quick save / load | F5 / F7 |
+| Rewind | Hold Backspace |
+| Full screen | F11; Esc to leave |
+| Save / copy screenshot | F12 / Cmd or Ctrl+F12 |
+| Volume up / down | Cmd or Ctrl+= / Cmd or Ctrl+- |
+| Control Panel | Cmd or Ctrl+D |
 
-Remap anything under **Settings > Controller...** — click a button, press a key, done. Player two
-is the second column in the same dialog, and starts empty: any default for it would be eight keys
-taken off somebody playing on their own, and there is nowhere to put them that is the same place
-on every keyboard. Reset to Defaults gives them all back.
+Keys for both players can be changed under **Settings > Controller…**. Player two has no default keys. Gamepads and the Zapper are not supported yet.
 
-Everything lands in `~/.mynes/config.properties`, which you can also edit by hand:
+## Debugging
 
-```properties
-video.palette=nesdev
-video.scale=2
-emulation.fast-forward=4x
-audio.latency-ms=60
-rewind.seconds=30
-controller1.a=VK_X
-controller2.a=VK_G
-```
+Open **Debug > Control Panel** or press **Cmd/Ctrl+D**. The Debugger tab has source code or disassembly in the center. The tree on the left has CPU, PPU, APU, input, stack, and RAM values. Memory and breakpoints are below the code.
 
-Key names are the `VK_` constants from `java.awt.event.KeyEvent`. `rewind.seconds=0` switches
-rewind off and `audio.latency-ms` trades delay for robustness — those two have no menu item, so the
-file is where they live.
+![Control Panel with the debugger stopped at a breakpoint](shots/control-panel.png)
 
-## What works
+You can set conditional breakpoints and read or write watchpoints. The toolbar has Run, Break, Step Into, Step Over, and Step Frame. Register and memory values changed since the previous stop are highlighted.
 
-**Emulation**
+![PPU values, a conditional breakpoint, and a write watchpoint](shots/debugger-details.png)
 
-- Cycle-accurate CPU and dot-by-dot PPU, including the obscure corners: sprite 0 hit, the sprite
-  overflow bug, open bus decay, OAM decay, colour emphasis.
-- The complete APU — both pulses, triangle, noise and DMC — mixed through the hardware's nonlinear
-  ladders and played at 44.1 kHz.
-- NTSC and PAL, as the genuinely different machines they are. Most ROM headers don't say which
-  region they want, so **Machine > Region** lets you insist. A game running 17% fast with the
-  music too high is a game that wants PAL.
-- Twelve mappers: NROM, MMC1, UxROM, CNROM, MMC3 (0–4), AxROM (7), MMC2 and MMC4 (9, 10),
-  Color Dreams (11), GxROM (66), Camerica (71) and MMC1A (155). The MMC1 covers the big boards
-  too: 512KB SUROM, and the 16KB and 32KB save RAM of SOROM and SXROM.
-- iNES and NES 2.0 headers, including the ROM and RAM sizes, the submapper and the region the
-  latter carries.
+For ca65/ld65 projects, attach the build's `.dbg` file in the Source tab. The debugger follows the current source line, shows symbols, and allows breakpoints in the source margin. These breakpoints keep their location when the cartridge switches PRG banks. Build with `ca65 -g` and `ld65 --dbgfile game.dbg` to generate the file.
 
-**Video**
+![Source view and RAM variables from a dino-god build](shots/source-debugger.png)
 
-- Twelve palettes — the NESdev set, ten measured NTSC palettes from firebrandx.com, and one for
-  PAL. **Settings > Palette...** previews them live over the running game.
-- An NTSC filter that rebuilds and decodes the chip's composite signal instead of using a palette,
-  which is where colour bleed, dot crawl and artefact colours come from. Three strengths, NTSC
-  machines only.
-- A CRT filter that draws the scanline gaps a 240-line picture left on a 480-line tube, with
-  optional curved glass. Works on either region; needs at least 2x scale.
-- **Settings > Show Overscan** draws all 240 scanlines instead of the 224 a television showed —
-  the scroll seams and partial tiles games hide behind the bezel. `--full-frame` in headless mode.
-- Turning **Settings > Show Left Edge** off drops the leftmost 8 columns — the stripe of backdrop
-  colour the chip leaves where a scrolling game tells it not to draw the background there, as in
-  Super Mario Bros. 3. `--hide-left-edge` in headless mode.
-- **Settings > TV Aspect Ratio** draws the pixels the shape a television drew them — 8:7 on NTSC,
-  about 1.386:1 on PAL — rather than the square ones the framebuffer holds. Applies to the window
-  and to screenshots, whichever filter is on. `--tv-aspect` in headless mode.
-- Whole-number scaling from 1x to 4x, with free window resizing on top, and full screen on `F11`.
-- Screenshots to a PNG beside the ROM (`F12`) or straight to the clipboard (`Cmd/Ctrl+F12`).
-- A status bar showing the real frame rate and any setting that isn't the default one.
+The other Control Panel tabs show:
 
-**Sound**
+| Tab | Information |
+| :-- | :-- |
+| Nametables, Sprites, Palette, Tiles | PPU graphics data and on-screen use |
+| Sound | Notes, levels, and waveforms for all five channels |
+| Cartridge | Active PRG/CHR banks and mapper state |
+| Pads | Held buttons and controller reads |
+| Usage | CPU time used in recent frames |
+| Events | Register writes and interrupts by scanline and dot |
 
-- Dynamic rate control: the emulator watches how full the sound card is and resamples by up to half
-  a percent to hold it there, so the two clocks drifting apart stops being a click every few
-  minutes. The latency is `audio.latency-ms` in the config file, 60 ms by default.
-- Volume in five steps under **Machine > Volume**, or `Cmd/Ctrl+=` and `Cmd/Ctrl+-`. Mute is
-  separate and remembers the volume to come back to.
-- Per-channel mute under **Debug > Sound Channels** — untick four of the five and hear what the
-  fifth is playing. It happens at the mixer, so the game can't tell.
+![Sound debugger with channel notes, keyboards, and waveforms](shots/sound-viewer.png)
 
-**Playing**
-
-- Save states, nine slots per game, `F5`/`F7` for the current slot.
-- Battery saves in the standard `.sav` format, interchangeable with FCEUX, Nestopia and Mesen.
-- Rewind — hold Backspace and the game runs backwards, sound and all, up to thirty seconds. Let go
-  and it plays on from there.
-- Fast forward at 2x, 4x, 8x or unlimited.
-- Pause when the window goes behind another application, under **Machine > Pause in Background**.
-  The emulator's own windows don't count, so the control panel keeps the game running.
-- Two players on one keyboard, both pads rebindable from **Settings > Controller...**.
-- Movie recording and playback, from the Machine menu. A movie stores the buttons rather than the
-  video — both pads of them — so it is a few kilobytes a minute and replays byte for byte.
-- Zipped ROMs open straight from **File > Open...** — nothing is unpacked to disk, and a zip
-  holding more than one cartridge asks which.
-- IPS patches via **File > Open with Patch...**. The patch is applied in memory, the ROM on disk
-  is never touched, and a patched game keeps its own saves.
-- The last ten games you opened, under **File > Open Recent**. One opened with a patch comes back
-  patched, and anything whose file has moved is greyed out rather than dropped.
-- Game Genie codes from the **Hacks** menu. Nothing is patched — the codes answer the bus the way
-  the real device did.
-
-**Hacks**
-
-- **Unlimited Sprites** draws the sprites the hardware would have dropped, so busy scanlines stop
-  flickering. The game can't tell.
-- **Overclock** gives the game extra idle scanlines each frame, which fixes the slowdown in games
-  like Super Mario Bros. 3 and Gradius. The picture and the music are unaffected.
-
-**Debugging**
-
-- One **Control Panel** (`Cmd/Ctrl+D`), with every instrument as a tab and every switch on the
-  machine in a column down the side — pause, speed, layers, volume, the five sound channels, the
-  overclock, the Game Genie and the tracer, without going back to the game window for any of them.
-- Three lines across the top of it say what the machine is doing without being asked: the frame
-  rate and the cartridge, `$2000` and `$2001` decoded with the scroll and the sprite-0 flag, and
-  which of the five voices are playing, how the frame counter is sequencing them, what is being
-  held on the pad and how often the game is reading it. Read at a frame boundary, so it is one
-  moment rather than a dozen.
-- A debugger with breakpoints (conditions included, like `$C000 if a == $10`), read/write
-  watchpoints, single stepping, a syntax-highlighted disassembly, the stack, and a hex view of
-  the address space. A ca65/ld65 build can be attached from the Source tab with **Attach Debug Info…**: build
-  objects with `ca65 -g`, link with `ld65 --dbgfile game.dbg`, and the debugger follows the current
-  source line in a syntax-highlighted 6502 editor, shows symbols in the disassembly, and sets
-  breakpoints from the source gutter. Those breakpoints name bytes of PRG ROM rather than
-  `$8000`-style windows, so they follow the right code through bank switches. If the checkout moved
-  since the build, **Find Sources…** accepts either the project or a source folder and also finds
-  generated includes in nearby build folders. Hovering a symbol shows its linked value and source
-  definition; Cmd/Ctrl-click or **Go to Definition** follows it, including ca65's `@` local labels.
-- CPU tracing in nestest's log format, so a trace diffs cleanly against other emulators.
-- **Start Music...** writes what the sound chip plays to a MIDI file — one part per pulse and one
-  for the triangle, read a frame at a time so nothing in the melody is missed, with the tempo set so
-  a tick lasts exactly one frame of the console it came from.
-- A nametable view with the scroll window drawn over all four tables, a sprite view of all
-  sixty-four with their attributes, a palette view over the thirty-two bytes the whole picture is
-  coloured through, and a tile view of character memory.
-- A sound view of all five voices: the period the game wrote, the frequency it comes out as on the
-  console it's running on, and the nearest note with how far off it is in cents — plus a peak meter
-  each and a scope of the mix. **Split the voices** draws each one on its own in its own colour, so
-  a square wave, a triangle, a hiss and a sampled drum are told apart at a glance.
-- A piano keyboard per voice under it, A0 to C8, which is exactly the range the chip has. **All
-  three on one keyboard** puts them together, where an octave, a third and a semitone of accidental
-  dissonance stop looking alike.
-- A cartridge view: which bank is in each 8K window of program ROM and each 1K window of character
-  memory, the mirroring, whether the save RAM is switched on, and MMC3's scanline counter.
-- A pads view: both controllers drawn with whatever is held lit up, and a strip of the last two
-  seconds marked wherever a frame went by without the game reading `$4016`. That is a main loop
-  that overran its frame — the stutter **Overclock** undoes — and nothing else in the program can
-  see it.
-- An events view: one frame drawn as the beam draws it, with a mark wherever the game touched the
-  hardware — every PPU and audio register, every mapper write, and both interrupts — at the
-  scanline and dot it happened on. A write to `$2005` is a scroll; the same write a hundred lines
-  down is a status bar split, and nothing else can tell you which it was.
-- Two of those answer *where*: point at a palette and the screen dims everywhere it is not drawing,
-  and the sprite view guesses which sprites are one character so a click outlines all of them.
-- Toggles to hide the background or the sprite layer, and to take any of the five sound channels
-  out of the mixer (`--mute pulse1,dmc` headless).
-
-Not there yet: a gamepad, the Zapper, and Dendy (run as PAL for now).
+The Control Panel also has CPU tracing and MIDI export.
 
 ## Screenshots
 
-### Super Mario Bros. (mapper 0, NROM)
+| | |
+| :-- | :-- |
+| ![Nametable viewer](shots/nametable-viewer.png) | ![Sprite viewer](shots/oam-viewer.png) |
+| **Nametables** | **Sprites** |
+| ![Palette viewer](shots/palette-viewer.png) | ![Tile viewer](shots/chr-viewer.png) |
+| **Palette** | **Tiles** |
 
-![Super Mario Bros.](shots/game-smb.png)
+More images: [NTSC filter](shots/filter-ntsc.png), [CRT filter](shots/filter-crt.png), [palette picker](shots/palette-dialog.png), [debugger](shots/debugger.png), [controller settings](shots/controller-dialog.png), and [Game Genie](shots/genie-dialog.png).
 
-### Tetris (mapper 1, MMC1)
+## Files and settings
 
-![Tetris](shots/game-tetris.png)
+Save states (`.mn1`–`.mn9`), battery saves (`.sav`), and movies (`.mnm`) are stored beside the ROM. For a ROM inside a ZIP, they are stored beside the ZIP and named after the ROM. Save states only work in MyNES. Raw `.sav` files can be used in other emulators.
 
-### The NTSC filter
+Settings are stored in `~/.mynes/config.properties`. Most can also be changed in the menus. For example:
 
-The picture decoded from the chip's composite signal rather than looked up in a palette, which is
-where the colour fringes on the logo come from.
-
-![The NTSC filter](shots/filter-ntsc.png)
-
-### The CRT filter
-
-The palette's colours laid down between the lines of a 480-line raster, with the curved glass on.
-
-![The CRT filter with curved glass](shots/filter-crt.png)
-
-### The palette picker
-
-Every selection applies the moment it is made, so the game behind the dialog is the comparison.
-
-![The palette dialog over a running game](shots/palette-dialog.png)
-
-### The control panel
-
-Every instrument as a tab, every switch on the machine beside them, and three lines at the top
-saying what it is doing — stopped on a conditional breakpoint at Super Mario Bros.' NMI handler.
-
-![The control panel](shots/control-panel.png)
-
-### The nametable viewer
-
-All four nametables, with the scroll window drawn over the two Super Mario Bros. is scrolling
-between.
-
-![The nametable viewer](shots/nametable-viewer.png)
-
-### The OAM viewer
-
-All sixty-four sprites with their attributes, over the screen they are on. **Group** works out which
-of them are one thing — the ones that touch and that OAM connects, by palette or by neighbouring
-slot — so a click takes the whole character and the screen outlines it, and **On screen only** drops
-the ones the game has parked out of sight.
-
-![The OAM viewer](shots/oam-viewer.png)
-
-### The palette viewer
-
-All eight palettes, with the byte on top of the colour it names. Hovering a cell says what it is --
-including the four that are not memory at all, but the background palette's own first colour -- and
-takes the light off everywhere on the screen that palette is not drawing.
-
-![The palette viewer](shots/palette-viewer.png)
-
-### The CHR viewer
-
-A bank of Super Mario Bros. 3's character ROM.
-
-![The CHR viewer](shots/chr-viewer.png)
-
-### The debugger
-
-Stopped on a conditional breakpoint at Super Mario Bros.' NMI handler.
-
-![The debugger stopped on a breakpoint](shots/debugger.png)
-
-### The controller dialog
-
-![The controller dialog](shots/controller-dialog.png)
-
-### The Game Genie dialog
-
-Each code is listed with what it actually does.
-
-![The Game Genie dialog](shots/genie-dialog.png)
-
-## Saving
-
-Three kinds of file, all kept beside the ROM — or beside the zip, named after the cartridge inside
-it:
-
-- **Save states** (`GAME.mn1`–`GAME.mn9`) freeze the whole console. They load in MyNES and
-  nowhere else — no emulator's save states load anywhere else, there is no standard for them.
-- **Battery saves** (`GAME.sav`) are the cartridge's own save RAM, in the raw format every major
-  emulator reads and writes, so saves move between emulators freely. A save state is a bookmark;
-  a `.sav` is fifty hours of Zelda, so it is written via a temporary file and a crash cannot take
-  both the old save and the new.
-- **Movies** (`.mnm`) record where the run started and what was pressed on each frame. The
-  emulator is deterministic, so playback is exact, and a movie recorded from power on needs
-  nothing but the same ROM.
+```properties
+rewind.seconds=30
+audio.latency-ms=60
+```
 
 ## Headless mode
 
-The emulator also runs without a window, for scripts, CI, or a machine with no display:
+MyNES can run without a window:
 
 ```sh
-java -jar mynes.jar --headless --rom smb.nes --frames 900 \
+java -jar mynes.jar --headless --rom game.nes --frames 900 \
     --input 60/40x3:start --screenshot 300,last --audio
 ```
 
-That runs 900 frames, presses Start a few times to get past the title screen — most games never
-start on their own — and writes screenshots, a WAV and a JSON report describing the run: a frame
-hash, colour counts, how many frames showed motion. `--expect-not-blank`, `--expect-audio` and
-`--expect-motion` turn those into pass/fail exit codes for scripting, and because runs are
-deterministic, a frame hash makes a fair regression test.
+Headless mode can save screenshots, audio, and a JSON report. `--expect-not-blank` and `--expect-audio` make checks return a failing exit code. `--interactive` provides a JSON command interface for stepping, breakpoints, watchpoints, traces, rewind, and movies. See `--headless --help` for all options.
 
-There is also `--interactive`, a JSON-per-line REPL with the whole debugger in it: breakpoints,
-watchpoints, stepping, disassembly, tracing, rewind, movies, and a log of every register write with
-the scanline it landed on.
+## Build
 
-`--headless --help` lists every option, and [CLAUDE.md](CLAUDE.md) covers it all in detail. That
-file is written for coding agents, but it is just as accurate for people.
-
-## Building
-
-You need Java 25 and Maven. Nothing else.
+Java 25 and Maven are required:
 
 ```sh
 git clone https://github.com/dimiro1/mynes.git
 cd mynes
-mvn -q compile exec:exec        # run straight from source
+mvn -q compile exec:exec
 ```
 
-Or build the jar once and run that:
+Run `mvn test` for the test suite. [CLAUDE.md](CLAUDE.md) has the design notes and detailed test results. Dendy mode is not supported yet.
 
-```sh
-mvn -B package -DskipTests
-java -jar mynes-desktop/target/mynes.jar
-```
-
-Six Maven modules — `mynes-core` (the console, no dependencies), `mynes-patch` (IPS),
-`mynes-archive` (zips), `mynes-midi` (MIDI files), `mynes-headless` (the command line) and
-`mynes-desktop` (the window) — flattened into one jar. The same `mvn package` also produces the
-release zip. A seventh, `mynes-shots`, takes the pictures above and is not in the jar.
-
-## Tests
-
-```sh
-mvn test
-```
-
-- **CPU:** all 256 opcodes against the
-  [Tom Harte SingleStepTests](https://github.com/SingleStepTests/65x02), checking the end state
-  and the exact per-cycle bus traffic, plus nestest. `./scripts/download-6502-tests.sh` fetches
-  the full 10,000-cases-per-opcode set if you want it.
-- **PPU and APU:** blargg's test ROM suites. Everything passes except `oam_stress`, which
-  blargg's own readme says passes on only one of four random alignments on real hardware.
-- **MMC3:** five of `mmc3-test-2`'s six ROMs, including the exact-dot scanline timing one. The
-  sixth tests the revision A counter, and no real chip passes both.
-- **The whole console:** [AccuracyCoin](https://github.com/100thCoin/AccuracyCoin) scores 140 of
-  its 141 tests.
-
-![AccuracyCoin's results table](shots/accuracycoin.png)
-
-## Licence
+## License
 
 MIT. See [LICENSE](LICENSE).

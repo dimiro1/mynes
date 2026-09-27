@@ -26,199 +26,207 @@ import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.IntConsumer;
 
-/**
- * The breakpoints and the watchpoints, listed and editable.
- * <p>
- * Two tables over one entry field, because they are the same gesture on different questions: stop
- * when the machine <em>reaches</em> here, and stop when it <em>touches</em> here.
- * <p>
- * The tables are this window's own copy rather than a view onto the debugger, the same way the Debug
- * menu's ticks are the front end's copy of the PPU's layer switches. Anything that changes a point
- * is posted onto the emulation thread and the tables are updated from here, which is what lets the
- * debugger itself have no synchronisation in it at all.
- * <p>
- * Each table has a Remove button and answers the Delete key, where the old lists answered only a
- * double click -- a gesture nothing on the screen suggested. The double click still works.
- */
+/** Breakpoints and watchpoints in one list, with a single place to add or remove them. */
 final class PointsPanel extends JPanel {
-    /**
-     * What this panel can ask for. One interface rather than five constructor parameters, and it is
-     * five because putting a point down and picking one up stopped being the same gesture: a
-     * breakpoint typed over an existing one now sets its condition rather than removing it.
-     */
     interface Points {
         void breakAt(int address, Condition condition);
-
         void watchAt(int address, Debugger.Access on);
-
         void removeBreakpoint(int address);
-
         void removePRGBreakpoint(int offset);
-
         void removeWatchpoint(int address);
-
         void clear();
     }
 
-    /**
-     * One line of either table: an address, and whatever else there is to say about it -- the
-     * condition on a breakpoint, the direction of a watchpoint.
-     */
-    private record Point(int key, String place, String detail) {
+    private enum Kind {
+        BREAKPOINT("Breakpoint"), SOURCE("Source"), WATCHPOINT("Watchpoint");
+
+        private final String label;
+
+        Kind(final String label) {
+            this.label = label;
+        }
     }
 
-    private final PointTable breakpoints;
-    private final PointTable sourceBreakpoints;
-    private final PointTable watchpoints;
+    private record Point(Kind kind, int key, String place, String detail) {
+    }
 
+    private final Model model = new Model();
+    private final JTable table = new JTable(model);
     private final JTextField entry = new JTextField(12);
     private final JComboBox<Debugger.Access> facing = new JComboBox<>(Debugger.Access.values());
     private final JLabel complaint = new JLabel(" ");
+    private final JButton remove = new JButton("Remove");
+    private final Points points;
 
     PointsPanel(final Points points) {
-        super(new MigLayout(
-                "insets 4 8 8 8, fill, wrap 1, gapy 4",
-                "[grow,fill]",
-                "[][grow,fill][][grow,fill][][grow,fill][]4[][]"));
+        super(new MigLayout("insets 4 8 8 8, fill, wrap 1, gapy 4", "[grow,fill]",
+                "[][grow,fill][][][]"));
+        this.points = points;
 
-        breakpoints = new PointTable("Breakpoints", "Condition", points::removeBreakpoint);
-        sourceBreakpoints = new PointTable(
-                "Source Breakpoints", "Source", points::removePRGBreakpoint);
-        watchpoints = new PointTable("Watchpoints", "On", points::removeWatchpoint);
+        table.setFont(Theme.MONOSPACED);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setFillsViewportHeight(true);
+        table.getTableHeader().setReorderingAllowed(false);
+        table.setDefaultRenderer(Object.class, new Renderer());
+        table.setRowHeight(table.getFontMetrics(Theme.MONOSPACED).getHeight() + 4);
+        table.setPreferredScrollableViewportSize(new Dimension(420, table.getRowHeight() * 5));
+
+        var metrics = table.getFontMetrics(Theme.MONOSPACED);
+        var columns = table.getColumnModel();
+        columns.getColumn(0).setMinWidth(metrics.stringWidth("Watchpoint") + 16);
+        columns.getColumn(0).setMaxWidth(metrics.stringWidth("Watchpoint") + 16);
+        columns.getColumn(1).setMinWidth(metrics.stringWidth("PRG+$00000") + 16);
+        columns.getColumn(1).setMaxWidth(metrics.stringWidth("PRG+$00000") + 16);
+
+        remove.putClientProperty(FlatClientProperties.BUTTON_TYPE,
+                FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+        remove.setToolTipText("Remove the selected point (Delete)");
+        remove.setEnabled(false);
+        remove.addActionListener(event -> removeSelected());
+        table.getSelectionModel().addListSelectionListener(
+                event -> remove.setEnabled(table.getSelectedRow() >= 0));
+        table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke("DELETE"), "remove");
+        table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke("BACK_SPACE"), "remove");
+        table.getActionMap().put("remove", new AbstractAction() {
+            @Override
+            public void actionPerformed(final ActionEvent event) {
+                removeSelected();
+            }
+        });
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(final MouseEvent event) {
+                if (event.getClickCount() == 2) {
+                    removeSelected();
+                }
+            }
+        });
 
         entry.setFont(Theme.MONOSPACED);
-        entry.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "$C000, or $C000 if a == $10");
-        entry.setToolTipText("An address to break at or watch, in hex. Enter sets a breakpoint.");
-
+        entry.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT,
+                "$C000, or $C000 if a == $10");
+        entry.setToolTipText("Address in hex. Enter sets a breakpoint.");
         facing.setSelectedItem(Debugger.Access.WRITE);
         facing.setToolTipText("Which way a watchpoint looks");
-
         complaint.setForeground(Theme.breakpoint());
         complaint.setFont(complaint.getFont().deriveFont(Font.PLAIN, 11f));
 
         var addBreak = new JButton("Break at");
         var addWatch = new JButton("Watch");
         var clear = new JButton("Clear all");
-
+        DebuggerIcons.set(addBreak, DebuggerIcons.Symbol.POINT);
+        DebuggerIcons.set(addWatch, DebuggerIcons.Symbol.WATCH);
+        DebuggerIcons.set(remove, DebuggerIcons.Symbol.REMOVE);
+        DebuggerIcons.set(clear, DebuggerIcons.Symbol.CLEAR);
         addBreak.setToolTipText("Stop before the instruction at this address");
         addWatch.setToolTipText("Stop after an instruction touches this address");
 
         var breakTyped = (Runnable) () -> withEntry(typed ->
                 points.breakAt(typed.address(), typed.condition()));
-
-        addBreak.addActionListener(e -> breakTyped.run());
-        entry.addActionListener(e -> breakTyped.run());
-
-        addWatch.addActionListener(e -> withEntry(typed -> {
+        addBreak.addActionListener(event -> breakTyped.run());
+        entry.addActionListener(event -> breakTyped.run());
+        addWatch.addActionListener(event -> withEntry(typed -> {
             if (typed.condition() != null) {
                 throw new IllegalArgumentException("a watchpoint takes no condition.");
             }
-
             points.watchAt(typed.address(), (Debugger.Access) facing.getSelectedItem());
         }));
+        clear.addActionListener(event -> points.clear());
 
-        clear.addActionListener(e -> points.clear());
-
-        // Two short rows rather than one long one. A button that is given less than its text asks
-        // for is drawn with an ellipsis, and a row of five in a pane somebody has dragged narrow is
-        // exactly how "Break at" became "Br...".
+        var header = new JPanel(new MigLayout("insets 0", "[]push[]", "[]"));
+        header.add(Theme.heading("Points"));
+        header.add(remove);
         var entryRow = new JPanel(new MigLayout("insets 0, gap 4", "[grow,fill][]", ""));
         entryRow.add(entry);
         entryRow.add(addBreak);
-
         var watchRow = new JPanel(new MigLayout("insets 0, gap 4", "[][]push[]", ""));
         watchRow.add(facing);
         watchRow.add(addWatch);
         watchRow.add(clear);
 
-        add(breakpoints.header);
-        add(breakpoints.scroll, "grow, hmin 60");
-        add(sourceBreakpoints.header, "gaptop 8");
-        add(sourceBreakpoints.scroll, "grow, hmin 44");
-        add(watchpoints.header, "gaptop 8");
-        add(watchpoints.scroll, "grow, hmin 60");
+        var scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        add(header);
+        add(scroll, "grow, hmin 70");
         add(entryRow, "growx");
         add(watchRow, "growx");
         add(complaint, "growx");
     }
 
-    /**
-     * Never narrower than the widest row wants, which is what keeps the split pane from handing this
-     * panel a width its buttons cannot be drawn in.
-     */
     @Override
     public Dimension getMinimumSize() {
-        return new Dimension(getPreferredSize().width, 220);
+        return new Dimension(420, 170);
     }
 
-    /**
-     * Replaces both tables with what the debugger actually holds, which is the only thing that
-     * keeps this window's copy honest after a clear or a load.
-     */
     void show(
             final Set<Integer> breaks,
             final Map<Integer, Condition> conditions,
             final Set<Integer> prgBreaks,
             final SourceProgram source,
             final Map<Integer, Debugger.Access> watches) {
-
-        var breakRows = new ArrayList<Point>(breaks.size());
-
-        for (var address : breaks) {
+        var selected = selected();
+        var rows = new ArrayList<Point>(breaks.size() + prgBreaks.size() + watches.size());
+        breaks.stream().sorted().forEach(address -> {
             var condition = conditions.get(address);
-
-            breakRows.add(new Point(
-                    address,
-                    String.format("$%04X", address),
+            rows.add(new Point(Kind.BREAKPOINT, address, String.format("$%04X", address),
                     condition == null ? "" : "if " + condition.text()));
-        }
-
-        var sourceRows = new ArrayList<Point>(prgBreaks.size());
-
-        for (var offset : prgBreaks) {
+        });
+        prgBreaks.stream().sorted().forEach(offset -> {
             var line = source == null ? null : source.lineForBreakpoint(offset);
-
-            sourceRows.add(new Point(
-                    offset,
-                    String.format("PRG+$%05X", offset),
+            rows.add(new Point(Kind.SOURCE, offset, String.format("PRG+$%05X", offset),
                     line == null ? "" : line.location()));
+        });
+        watches.entrySet().stream().sorted(Comparator.comparingInt(Map.Entry::getKey))
+                .forEach(watch -> rows.add(new Point(Kind.WATCHPOINT, watch.getKey(),
+                        String.format("$%04X", watch.getKey()), watch.getValue().id())));
+
+        model.rows = List.copyOf(rows);
+        model.fireTableDataChanged();
+        if (selected != null) {
+            for (var index = 0; index < rows.size(); index++) {
+                var point = rows.get(index);
+                if (point.kind() == selected.kind() && point.key() == selected.key()) {
+                    table.setRowSelectionInterval(index, index);
+                    break;
+                }
+            }
         }
-
-        var watchRows = new ArrayList<Point>(watches.size());
-
-        watches.forEach((address, on) -> watchRows.add(new Point(
-                address, String.format("$%04X", address), on.id())));
-
-        breakpoints.show(breakRows);
-        sourceBreakpoints.show(sourceRows);
-        watchpoints.show(watchRows);
     }
 
-    // ================================================================================== internals
+    private Point selected() {
+        var index = table.getSelectedRow();
+        return index < 0 || index >= model.rows.size() ? null : model.rows.get(index);
+    }
 
-    /**
-     * What was typed into the one text field: an address, and optionally a condition after
-     * {@code if}.
-     */
+    private void removeSelected() {
+        var selected = selected();
+        if (selected == null) {
+            return;
+        }
+        switch (selected.kind()) {
+            case BREAKPOINT -> points.removeBreakpoint(selected.key());
+            case SOURCE -> points.removePRGBreakpoint(selected.key());
+            case WATCHPOINT -> points.removeWatchpoint(selected.key());
+        }
+    }
+
     private void withEntry(final Consumer<Addresses.Entry> action) {
         var text = entry.getText().trim();
-
         if (text.isEmpty()) {
             return;
         }
-
-        // Says what is wrong rather than shrugging. A condition that could not be read used to be a
-        // silently ignored button press, which on a debugger is the worst possible answer: the
-        // point looks set and the machine never stops.
         try {
             action.accept(Addresses.parseEntry(text));
-
             entry.setText("");
             complaint.setText(" ");
         } catch (IllegalArgumentException e) {
@@ -227,145 +235,51 @@ final class PointsPanel extends JPanel {
         }
     }
 
-    /**
-     * One kind of point as a table: the addresses in one column and what there is to say about
-     * each in the other, with a heading and a Remove button above it.
-     */
-    private static final class PointTable {
-        final JPanel header;
-        final JScrollPane scroll;
+    private static final class Model extends AbstractTableModel {
+        private List<Point> rows = List.of();
 
-        private final Model model = new Model();
-        private final JTable table = new JTable(model);
-        private final JButton remove = new JButton("Remove");
-        private final String detailName;
-
-        PointTable(final String title, final String detailName, final IntConsumer onRemove) {
-            this.detailName = detailName;
-
-            table.setFont(Theme.MONOSPACED);
-            table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-            table.setShowGrid(false);
-            table.setIntercellSpacing(new Dimension(0, 0));
-            table.setFillsViewportHeight(true);
-            table.getTableHeader().setReorderingAllowed(false);
-            table.setDefaultRenderer(Object.class, new Renderer());
-            table.setRowHeight(table.getFontMetrics(Theme.MONOSPACED).getHeight() + 4);
-            table.setPreferredScrollableViewportSize(new Dimension(200, table.getRowHeight() * 4));
-
-            // As wide as the header's word or the cells' address, whichever the font makes wider:
-            // the header is in the look and feel's font and the cells in the monospaced one.
-            var metrics = table.getFontMetrics(Theme.MONOSPACED);
-            var headerMetrics = table.getTableHeader().getFontMetrics(table.getTableHeader().getFont());
-            var addressWidth = Math.max(
-                    metrics.stringWidth("PRG+$00000"), headerMetrics.stringWidth("Address"))
-                    + metrics.charWidth('0') * 2;
-
-            table.getColumnModel().getColumn(0).setMinWidth(addressWidth);
-            table.getColumnModel().getColumn(0).setMaxWidth(addressWidth);
-
-            remove.putClientProperty(FlatClientProperties.BUTTON_TYPE,
-                    FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
-            remove.setToolTipText("Take the selected one out (Delete)");
-            remove.setEnabled(false);
-            remove.addActionListener(e -> removeSelected(onRemove));
-
-            table.getSelectionModel().addListSelectionListener(
-                    e -> remove.setEnabled(table.getSelectedRow() >= 0));
-
-            table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
-                    .put(KeyStroke.getKeyStroke("DELETE"), "remove");
-            table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
-                    .put(KeyStroke.getKeyStroke("BACK_SPACE"), "remove");
-            table.getActionMap().put("remove", new AbstractAction() {
-                @Override
-                public void actionPerformed(final ActionEvent e) {
-                    removeSelected(onRemove);
-                }
-            });
-
-            table.addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(final MouseEvent e) {
-                    if (e.getClickCount() == 2) {
-                        removeSelected(onRemove);
-                    }
-                }
-            });
-
-            header = new JPanel(new MigLayout("insets 0", "[]push[]", "[]"));
-            header.add(Theme.heading(title));
-            header.add(remove);
-
-            scroll = new JScrollPane(table);
-            scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        @Override
+        public int getRowCount() {
+            return rows.size();
         }
 
-        void show(final List<Point> rows) {
-            var selected = table.getSelectedRow();
-
-            model.rows = List.copyOf(rows);
-            model.fireTableDataChanged();
-
-            if (selected >= 0 && selected < rows.size()) {
-                table.setRowSelectionInterval(selected, selected);
-            }
+        @Override
+        public int getColumnCount() {
+            return 3;
         }
 
-        private void removeSelected(final IntConsumer onRemove) {
-            var row = table.getSelectedRow();
-
-            if (row >= 0 && row < model.rows.size()) {
-                onRemove.accept(model.rows.get(row).key());
-            }
+        @Override
+        public String getColumnName(final int column) {
+            return switch (column) {
+                case 0 -> "Type";
+                case 1 -> "Address";
+                default -> "Detail";
+            };
         }
 
-        private final class Model extends AbstractTableModel {
-            List<Point> rows = List.of();
-
-            @Override
-            public int getRowCount() {
-                return rows.size();
-            }
-
-            @Override
-            public int getColumnCount() {
-                return 2;
-            }
-
-            @Override
-            public String getColumnName(final int column) {
-                return column == 0 ? "Address" : detailName;
-            }
-
-            @Override
-            public Object getValueAt(final int row, final int column) {
-                var point = rows.get(row);
-
-                return column == 0 ? point.place() : point.detail();
-            }
+        @Override
+        public Object getValueAt(final int row, final int column) {
+            var point = rows.get(row);
+            return switch (column) {
+                case 0 -> point.kind().label;
+                case 1 -> point.place();
+                default -> point.detail();
+            };
         }
+    }
 
-        private static final class Renderer extends DefaultTableCellRenderer {
-            @Override
-            public Component getTableCellRendererComponent(
-                    final JTable table,
-                    final Object value,
-                    final boolean isSelected,
-                    final boolean focused,
-                    final int row,
-                    final int column) {
-
-                super.getTableCellRendererComponent(table, value, isSelected, false, row, column);
-
-                setFont(Theme.MONOSPACED);
-
-                if (!isSelected) {
-                    setForeground(column == 0 ? Theme.breakpoint() : Theme.foreground());
-                }
-
-                return this;
+    private static final class Renderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                final JTable table, final Object value, final boolean isSelected,
+                final boolean focused, final int row, final int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, false, row, column);
+            setFont(Theme.MONOSPACED);
+            if (!isSelected) {
+                setForeground(column == 0 ? Theme.muted()
+                        : column == 1 ? Theme.breakpoint() : Theme.foreground());
             }
+            return this;
         }
     }
 }

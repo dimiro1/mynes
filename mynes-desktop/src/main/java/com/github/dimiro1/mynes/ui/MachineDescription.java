@@ -8,19 +8,18 @@ import java.util.Locale;
 
 /**
  * What the window says about itself, in the three places it says anything: the title bar, the status
- * bar's activity, and the control panel's first line.
+ * bar's activity, and the control panel's status line.
  * <p>
  * <b>One sentence for three places.</b> {@link #state()} is written once and the three callers each
  * dress it differently -- the status bar shows it as it is, the title bar puts it in brackets in
- * lower case, and the dashboard drops it when it would only repeat the word already there. That is
+ * lower case, and the status line drops it when it would only repeat the word already there. That is
  * what keeps the window from describing the same machine three ways, which is what happened when
  * each of them worked it out for itself.
  * <p>
  * <b>None of this is the machine's.</b> Whether the loop is paused, what the frame rate has
  * measured, which cartridge somebody put in, whether a movie is going -- not one of them can be read
  * off a NES, which is why the control panel is handed its line written rather than working it out.
- * Whichever frame the machine has actually reached is on the line below, with the rest of what the
- * machine is doing.
+ * Machine details are in the debugger tree and the corresponding instrument tabs.
  * <p>
  * A record because it is a description rather than a describer: it holds no reference to the runner,
  * the cartridge or the machine, so one taken now and read later says what was true when it was
@@ -113,7 +112,7 @@ record MachineDescription(
     }
 
     /**
-     * The control panel's first line: how the machine is being run.
+     * The control panel's status line: how the machine is being run.
      */
     String dashboard() {
         var parts = new ArrayList<String>();
@@ -127,9 +126,7 @@ record MachineDescription(
         parts.add(region.label());
 
         if (cartridge != null) {
-            parts.add(String.format(
-                    "%s  (mapper %d, %dK+%dK)",
-                    cartridge, mapperNumber, prgBytes / 1024, chrBytes / 1024));
+            parts.add(cartridge);
         }
 
         var activity = state();

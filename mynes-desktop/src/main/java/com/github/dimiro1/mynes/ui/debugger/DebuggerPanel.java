@@ -68,16 +68,17 @@ public final class DebuggerPanel extends JPanel {
     private final DisassemblyPanel disassembly = new DisassemblyPanel(new Listing());
     private final SourcePanel source = new SourcePanel(new Sources());
     private final JTabbedPane code = new JTabbedPane();
-    private final RegistersPanel registers = new RegistersPanel();
-    private final StackPanel stack = new StackPanel();
     private final MemoryPanel memory = new MemoryPanel();
+    private final JTabbedPane details = new JTabbedPane();
+    private final RegistersPanel registers = new RegistersPanel(this::showInMemory);
     private final PointsPanel points;
 
     private final Dot dot = new Dot();
     private final JLabel status = new JLabel("Running");
     private final JButton run = new JButton("Run");
     private final JButton breakNow = new JButton("Break");
-    private final JButton step = new JButton("Step");
+    private final JButton step = new JButton("Step Into");
+    private final JButton stepOver = new JButton("Step Over");
     private final JButton stepFrame = new JButton("Step Frame");
 
     private NES nes;
@@ -146,41 +147,48 @@ public final class DebuggerPanel extends JPanel {
         run.addActionListener(e -> resume());
         breakNow.addActionListener(e -> runner.breakNow());
         step.addActionListener(e -> stepInstruction());
+        stepOver.addActionListener(e -> stepOver());
         stepFrame.addActionListener(e -> stepOneFrame());
 
         run.setToolTipText("Let the machine go (F5)");
         breakNow.setToolTipText("Stop at the next instruction");
         step.setToolTipText("Run one instruction (F10)");
+        stepOver.setToolTipText("Run through a JSR call (Shift+F10)");
         stepFrame.setToolTipText("Run to the end of the frame (F8)");
 
-        var controls = new JPanel(new MigLayout("insets 8 8 4 8, gap 4", "[][][][]push", ""));
+        DebuggerIcons.set(run, DebuggerIcons.Symbol.RUN);
+        DebuggerIcons.set(breakNow, DebuggerIcons.Symbol.BREAK);
+        DebuggerIcons.set(step, DebuggerIcons.Symbol.INTO);
+        DebuggerIcons.set(stepOver, DebuggerIcons.Symbol.OVER);
+        DebuggerIcons.set(stepFrame, DebuggerIcons.Symbol.FRAME);
+
+        var controls = new JPanel(new MigLayout("insets 8 8 4 8, gap 4", "[][][][][]push", ""));
         controls.add(run);
         controls.add(breakNow);
         controls.add(step);
+        controls.add(stepOver);
         controls.add(stepFrame);
 
-        var side = new JPanel(new MigLayout("insets 0, fill, wrap 1, gap 0", "[grow,fill]", "[][grow,fill]"));
-        side.add(registers);
-        side.add(stack, "hmin 120");
         code.addTab("Source", source);
         code.addTab("Disassembly", disassembly);
         code.setSelectedComponent(disassembly);
 
         // A split pane opens its divider at the first component's preferred width and never takes
         // one below its minimum, so both are said for every pane: the preferred sizes are where the
-        // dividers start, and the minimums are what stops a drag from squashing a panel into
-        // buttons drawn as "...". The points panel works its own minimum out from its rows.
-        code.setPreferredSize(new Dimension(700, 400));
+        // dividers start, and the minimums keep a drag from squashing controls into ellipses.
+        code.setPreferredSize(new Dimension(820, 460));
         code.setMinimumSize(new Dimension(380, 160));
-        side.setPreferredSize(new Dimension(400, 400));
-        side.setMinimumSize(new Dimension(300, 200));
-        memory.setPreferredSize(new Dimension(660, 280));
-        memory.setMinimumSize(new Dimension(420, 120));
-        points.setPreferredSize(new Dimension(Math.max(440, points.getMinimumSize().width), 280));
+        registers.setPreferredSize(new Dimension(280, 460));
+        registers.setMinimumSize(new Dimension(230, 160));
+        details.addTab("Memory", memory);
+        details.addTab("Breakpoints / Watchpoints", points);
+        details.setSelectedComponent(memory);
+        details.setPreferredSize(new Dimension(1100, 260));
+        details.setMinimumSize(new Dimension(
+                Math.max(440, points.getMinimumSize().width), 180));
 
-        var top = split(JSplitPane.HORIZONTAL_SPLIT, code, side, 0.7);
-        var bottom = split(JSplitPane.HORIZONTAL_SPLIT, memory, points, 0.62);
-        var body = split(JSplitPane.VERTICAL_SPLIT, top, bottom, 0.56);
+        var top = split(JSplitPane.HORIZONTAL_SPLIT, registers, code, 0.26);
+        var body = split(JSplitPane.VERTICAL_SPLIT, top, details, 0.64);
 
         var hints = new JLabel(hints());
         hints.setForeground(Theme.muted());
@@ -214,16 +222,17 @@ public final class DebuggerPanel extends JPanel {
      * The keys, spelled for the platform: {@code ⌘G} here, {@code Ctrl+G} elsewhere.
      */
     private static String hints() {
-        return "F5 Run   F10 Step   F8 Step Frame   F9 Breakpoint   " + MenuKey.text() + "G Go to";
+        return "F5 Run   F10 Into   Shift+F10 Over   F8 Frame   F9 Point   "
+                + MenuKey.text() + "G Go";
     }
 
     /**
-     * The same four actions as the buttons, on the keys a debugger usually puts them on.
+     * The same actions as the buttons, on the keys a debugger usually puts them on.
      * <p>
      * Handed to the window rather than taken, because a {@code WHEN_IN_FOCUSED_WINDOW} binding is
      * the window's to give: whatever ends up holding this view holds one input map, and a view that
-     * bound four function keys on it unasked would be one of several competing for them. There is
-     * only ever one debugger, which is why these four can be asked for at all.
+     * bound function keys on it unasked would be one of several competing for them. There is only
+     * ever one debugger, which is why these bindings can be asked for at all.
      * <p>
      * No clash with the game window's F5 and F7 quick save and load: those are bound on that window,
      * and the keyboard dispatcher ignores everything while it is not the active one -- which is also
@@ -234,6 +243,7 @@ public final class DebuggerPanel extends JPanel {
         bind(root, "F8", this::stepOneFrame);
         bind(root, "F9", this::toggleBreakpointAtSelection);
         bind(root, "F10", this::stepInstruction);
+        bind(root, "shift F10", this::stepOver);
     }
 
     private static void bind(final JRootPane root, final String key, final Runnable action) {
@@ -280,7 +290,8 @@ public final class DebuggerPanel extends JPanel {
         // but the listing and the memory are emptied rather than left to be believed.
         disassembly.clear();
         memory.clear();
-        stack.clear();
+        registers.reset();
+        registers.setSourceProgram(sourceProgram);
 
         // Read again rather than left alone, because a new cartridge is the one machine change that
         // clears them: the points are the user's while the game is the same game, and a list of
@@ -320,8 +331,7 @@ public final class DebuggerPanel extends JPanel {
         knownPRGBreakpoints = prgBreaks;
 
         disassembly.show(snapshot, breaks, conditions);
-        registers.show(snapshot.machine());
-        stack.show(snapshot);
+        registers.show(snapshot);
         memory.show(snapshot, stop);
         points.show(breaks, conditions, prgBreaks, sourceProgram,
                 Map.copyOf(debugger.watchpoints()));
@@ -338,6 +348,7 @@ public final class DebuggerPanel extends JPanel {
         run.setEnabled(true);
         breakNow.setEnabled(false);
         step.setEnabled(true);
+        stepOver.setEnabled(true);
         stepFrame.setEnabled(true);
 
         // The point Run to Here put down has done its job, wherever the machine actually stopped:
@@ -377,7 +388,6 @@ public final class DebuggerPanel extends JPanel {
         stoppedByUs = false;
 
         registers.stale();
-        stack.stale();
         source.clearMachine();
         status.setText("Running");
         dot.setColour(Theme.running());
@@ -385,6 +395,7 @@ public final class DebuggerPanel extends JPanel {
         run.setEnabled(false);
         breakNow.setEnabled(true);
         step.setEnabled(true);
+        stepOver.setEnabled(true);
         stepFrame.setEnabled(true);
     }
 
@@ -395,6 +406,20 @@ public final class DebuggerPanel extends JPanel {
      * and the only way out buried in the Machine menu, which looks exactly like a crash.
      */
     public void closing() {
+        // Run to Here and Step Over leave a temporary point while the machine is running. Closing
+        // the view must not let that hidden point freeze the game a moment later.
+        if (runToAddress >= 0) {
+            var address = runToAddress;
+            runToAddress = -1;
+            edit(() -> debugger.removeBreakpoint(address));
+        }
+
+        if (!runToPRG.isEmpty()) {
+            var offsets = runToPRG;
+            runToPRG = Set.of();
+            edit(() -> offsets.forEach(debugger::removePRGBreakpoint));
+        }
+
         if (stoppedByUs && runner != null) {
             resume();
         }
@@ -409,6 +434,17 @@ public final class DebuggerPanel extends JPanel {
 
     private void stepInstruction() {
         runner.stepInstruction();
+    }
+
+    private void stepOver() {
+        if (!stoppedByUs || snapshot == null || snapshot.read(snapshot.cpu().pc()) != 0x20) {
+            stepInstruction();
+            return;
+        }
+
+        // JSR is three bytes. A temporary breakpoint at the following instruction lets the
+        // subroutine (and any interrupts within it) finish while ordinary points can still stop us.
+        runTo((snapshot.cpu().pc() + 3) & 0xFFFF);
     }
 
     private void stepOneFrame() {
@@ -442,6 +478,20 @@ public final class DebuggerPanel extends JPanel {
         edit(() -> debugger.toggleBreakpoint(address));
     }
 
+    private void runTo(final int address) {
+        if (!knownBreakpoints.contains(address)) {
+            runToAddress = address;
+            edit(() -> debugger.addBreakpoint(address));
+        }
+
+        resume();
+    }
+
+    private void showInMemory(final int address) {
+        details.setSelectedComponent(memory);
+        memory.goTo(address);
+    }
+
     /**
      * What the listing asks for.
      */
@@ -457,17 +507,12 @@ public final class DebuggerPanel extends JPanel {
          */
         @Override
         public void runTo(final int address) {
-            if (!knownBreakpoints.contains(address)) {
-                runToAddress = address;
-                edit(() -> debugger.addBreakpoint(address));
-            }
-
-            resume();
+            DebuggerPanel.this.runTo(address);
         }
 
         @Override
         public void showInMemory(final int address) {
-            memory.goTo(address);
+            DebuggerPanel.this.showInMemory(address);
         }
     }
 
@@ -519,6 +564,7 @@ public final class DebuggerPanel extends JPanel {
             sourceRoot = null;
             source.detach();
             disassembly.setSourceProgram(null);
+            registers.setSourceProgram(null);
             code.setSelectedComponent(disassembly);
             edit(() -> offsets.forEach(debugger::removePRGBreakpoint));
 
@@ -582,6 +628,7 @@ public final class DebuggerPanel extends JPanel {
             sourceProgram = loaded;
             sourceRoot = resolvedRoot;
             disassembly.setSourceProgram(loaded);
+            registers.setSourceProgram(loaded);
 
             var line = snapshot == null ? null
                     : loaded.lineAt(snapshot.prgOffset(snapshot.cpu().pc()));
@@ -617,6 +664,7 @@ public final class DebuggerPanel extends JPanel {
             sourceProgram = loaded;
             sourceRoot = remembered.sourceRoot();
             disassembly.setSourceProgram(loaded);
+            registers.setSourceProgram(loaded);
             source.show(loaded, null, knownPRGBreakpoints);
             code.setSelectedComponent(source);
         } catch (IOException | RuntimeException e) {

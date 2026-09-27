@@ -601,13 +601,13 @@ fifty is wider than a laptop, so side by side is a layout that is right on a des
 bag -- and a default that depends on which screen somebody opened it on is not a default. The
 debugger is still the main view: it is the first tab and the one that is up.
 
-**Three lines across the top say what the machine is doing**, and they are the third way anything
-in the front end reads a machine. The viewers poll on a Swing timer without synchronising, which is
-right for them: what they read is *arrays*, and an element cannot tear. The debugger takes a
-`MachineSnapshot` inside the stop callback, which is exact, once, halted. Neither works for a
-dashboard, because what a dashboard shows is *scalars* -- $2000, the scroll, which voices are
-sounding -- and a dozen of those read one at a time off a running machine is not a stale picture
-but a machine that never existed. So `EmulatorRunner.setFrameObserver` builds an immutable
+**One status line below the tabs says how the emulator is running.** The debugger's expandable
+state tree holds the PPU, APU and input readings; the Sound, Pads and Cartridge tabs show their
+respective details. The viewers poll on a Swing timer without synchronising, which is right for
+them: what they read is *arrays*, and an element cannot tear. The debugger takes a
+`MachineSnapshot` inside the stop callback, which is exact, once, halted. Neither works for live
+scalar readings such as $2000, scroll and channel status: reading them one at a time off a running
+machine could combine two different frames. So `EmulatorRunner.setFrameObserver` builds an immutable
 `Readout` **on the emulation thread, at the frame boundary** where nothing is half written, every
 fifteenth frame, and `invokeLater`s it. It holds no reference to the machine, which is what makes
 looking at it later safe. The observer is null while the panel is put away -- the
@@ -664,7 +664,7 @@ that is a row of nothing. What the noise keeps is its **note, in the column besi
 costs no room and is where anybody reading that row would look; that column had been saying "no
 note" unconditionally, which was wrong for those 64 frames. The DMC could never have had either: its
 rate is a sample rate, and what pitch a sample comes out at is a fact about the bytes in it. **The
-note column and the dashboard both go through `pitch()`** rather than deciding for themselves, since
+note column and the debugger tree both go through `pitch()`** rather than deciding for themselves, since
 two places deciding which voices have a note is exactly how they came to disagree about `playing`
 once already.
 
@@ -767,7 +767,7 @@ to read the pad in. The frame number is what says so -- a call that is not one m
 one starts the window again rather than measuring across the gap, which is also what happens when
 the panel has been shut for a while. `Readout.Pads.NONE`, with no window at all, is what a readout
 taken anywhere but the emulation loop carries, and "nobody counted" is said differently from "no
-lag" wherever it shows: on the dashboard the count is simply absent.
+lag" wherever it shows: in the debugger tree the count is a dash.
 
 **The Usage tab answers *how much is left*, and the Pads tab beside it answers *when it ran out*.**
 A frame with no $4016 read in it is a game that has already missed its turn; a game sitting at
@@ -1215,7 +1215,7 @@ cartridge is 32KB of PRG and so unmirrored, which makes file offset `n` exactly 
 ## Taking the README's pictures
 
 `shots/` is not drawn by hand and is not edited by hand. One command retakes every picture in it
-but AccuracyCoin's results table:
+except the optional source debugger and AccuracyCoin's results table:
 
 ```sh
 mvn -q compile exec:exec@shots -Dshots.args="--roms DIR"
@@ -1224,8 +1224,14 @@ mvn -q compile exec:exec@shots -Dshots.args="--roms DIR"
 `DIR` holds the three cartridges named at the top of `Shots`, as No-Intro names them, and nothing
 in the repository does: the pictures are of real games, which is why the module can only run on a
 machine that has them. `--out` puts the pictures somewhere other than `shots/`, and
-`--only name,name` takes a few rather than all thirteen -- the names are the file names without
+`--only name,name` takes a few rather than all sixteen default pictures -- the names are the file names without
 `.png`, and an unknown one is refused with the list.
+
+`source-debugger.png` is captured from a ca65/ld65 build provided on the machine taking the
+picture. Pass `--source-rom FILE --source-dbg FILE --source-root DIR` as well as `--roms DIR` to
+include it. The current screenshot uses `dino-god.nes`, stops at its `main` label at `$8053`, and
+shows the `Variables` tree beside the source; the ROM, `.dbg` and source files are not shipped in
+this repository.
 
 Two kinds of picture come out of it, and they are taken two ways. A picture of the *game* -- the
 two filter pictures -- is a framebuffer, written by the headless `Session` with no window

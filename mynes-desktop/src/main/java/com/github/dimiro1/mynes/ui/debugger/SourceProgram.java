@@ -5,6 +5,7 @@ import org.jetbrains.annotations.Nullable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -100,6 +101,7 @@ final class SourceProgram {
     private final Map<Integer, List<Symbol>> symbolsAtAddress;
     private final Map<String, List<Symbol>> symbolsByName;
     private final Map<FileLine, Map<String, List<Symbol>>> symbolsBySourceLine;
+    private final List<Symbol> ramSymbols;
     private final List<String> warnings;
 
     SourceProgram(
@@ -120,6 +122,12 @@ final class SourceProgram {
         this.symbolsAtAddress = new LinkedHashMap<>();
         this.symbolsByName = new LinkedHashMap<>();
         this.symbolsBySourceLine = new LinkedHashMap<>();
+        this.ramSymbols = symbols.stream()
+                .filter(symbol -> symbol.kind().equals("lab") && symbol.prgOffset() == null)
+                .filter(symbol -> symbol.value() >= 0 && (symbol.value() < 0x2000
+                        || symbol.value() >= 0x6000 && symbol.value() < 0x8000))
+                .sorted(Comparator.comparing(Symbol::name).thenComparingInt(Symbol::value))
+                .toList();
 
         for (var file : files) {
             var byLine = ranges.getOrDefault(file.id(), Map.of());
@@ -188,6 +196,11 @@ final class SourceProgram {
 
     List<String> warnings() {
         return warnings;
+    }
+
+    /** Addressed RAM labels. ld65 does not record their size, so a viewer can show one byte only. */
+    List<Symbol> ramSymbols() {
+        return ramSymbols;
     }
 
     boolean hasMissingFiles() {

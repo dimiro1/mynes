@@ -39,9 +39,9 @@ class MachineDescriptionTests {
     }
 
     @Test
-    void theDashboardCarriesTheRateTheRegionAndTheBoard() {
+    void theStatusLineCarriesTheRateTheRegionAndTheCartridge() {
         assertEquals(
-                "Running  ·  60 fps  ·  NTSC  ·  Super Mario Bros.nes  (mapper 0, 32K+8K)",
+                "Running  ·  60 fps  ·  NTSC  ·  Super Mario Bros.nes",
                 playing().dashboard());
     }
 

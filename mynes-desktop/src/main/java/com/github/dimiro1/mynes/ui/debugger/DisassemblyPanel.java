@@ -126,10 +126,12 @@ final class DisassemblyPanel extends JPanel {
         // the PC, which is the gesture wanted after every excursion and should not need the box to
         // be emptied by hand.
         var go = new JButton("Go");
+        DebuggerIcons.set(go, DebuggerIcons.Symbol.GO);
         go.setToolTipText("List from that address");
         go.addActionListener(e -> listFromTyped());
 
         var toPC = new JButton("PC");
+        DebuggerIcons.set(toPC, DebuggerIcons.Symbol.TARGET);
         toPC.setToolTipText("Follow the PC again");
         toPC.addActionListener(e -> {
             from.setText("");

@@ -50,6 +50,8 @@ class Cc65DebugInfoTests {
         assertEquals(java.util.Set.of(1), program.lineAt(1).breakpointOffsets());
         assertEquals("reset", program.firstSymbolAt(0, 0xC000));
         assertEquals("loop", program.firstSymbolAt(1, 0xC001));
+        assertEquals(java.util.List.of("counter"),
+                program.ramSymbols().stream().map(SourceProgram.Symbol::name).toList());
         var reset = program.symbolAt(program.lineAt(1), "reset");
 
         assertNotNull(reset);
@@ -213,6 +215,8 @@ class Cc65DebugInfoTests {
                 span\tid=2,seg=0,start=3,size=3
                 sym\tid=0,name="reset",addrsize=absolute,val=0xC000,seg=0,type=lab,def=0,ref=1
                 sym\tid=1,name="loop",addrsize=absolute,val=0xC001,seg=0,type=lab
+                sym\tid=2,name="counter",addrsize=zeropage,val=0x0020,type=lab
+                sym\tid=3,name="limit",addrsize=zeropage,val=0x000A,type=equ
                 """.formatted(source, Files.size(source), rom);
     }
 

@@ -1,196 +1,400 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.github.dimiro1.mynes.APUChannel;
+import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.ui.Readout;
-import net.miginfocom.swing.MigLayout;
+import com.github.dimiro1.mynes.ui.sound.Notes;
 
-import javax.swing.JLabel;
+import javax.swing.BorderFactory;
+import javax.swing.JTree;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ToolTipManager;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeCellRenderer;
+import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
+import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Font;
-import java.util.ArrayList;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.function.IntConsumer;
 
 /**
- * The registers, and where the beam is.
- * <p>
- * The PPU's frame, scanline and dot are here rather than in a window of their own because "where is
- * the beam" is the actual question whenever a machine stops inside a raster effect, and having to
- * go and look it up somewhere else is the difference between using a debugger and fighting one. The
- * scroll registers are beside them for the same reason: a split that landed a line early is a
- * question about {@code v} and {@code t} at the moment of the stop, and nowhere else shows them.
- * <p>
- * The flags are eight chips rather than a string of letters, set ones in the accent and clear ones
- * faded, because "is carry set" is answered by a glance at a colour where it was answered by
- * finding a capital in {@code nv-bdIzc}.
- * <p>
- * Nothing here is live. While the machine runs these hold whatever the last stop said and go grey to
- * admit it, rather than flickering through thirty thousand values a second that nobody could read
- * and none of which would be self consistent.
+ * A compact, expandable view of the stopped machine's registers, stack and RAM symbols.
+ * CPU stays open by default. The other groups are available without taking room from the code
+ * listing until they are needed. Values come only from a stop snapshot or a frame readout; painting
+ * and expanding the tree never reads the running machine.
  */
 final class RegistersPanel extends JPanel {
-    private static final String FLAGS = "NV-BDIZC";
+    private static final String[] CPU = {"PC", "A", "X", "Y", "SP", "P", "flags", "cycles"};
+    private static final String[] PPU = {
+            "frame", "beam", "NMI", "background", "sprite layer", "render", "sprites",
+            "patterns", "nametable", "scroll", "sprite 0", "overflow", "v", "t",
+            "fine x", "latch"};
+    private static final String[] APU = {
+            "Pulse 1", "Pulse 2", "Triangle", "Noise", "DMC", "sequence", "IRQ"};
+    private static final String[] INPUT = {"pad 1", "pad 2", "lag"};
 
-    private final Map<String, JLabel> values = new LinkedHashMap<>();
-    private final List<JLabel> chips = new ArrayList<>(8);
-
-    /**
-     * The flags as they were last shown, so that {@link #stale()} can fade them without forgetting
-     * which were set.
-     */
-    private int p;
-
-    RegistersPanel() {
-        super(new MigLayout(
-                "insets 8 8 4 8, wrap 4, gapy 1",
-                "[right]10[grow,fill]16[right]10[grow,fill]",
-                ""));
-
-        add(Theme.heading("CPU"), "span 4, left, gapbottom 2");
-
-        row("PC");
-        row("SP");
-        row("A");
-        row("X");
-        row("Y");
-        row("P");
-
-        var flags = new JPanel(new MigLayout("insets 0, gap 3"));
-
-        for (var i = 0; i < FLAGS.length(); i++) {
-            var chip = new JLabel(String.valueOf(FLAGS.charAt(i)));
-
-            chip.setFont(Theme.MONOSPACED.deriveFont(Font.BOLD));
-            chip.setForeground(Theme.muted());
-            chip.setToolTipText(flagName(FLAGS.charAt(i)));
-            chips.add(chip);
-            flags.add(chip);
+    private final DefaultMutableTreeNode root = group("State");
+    private final DefaultMutableTreeNode cpu = group("CPU");
+    private final DefaultMutableTreeNode ppu = group("PPU");
+    private final DefaultMutableTreeNode apu = group("APU");
+    private final DefaultMutableTreeNode input = group("Input");
+    private final DefaultMutableTreeNode stack = group("Stack");
+    private final DefaultMutableTreeNode variables = group("Variables");
+    private final Map<String, DefaultMutableTreeNode> values = new LinkedHashMap<>();
+    private final DefaultTreeModel model = new DefaultTreeModel(root);
+    private final JTree tree = new JTree(model) {
+        @Override
+        public String getToolTipText(final MouseEvent event) {
+            var path = getPathForLocation(event.getX(), event.getY());
+            if (path == null) {
+                return null;
+            }
+            var item = (Item) ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject();
+            return item.tip;
         }
+    };
+    private final IntConsumer showInMemory;
 
-        row("cycles");
-        var caption = new JLabel("flags");
-        caption.setForeground(Theme.muted());
+    private MachineSnapshot snapshot;
+    private SourceProgram program;
+    private boolean stale = true;
 
-        add(caption, "right");
-        add(flags);
+    RegistersPanel(final IntConsumer showInMemory) {
+        super(new BorderLayout());
+        this.showInMemory = showInMemory;
 
-        add(Theme.heading("PPU"), "span 4, left, gaptop 10, gapbottom 2");
+        root.add(cpu);
+        root.add(ppu);
+        root.add(apu);
+        root.add(input);
+        root.add(stack);
+        root.add(variables);
+        for (var name : CPU) {
+            addValue(cpu, name);
+        }
+        for (var name : PPU) {
+            addValue(ppu, name);
+        }
+        for (var name : APU) {
+            addValue(apu, name);
+        }
+        for (var name : INPUT) {
+            addValue(input, name);
+        }
+        rebuildStack(null, null);
+        populateVariables();
 
-        row("frame");
-        row("beam");
-        row("v");
-        row("t");
-        row("fine x");
-        row("latch");
-        row("render");
-        row("sprites");
-        row("patterns", "span 3");
+        tree.setRootVisible(false);
+        tree.setShowsRootHandles(true);
+        tree.setFont(Theme.MONOSPACED);
+        tree.setRowHeight(tree.getFontMetrics(Theme.MONOSPACED).getHeight() + 5);
+        tree.setBackground(Theme.background());
+        tree.setCellRenderer(new Renderer());
+        tree.expandPath(new TreePath(cpu.getPath()));
+        ToolTipManager.sharedInstance().registerComponent(tree);
+        tree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(final MouseEvent event) {
+                if (event.getClickCount() != 2) {
+                    return;
+                }
+                var path = tree.getPathForLocation(event.getX(), event.getY());
+                if (path == null) {
+                    return;
+                }
+                var item = (Item) ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject();
+                if (item.address >= 0) {
+                    RegistersPanel.this.showInMemory.accept(item.address);
+                }
+            }
+        });
+
+        var scroll = new JScrollPane(tree);
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 8));
+        add(scroll, BorderLayout.CENTER);
     }
 
-    void show(final Readout machine) {
-        fill(machine);
-
-        values.values().forEach(label -> label.setForeground(Theme.foreground()));
-        paintChips(false);
+    void setSourceProgram(final SourceProgram program) {
+        this.program = program;
+        populateVariables();
+        refreshVariables(snapshot, null);
     }
 
-    /**
-     * The machine as it was at the end of a frame, while it goes on running.
-     * <p>
-     * Filled in but muted, which is the two things there are to say at once: these are real numbers
-     * rather than a blank panel, and they are not where the machine is <em>now</em> -- the frame row
-     * says which frame they are from. Before this the panel simply greyed out and kept whatever it
-     * had been showing when the machine last stopped, which was a picture of a moment that could be
-     * an hour old.
-     */
+    void show(final MachineSnapshot stopped) {
+        var previous = snapshot;
+        snapshot = stopped;
+        fill(stopped.machine(), previous == null ? null : previous.machine());
+        rebuildStack(stopped, previous);
+        refreshVariables(stopped, previous);
+        stale = false;
+        tree.repaint();
+    }
+
     void live(final Readout machine) {
-        fill(machine);
+        fill(machine, null);
         stale();
     }
 
-    private void fill(final Readout machine) {
-        var cpu = machine.cpu();
-
-        set("PC", String.format("$%04X", cpu.pc()), Integer.toString(cpu.pc()));
-        set("A", String.format("$%02X", cpu.a()), decimalAndBinary(cpu.a()));
-        set("X", String.format("$%02X", cpu.x()), decimalAndBinary(cpu.x()));
-        set("Y", String.format("$%02X", cpu.y()), decimalAndBinary(cpu.y()));
-        set("SP", String.format("$%02X", cpu.sp()), String.format("stack top $%04X", machine.stackTop()));
-        set("P", String.format("$%02X", cpu.p()), machine.flags());
-        set("cycles", Long.toString(cpu.cycles()), null);
-
-        set("frame", Long.toString(machine.frame()), null);
-        set("beam", machine.scanline() + " : " + machine.dot(), "scanline : dot");
-        set("v", String.format("$%04X", machine.v()), "the VRAM address the beam is reading");
-        set("t", String.format("$%04X", machine.t()), "the address the next frame starts from");
-        set("fine x", Integer.toString(machine.fineX()), null);
-        set("latch", machine.writeLatch() ? "second write" : "first write",
-                "which half of a $2005/$2006 pair comes next");
-        set("render", machine.renderingEnabled() ? "on" : "off", "$2001 bits 3 and 4");
-        set("patterns", String.format(
-                        "bg $%04X  spr $%04X",
-                        machine.backgroundPatternTable(), machine.spritePatternTable()),
-                "$2000 bits 4 and 3");
-        set("sprites", "8x" + machine.spriteHeight(), "$2000 bit 5");
-
-        p = cpu.p();
-    }
-
-    /**
-     * Greys everything, because what is shown is now what the machine looked like a while ago.
-     */
     void stale() {
-        values.values().forEach(label -> label.setForeground(Theme.muted()));
-        paintChips(true);
+        stale = true;
+        tree.repaint();
     }
 
-    private void paintChips(final boolean stale) {
-        for (var bit = 0; bit < 8; bit++) {
-            var set = (p & (0x80 >> bit)) != 0;
-            var chip = chips.get(bit);
+    void reset() {
+        snapshot = null;
+        values.values().forEach(node -> {
+            var item = (Item) node.getUserObject();
+            item.value = "--";
+            item.changed = false;
+            item.address = -1;
+            item.tip = null;
+            model.nodeChanged(node);
+        });
+        rebuildStack(null, null);
+        refreshVariables(null, null);
+        stale();
+    }
 
-            chip.setForeground(set && !stale ? Theme.accent() : Theme.dim());
-            chip.setFont(Theme.MONOSPACED.deriveFont(set ? Font.BOLD : Font.PLAIN));
+    private void fill(final Readout machine, final Readout previous) {
+        var now = readoutValues(machine);
+        var before = previous == null ? Map.<String, String>of() : readoutValues(previous);
+        now.forEach((name, value) -> {
+            var node = values.get(name);
+            var item = (Item) node.getUserObject();
+            item.value = value;
+            item.changed = tracksChange(name) && before.containsKey(name)
+                    && !before.get(name).equals(value);
+            item.address = switch (name) {
+                case "PC" -> machine.cpu().pc();
+                case "SP" -> machine.stackTop();
+                default -> -1;
+            };
+            var earlier = item.changed ? "was " + before.get(name) : null;
+            item.tip = item.address < 0 ? earlier
+                    : earlier == null ? "Double-click to show in Memory"
+                    : earlier + " · Double-click to show in Memory";
+            model.nodeChanged(node);
+        });
+    }
+
+    private static Map<String, String> readoutValues(final Readout machine) {
+        var out = new LinkedHashMap<String, String>();
+        var registers = machine.cpu();
+        out.put("PC", String.format("$%04X", registers.pc()));
+        out.put("A", String.format("$%02X", registers.a()));
+        out.put("X", String.format("$%02X", registers.x()));
+        out.put("Y", String.format("$%02X", registers.y()));
+        out.put("SP", String.format("$%02X", registers.sp()));
+        out.put("P", String.format("$%02X", registers.p()));
+        out.put("flags", machine.flags());
+        out.put("cycles", Long.toString(registers.cycles()));
+        out.put("frame", Long.toString(machine.frame()));
+        out.put("beam", machine.scanline() + " : " + machine.dot());
+        out.put("NMI", on(machine.control(), 0x80));
+        out.put("background", on(machine.mask(), 0x08));
+        out.put("sprite layer", on(machine.mask(), 0x10));
+        out.put("v", String.format("$%04X", machine.v()));
+        out.put("t", String.format("$%04X", machine.t()));
+        out.put("fine x", Integer.toString(machine.fineX()));
+        out.put("latch", machine.writeLatch() ? "second" : "first");
+        out.put("render", machine.renderingEnabled() ? "on" : "off");
+        out.put("sprites", "8x" + machine.spriteHeight());
+        out.put("patterns", String.format("bg $%04X  spr $%04X",
+                machine.backgroundPatternTable(), machine.spritePatternTable()));
+        out.put("nametable", String.format("$%04X", 0x2000 + (machine.control() & 3) * 0x400));
+        out.put("scroll", machine.scrollX() + ", " + machine.scrollY());
+        out.put("sprite 0", on(machine.status(), 0x40));
+        out.put("overflow", on(machine.status(), 0x20));
+        for (var channel : APUChannel.values()) {
+            var voice = machine.voice(channel);
+            var note = voice.playing() && voice.pitch() > 0 ? Notes.nameOf(voice.pitch()) : null;
+            out.put(channel.label(), on(machine.apuStatus(), 1 << channel.ordinal())
+                    + (note == null ? "" : "  " + note));
+        }
+        out.put("sequence", machine.fiveStep() ? "5-step" : "4-step");
+        var irq = new StringBuilder(machine.frameIRQInhibited() ? "inhibited" : "enabled");
+        if ((machine.apuStatus() & 0x40) != 0) {
+            irq.append("  frame pending");
+        }
+        if ((machine.apuStatus() & 0x80) != 0) {
+            irq.append("  DMC pending");
+        }
+        out.put("IRQ", irq.toString());
+        out.put("pad 1", buttons(machine.pad1()));
+        out.put("pad 2", buttons(machine.pad2()));
+        var pads = machine.pads();
+        out.put("lag", pads.frames() == 0 ? "—"
+                : pads.lagFrames() + " of " + pads.frames());
+        return out;
+    }
+
+    private static String on(final int register, final int bit) {
+        return (register & bit) != 0 ? "on" : "off";
+    }
+
+    private static String buttons(final int held) {
+        var names = new java.util.ArrayList<String>();
+        if ((held & Controller.BUTTON_LEFT) != 0) names.add("←");
+        if ((held & Controller.BUTTON_UP) != 0) names.add("↑");
+        if ((held & Controller.BUTTON_DOWN) != 0) names.add("↓");
+        if ((held & Controller.BUTTON_RIGHT) != 0) names.add("→");
+        if ((held & Controller.BUTTON_SELECT) != 0) names.add("Sel");
+        if ((held & Controller.BUTTON_START) != 0) names.add("Start");
+        if ((held & Controller.BUTTON_B) != 0) names.add("B");
+        if ((held & Controller.BUTTON_A) != 0) names.add("A");
+        return names.isEmpty() ? "—" : String.join(" ", names);
+    }
+
+    private static boolean tracksChange(final String name) {
+        return !name.equals("cycles") && !name.equals("frame") && !name.equals("beam");
+    }
+
+    private void rebuildStack(final MachineSnapshot stopped, final MachineSnapshot previous) {
+        var expanded = tree.isExpanded(new TreePath(stack.getPath()));
+        var bytes = stopped == null ? new int[0] : stopped.stack();
+        if (bytes.length > 0 && stack.getChildCount() == bytes.length
+                && ((Item) ((DefaultMutableTreeNode) stack.getChildAt(0))
+                        .getUserObject()).address == stopped.stackTop()) {
+            for (var index = 0; index < bytes.length; index++) {
+                var node = (DefaultMutableTreeNode) stack.getChildAt(index);
+                updateStackItem((Item) node.getUserObject(), previous, bytes, index);
+                model.nodeChanged(node);
+            }
+            return;
+        }
+        stack.removeAllChildren();
+        if (bytes.length == 0) {
+            stack.add(leaf("Empty", "", false, -1, null));
+        } else {
+            for (var index = 0; index < bytes.length; index++) {
+                var address = stopped.stackTop() + index;
+                var node = leaf(String.format("$%04X", address), "", false, address, null);
+                updateStackItem((Item) node.getUserObject(), previous, bytes, index);
+                stack.add(node);
+            }
+        }
+        model.nodeStructureChanged(stack);
+        if (expanded) {
+            tree.expandPath(new TreePath(stack.getPath()));
         }
     }
 
-    private void row(final String name) {
-        row(name, "");
+    private static void updateStackItem(
+            final Item item, final MachineSnapshot previous,
+            final int[] bytes, final int index) {
+        var word = index + 1 < bytes.length
+                ? String.format("  → $%04X", bytes[index] | bytes[index + 1] << 8) : "";
+        item.value = String.format("$%02X%s", bytes[index], word);
+        item.changed = previous != null && previous.read(item.address) != bytes[index];
+        item.tip = (item.changed
+                ? String.format("was $%02X · ", previous.read(item.address)) : "")
+                + "Double-click to show in Memory";
     }
 
-    private void row(final String name, final String constraints) {
-        var label = new JLabel(name);
-        var value = new JLabel("--");
-
-        label.setForeground(Theme.muted());
-        value.setFont(Theme.MONOSPACED);
-        values.put(name, value);
-
-        add(label);
-        add(value, constraints);
+    private void populateVariables() {
+        var expanded = tree.isExpanded(new TreePath(variables.getPath()));
+        variables.removeAllChildren();
+        if (program == null) {
+            variables.add(leaf("Attach an ld65 .dbg file", "", false, -1, null));
+        } else if (program.ramSymbols().isEmpty()) {
+            variables.add(leaf("No RAM symbols", "", false, -1, null));
+        } else {
+            for (var symbol : program.ramSymbols()) {
+                var address = symbol.value();
+                variables.add(leaf(symbol.name(),
+                        String.format("$%04X: --", address), false, address,
+                        "First byte at this RAM label; size is not recorded in .dbg"));
+            }
+        }
+        model.nodeStructureChanged(variables);
+        if (expanded) {
+            tree.expandPath(new TreePath(variables.getPath()));
+        }
     }
 
-    private void set(final String name, final String value, final String tooltip) {
-        var label = values.get(name);
-
-        label.setText(value);
-        label.setToolTipText(tooltip);
+    private void refreshVariables(final MachineSnapshot stopped, final MachineSnapshot previous) {
+        for (var index = 0; index < variables.getChildCount(); index++) {
+            var node = (DefaultMutableTreeNode) variables.getChildAt(index);
+            var item = (Item) node.getUserObject();
+            if (item.address < 0) {
+                continue;
+            }
+            var address = item.address;
+            var byteValue = stopped == null ? "--" : String.format("$%02X", stopped.read(address));
+            item.value = String.format("$%04X: %s", address, byteValue);
+            item.changed = stopped != null && previous != null
+                    && stopped.read(address) != previous.read(address);
+            var earlier = item.changed ? String.format("was $%02X · ", previous.read(address)) : "";
+            item.tip = earlier + "First byte at this RAM label; size is not recorded in .dbg"
+                    + " · Double-click to show in Memory";
+            model.nodeChanged(node);
+        }
     }
 
-    private static String decimalAndBinary(final int value) {
-        return String.format("%d  %%%8s", value, Integer.toBinaryString(value)).replace(' ', '0');
+    private void addValue(final DefaultMutableTreeNode parent, final String name) {
+        var node = leaf(name, "--", false, -1, null);
+        parent.add(node);
+        values.put(name, node);
     }
 
-    private static String flagName(final char flag) {
-        return switch (flag) {
-            case 'N' -> "negative";
-            case 'V' -> "overflow";
-            case 'B' -> "break";
-            case 'D' -> "decimal";
-            case 'I' -> "interrupt disable";
-            case 'Z' -> "zero";
-            case 'C' -> "carry";
-            default -> "unused";
-        };
+    private static DefaultMutableTreeNode group(final String name) {
+        return new DefaultMutableTreeNode(new Item(name, "", false, -1, null));
+    }
+
+    private static DefaultMutableTreeNode leaf(
+            final String name, final String value, final boolean changed,
+            final int address, final String tip) {
+        return new DefaultMutableTreeNode(new Item(name, value, changed, address, tip), false);
+    }
+
+    private static final class Item {
+        final String name;
+        String value;
+        boolean changed;
+        int address;
+        String tip;
+
+        Item(final String name, final String value, final boolean changed,
+             final int address, final String tip) {
+            this.name = name;
+            this.value = value;
+            this.changed = changed;
+            this.address = address;
+            this.tip = tip;
+        }
+
+        @Override
+        public String toString() {
+            return value.isEmpty() ? name : name + "   " + value;
+        }
+    }
+
+    private final class Renderer extends DefaultTreeCellRenderer {
+        Renderer() {
+            setLeafIcon(null);
+            setOpenIcon(null);
+            setClosedIcon(null);
+        }
+
+        @Override
+        public Component getTreeCellRendererComponent(
+                final JTree tree, final Object value, final boolean selected,
+                final boolean expanded, final boolean leaf, final int row, final boolean focused) {
+            super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focused);
+            var item = (Item) ((DefaultMutableTreeNode) value).getUserObject();
+            setFont(leaf ? Theme.MONOSPACED : Theme.MONOSPACED.deriveFont(Font.BOLD));
+            if (!selected) {
+                setForeground(stale ? Theme.muted()
+                        : item.changed ? Theme.changed() : Theme.foreground());
+            }
+            return this;
+        }
     }
 }

@@ -26,6 +26,7 @@ import com.github.dimiro1.mynes.ui.debugger.DebuggerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.NametableViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.OAMViewerPanel;
 import com.github.dimiro1.mynes.ui.ppuviewer.PaletteViewerPanel;
+import com.github.dimiro1.mynes.ui.sound.SoundPanel;
 import com.github.dimiro1.mynes.video.FilterStrength;
 import com.github.dimiro1.mynes.video.Crop;
 import com.github.dimiro1.mynes.video.VideoFilter;
@@ -40,9 +41,14 @@ import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JTable;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
+import javax.swing.JTree;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import javax.swing.event.MenuEvent;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreePath;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Container;
@@ -61,6 +67,7 @@ import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Properties;
@@ -77,9 +84,8 @@ import java.util.Set;
  * menus, an instrument through its constructor -- and nothing reaches into a private field, so a
  * refactor that breaks this breaks it at compile time.
  * <p>
- * The five debug views are panels rather than windows now, and are photographed twice over: once
- * each in a window with nothing else in it, because what the README is showing is what the
- * instrument draws, and once all together in the control panel they are really tabs of.
+ * The debug views are panels rather than windows now. The camera shows selected views on their
+ * own and the debugger inside the control panel that holds them all.
  * <p>
  * The machine behind every picture is put at its frame by the headless {@link Session}, which is
  * deterministic, so the same command takes the same pictures. The game window is the one thing that
@@ -144,6 +150,7 @@ public final class Shots {
      */
     private static final int SMB_NMI = 0x8082;
     private static final String SMB_PLAYING = "[$0770] == 1";
+    private static final int DINO_MAIN = 0x8053;
 
     private static final List<String> GENIE_CODES = List.of("SXIOPO", "AVPAZLGV", "GOSSIP");
 
@@ -193,6 +200,9 @@ public final class Shots {
     private final Path out;
     private final Path copies;
     private final Set<String> only;
+    private final @Nullable Path sourceRom;
+    private final @Nullable Path sourceDebug;
+    private final @Nullable Path sourceRoot;
     private final Robot robot;
 
     private @Nullable GameUIFrame game;
@@ -203,12 +213,17 @@ public final class Shots {
      */
     private @Nullable String loaded;
 
-    private Shots(final Path roms, final Path out, final Path home, final Set<String> only)
+    private Shots(final Path roms, final Path out, final Path home, final Set<String> only,
+                  final @Nullable Path sourceRom, final @Nullable Path sourceDebug,
+                  final @Nullable Path sourceRoot)
             throws Exception {
         this.roms = roms;
         this.out = out;
         this.copies = Files.createDirectories(home.resolve("roms"));
         this.only = only;
+        this.sourceRom = sourceRom;
+        this.sourceDebug = sourceDebug;
+        this.sourceRoot = sourceRoot;
         this.robot = new Robot();
     }
 
@@ -216,14 +231,21 @@ public final class Shots {
         Path roms = null;
         var out = DEFAULT_OUT;
         Set<String> only = Set.of();
+        Path sourceRom = null;
+        Path sourceDebug = null;
+        Path sourceRoot = null;
 
         for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--roms" -> roms = Path.of(args[++i]);
                 case "--out" -> out = Path.of(args[++i]);
                 case "--only" -> only = Set.of(args[++i].split(","));
+                case "--source-rom" -> sourceRom = Path.of(args[++i]);
+                case "--source-dbg" -> sourceDebug = Path.of(args[++i]);
+                case "--source-root" -> sourceRoot = Path.of(args[++i]);
                 default -> {
-                    System.err.println("usage: --roms DIR [--out DIR] [--only name,name]");
+                    System.err.println("usage: --roms DIR [--out DIR] [--only name,name]"
+                            + " [--source-rom FILE --source-dbg FILE --source-root DIR]");
                     System.exit(2);
                 }
             }
@@ -242,7 +264,7 @@ public final class Shots {
 
         FlatLightLaf.setup();
 
-        var shots = new Shots(roms, out, home, only);
+        var shots = new Shots(roms, out, home, only, sourceRom, sourceDebug, sourceRoot);
 
         try {
             shots.takeAll();
@@ -271,7 +293,12 @@ public final class Shots {
         pictures.put("oam-viewer", this::oamViewer);
         pictures.put("palette-viewer", this::paletteViewer);
         pictures.put("chr-viewer", this::chrViewer);
+        pictures.put("sound-viewer", this::soundViewer);
         pictures.put("debugger", this::debugger);
+        pictures.put("debugger-details", this::debuggerDetails);
+        if (sourceRom != null && sourceDebug != null && sourceRoot != null) {
+            pictures.put("source-debugger", this::sourceDebugger);
+        }
         pictures.put("control-panel", this::controlPanel);
 
         // The game window last, and Super Mario Bros. 3 last of those: the dialogs are photographed
@@ -365,7 +392,7 @@ public final class Shots {
     /**
      * The nametables, in a window with nothing else in it.
      * <p>
-     * The five debug views are tabs of the control panel now, and this is what one of them draws
+     * The debug views are tabs of the control panel now, and this is what one of them draws
      * with the split, the tabs and the controls column taken away -- which is what the README is
      * showing. The whole panel gets a picture of its own below.
      */
@@ -434,12 +461,50 @@ public final class Shots {
                 () -> new CHRViewerPanel(played.cart(), nes.getPPU(), palette));
     }
 
+    /** A frame of actual mixed sound, with the channel traces taken from the same frame. */
+    private void soundViewer() throws Exception {
+        var nes = play(SMB, SMB_INPUT, SMB_FRAME).session().nes();
+        var ppu = nes.getPPU();
+        var frame = ppu.getFrame();
+
+        // Session drains its own frames for its audio report. Clock one more directly so the
+        // scope receives the mixed samples that the desktop's sound card would have drained.
+        do {
+            nes.tick();
+        } while (ppu.getFrame() == frame);
+
+        var drained = new short[2048];
+        var count = nes.getAPU().drainSamples(drained);
+        var readout = Readout.of(
+                nes,
+                Arrays.copyOf(drained, count),
+                voiceTraces(nes),
+                Readout.Pads.NONE,
+                Readout.Events.NONE,
+                Usage.Snapshot.NONE);
+
+        instrument("Sound", "sound-viewer", () -> {
+            var view = new SoundPanel();
+            view.show(readout);
+            find(view, JCheckBox.class, "Split the voices").doClick();
+            return view;
+        });
+    }
+
     /**
      * A real stop rather than a posed one: the breakpoint is set on a running machine and the
      * machine is played until it fires, which is what fills the listing, the registers and the
      * points panel with the truth.
      */
     private void debugger() throws Exception {
+        debuggerShot("debugger", false);
+    }
+
+    private void debuggerDetails() throws Exception {
+        debuggerShot("debugger-details", true);
+    }
+
+    private void debuggerShot(final String name, final boolean details) throws Exception {
         var stopped = stoppedInsideSuperMarioBros();
         var nes = stopped.played().session().nes();
         var view = new DebuggerPanel[1];
@@ -452,7 +517,18 @@ public final class Shots {
             return view[0];
         });
 
-        capture(frame, "debugger");
+        if (details) {
+            onEdt(() -> {
+                var tree = find(view[0], JTree.class, null);
+                var root = (DefaultMutableTreeNode) tree.getModel().getRoot();
+                tree.collapsePath(new TreePath(((DefaultMutableTreeNode) root.getChildAt(0)).getPath()));
+                tree.expandPath(new TreePath(((DefaultMutableTreeNode) root.getChildAt(1)).getPath()));
+                var tabs = tabWith(view[0], "Breakpoints / Watchpoints");
+                tabs.setSelectedIndex(tabs.indexOfTab("Breakpoints / Watchpoints"));
+            });
+        }
+
+        capture(frame, name);
 
         onEdt(() -> {
             // Told the machine is running before it goes, or it would try to resume through a
@@ -462,8 +538,72 @@ public final class Shots {
         });
     }
 
+    /** The Source tab over a real ca65/ld65 build supplied by the person taking the pictures. */
+    private void sourceDebugger() throws Exception {
+        var rom = sourceRom.toAbsolutePath();
+        var debugFile = sourceDebug.toAbsolutePath();
+        var root = sourceRoot.toAbsolutePath();
+        var cart = Cart.load(Files.readAllBytes(rom), rom.getFileName().toString());
+        var nes = new NES(cart);
+        var session = new Session(
+                nes,
+                Palettes.defaultPalette(nes.getRegion()).colours(),
+                VideoFilter.NONE,
+                FilterStrength.defaultStrength(),
+                false,
+                false,
+                null);
+
+        // This is the game's main label in the dino-god build. Stop there through the debugger so
+        // the highlighted source line and register values come from the same real machine state.
+        var debugger = session.debugger();
+        debugger.addBreakpoint(DINO_MAIN);
+        Debugger.Stop stop = null;
+        for (var frame = 0; frame < 120 && stop == null; frame++) {
+            stop = session.advanceFrame().stop();
+        }
+        if (stop == null) {
+            throw new IllegalStateException("the source breakpoint did not fire");
+        }
+
+        // The screenshot runner has a temporary home. Recording the association there exercises
+        // the same restore path as reopening this ROM in the desktop app.
+        var association = Path.of(System.getProperty("user.home"), ".mynes",
+                "debug-sources.properties");
+        Files.createDirectories(association.getParent());
+        var properties = new Properties();
+        properties.setProperty(cart.sha256() + ".debug", debugFile.toString());
+        properties.setProperty(cart.sha256() + ".root", root.toString());
+        try (var output = Files.newOutputStream(association)) {
+            properties.store(output, "Screenshot source association");
+        }
+
+        var runner = new EmulatorRunner(
+                nes, new ScreenComponent(), debugger, 0, AudioOutput.DEFAULT_LATENCY_MS);
+        var finalStop = stop;
+        var view = new DebuggerPanel[1];
+        var frame = instrument("Debugger", null, () -> {
+            view[0] = new DebuggerPanel(nes, runner, debugger, cart);
+            view[0].stopped(finalStop);
+            view[0].setPreferredSize(DEBUGGER_SIZE);
+            var tree = find(view[0], JTree.class, null);
+            var state = (DefaultMutableTreeNode) tree.getModel().getRoot();
+            tree.collapsePath(new TreePath(((DefaultMutableTreeNode) state.getChildAt(0)).getPath()));
+            tree.expandPath(new TreePath(((DefaultMutableTreeNode) state.getChildAt(5)).getPath()));
+            return view[0];
+        });
+
+        onEdt(() -> splitWith(view[0], JSplitPane.VERTICAL_SPLIT).setDividerLocation(0.77));
+
+        capture(frame, "source-debugger");
+        onEdt(() -> {
+            view[0].running();
+            frame.dispose();
+        });
+    }
+
     /**
-     * The window all five of them are really tabs of, with the debugger stopped where its own
+     * The window they are really tabs of, with the debugger stopped where its own
      * picture stops it -- which is the point of the thing: the code, a view of what the chip is
      * drawing from, and every lever on the machine, at once.
      */
@@ -498,8 +638,8 @@ public final class Shots {
 
             panel[0].stopped(stopped.stop());
 
-            // The two lines the emulation thread normally sends, and the one the window normally
-            // writes. Nothing is clocking this machine, so nobody would otherwise.
+            // The frame readout and status line normally arrive from the running window. Nothing
+            // is clocking this machine, so nobody would otherwise supply them.
             panel[0].describe(Readout.of(
                     nes,
                     new short[FRAME_SAMPLES],
@@ -507,8 +647,7 @@ public final class Shots {
                     Readout.Pads.NONE,
                     Readout.Events.NONE,
                     Usage.Snapshot.NONE));
-            panel[0].setRunning(
-                    "Stopped  ·  60 fps  ·  NTSC  ·  " + SMB + "  (mapper 0, 32K+8K)");
+            panel[0].setRunning("Paused  ·  NTSC  ·  " + SMB);
 
             show(panel[0]);
         });
@@ -548,6 +687,10 @@ public final class Shots {
             session.setButtons(played.schedule().buttonsAt(frame));
             stop = session.advanceFrame().stop();
         }
+
+        // A second kind of stop for the Points view, added after the breakpoint has fired so the
+        // photographed machine is still stopped at the NMI handler.
+        debugger.addWatchpoint(0x0770, Debugger.Access.WRITE);
 
         // Never started: the window only needs something to hand its buttons, and the machine is
         // already exactly where the picture wants it. So no ring and no sound card either -- the
@@ -873,10 +1016,43 @@ public final class Shots {
         return null;
     }
 
+    private static JTabbedPane tabWith(final Container root, final String title) {
+        if (root instanceof JTabbedPane pane && pane.indexOfTab(title) >= 0) {
+            return pane;
+        }
+        for (var child : root.getComponents()) {
+            if (child instanceof Container inner) {
+                try {
+                    return tabWith(inner, title);
+                } catch (IllegalArgumentException ignored) {
+                    // This branch has no tab by that name.
+                }
+            }
+        }
+        throw new IllegalArgumentException("no tab called " + title);
+    }
+
+    private static JSplitPane splitWith(final Container root, final int orientation) {
+        if (root instanceof JSplitPane pane && pane.getOrientation() == orientation) {
+            return pane;
+        }
+        for (var child : root.getComponents()) {
+            if (child instanceof Container inner) {
+                try {
+                    return splitWith(inner, orientation);
+                } catch (IllegalArgumentException ignored) {
+                    // This branch has no split in that direction.
+                }
+            }
+        }
+        throw new IllegalArgumentException("no split with orientation " + orientation);
+    }
+
     // ================================================================================== pictures
 
     private static void show(final Window window) {
-        window.setLocation(WINDOW_X, WINDOW_Y);
+        // Keep the wide control panel clear of the system's top-right floating controls.
+        window.setLocation(window.getWidth() > 1200 ? 10 : WINDOW_X, WINDOW_Y);
         window.setAlwaysOnTop(true);
         window.setVisible(true);
         window.toFront();

@@ -85,6 +85,7 @@ final class MemoryPanel extends JPanel {
     private final JLabel selected = new JLabel(" ");
 
     private MachineSnapshot snapshot;
+    private MachineSnapshot previousStop;
 
     /**
      * The address a watchpoint caught on the last stop, or -1.
@@ -92,7 +93,7 @@ final class MemoryPanel extends JPanel {
     private int hit = -1;
 
     MemoryPanel() {
-        super(new MigLayout("insets 4 8 8 8, fill", "[][grow][][][]", "[][grow,fill]"));
+        super(new MigLayout("insets 4 8 8 8, fill", "[][grow][][][]", "[][grow,fill][]"));
 
         table.setFont(Theme.MONOSPACED);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
@@ -119,6 +120,7 @@ final class MemoryPanel extends JPanel {
         address.addActionListener(e -> goToTyped());
 
         var go = new JButton("Go");
+        DebuggerIcons.set(go, DebuggerIcons.Symbol.GO);
         go.setToolTipText("Jump to that address");
         go.addActionListener(e -> goToTyped());
 
@@ -128,12 +130,16 @@ final class MemoryPanel extends JPanel {
         var scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
 
-        add(Theme.heading("Memory"));
-        add(selected, "gapleft 12");
+        var heading = Theme.heading("Memory");
+        heading.setToolTipText("Amber bytes changed since the previous stop");
+
+        add(heading);
+        add(new JLabel(""), "growx");
         add(address, "gapleft 8, gapright 4");
         add(go, "gapright 8");
         add(landmarks, "wrap");
-        add(scroll, "span 5, grow");
+        add(scroll, "span 5, grow, wrap");
+        add(selected, "span 5, growx");
 
         bindGoTo();
     }
@@ -143,6 +149,7 @@ final class MemoryPanel extends JPanel {
      * something, and a step should show them how it changed rather than send them back to $0000.
      */
     void show(final MachineSnapshot snapshot, final Debugger.Stop stop) {
+        previousStop = this.snapshot;
         this.snapshot = snapshot;
         this.hit = stop != null && stop.reason() == Debugger.Reason.WATCHPOINT ? stop.address() : -1;
 
@@ -152,6 +159,7 @@ final class MemoryPanel extends JPanel {
 
     void clear() {
         snapshot = null;
+        previousStop = null;
         hit = -1;
 
         model.setSnapshot(null);
@@ -271,8 +279,17 @@ final class MemoryPanel extends JPanel {
 
         var value = snapshot.read(at);
 
-        selected.setText(String.format("$%04X = $%02X  %d  %%%8s", at, value, value,
-                Integer.toBinaryString(value)).replace(' ', '0').replace("=0$", "= $"));
+        var binary = String.format("%8s", Integer.toBinaryString(value)).replace(' ', '0');
+        var earlier = previousStop != null && changedAt(at)
+                ? String.format("  was $%02X", previousStop.read(at)) : "";
+
+        selected.setText(String.format("$%04X = $%02X  %d  %%%s%s",
+                at, value, value, binary, earlier));
+    }
+
+    private boolean changedAt(final int address) {
+        return previousStop != null && snapshot != null
+                && previousStop.read(address) != snapshot.read(address);
     }
 
     private final class Renderer extends DefaultTableCellRenderer {
@@ -312,6 +329,9 @@ final class MemoryPanel extends JPanel {
             } else if (at == snapshot.stackTop() && at <= 0x01FF) {
                 setForeground(Theme.stackPointer());
                 setFont(Theme.MONOSPACED.deriveFont(Font.BOLD));
+            } else if (changedAt(at)) {
+                setForeground(Theme.changed());
+                setBackground(Theme.changedRow());
             } else if (at >= REGISTERS_FROM && at < REGISTERS_TO) {
                 setForeground(Theme.dim());
             } else if (snapshot.read(at) == 0) {
