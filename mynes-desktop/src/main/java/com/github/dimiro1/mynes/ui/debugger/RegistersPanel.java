@@ -39,6 +39,8 @@ final class RegistersPanel extends JPanel implements AppearanceAware {
     private static final String[] APU = {
             "Pulse 1", "Pulse 2", "Triangle", "Noise", "DMC", "sequence", "IRQ"};
     private static final String[] INPUT = {"pad 1", "pad 2", "lag"};
+    private static final int REGISTER_LABEL_WIDTH = longestLabel(CPU, PPU, APU, INPUT);
+    private static final int STACK_LABEL_WIDTH = "$FFFF".length();
 
     private final DefaultMutableTreeNode root = group("State");
     private final DefaultMutableTreeNode cpu = group("CPU");
@@ -65,6 +67,7 @@ final class RegistersPanel extends JPanel implements AppearanceAware {
 
     private MachineSnapshot snapshot;
     private SourceProgram program;
+    private int variableLabelWidth;
     private boolean stale = true;
 
     RegistersPanel(final IntConsumer showInMemory) {
@@ -264,6 +267,16 @@ final class RegistersPanel extends JPanel implements AppearanceAware {
         return !name.equals("cycles") && !name.equals("frame") && !name.equals("beam");
     }
 
+    private static int longestLabel(final String[]... groups) {
+        var longest = 0;
+        for (var group : groups) {
+            for (var label : group) {
+                longest = Math.max(longest, label.length());
+            }
+        }
+        return longest;
+    }
+
     private void rebuildStack(final MachineSnapshot stopped, final MachineSnapshot previous) {
         var expanded = tree.isExpanded(new TreePath(stack.getPath()));
         var bytes = stopped == null ? new int[0] : stopped.stack();
@@ -309,6 +322,8 @@ final class RegistersPanel extends JPanel implements AppearanceAware {
     private void populateVariables() {
         var expanded = tree.isExpanded(new TreePath(variables.getPath()));
         variables.removeAllChildren();
+        variableLabelWidth = program == null ? 0 : program.ramSymbols().stream()
+                .mapToInt(symbol -> symbol.name().length()).max().orElse(0);
         if (program == null) {
             variables.add(leaf("Attach an ld65 .dbg file", "", false, -1, null));
         } else if (program.ramSymbols().isEmpty()) {
@@ -396,8 +411,15 @@ final class RegistersPanel extends JPanel implements AppearanceAware {
                 final JTree tree, final Object value, final boolean selected,
                 final boolean expanded, final boolean leaf, final int row, final boolean focused) {
             super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focused);
-            var item = (Item) ((DefaultMutableTreeNode) value).getUserObject();
+            var node = (DefaultMutableTreeNode) value;
+            var item = (Item) node.getUserObject();
             setFont(leaf ? Theme.MONOSPACED : Theme.MONOSPACED.deriveFont(Font.BOLD));
+            if (leaf && !item.value.isEmpty()) {
+                var width = node.getParent() == variables ? variableLabelWidth
+                        : node.getParent() == stack ? STACK_LABEL_WIDTH : REGISTER_LABEL_WIDTH;
+                setText(item.name + " ".repeat(Math.max(0, width - item.name.length() + 2))
+                        + item.value);
+            }
             if (!selected) {
                 setForeground(stale ? Theme.muted()
                         : item.changed ? Theme.changed() : Theme.foreground());

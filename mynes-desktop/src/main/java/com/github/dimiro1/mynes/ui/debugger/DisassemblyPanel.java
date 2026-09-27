@@ -80,7 +80,8 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
      * @param current whether this is the instruction about to run.
      * @param ran     whether it is one that already has, which is what greys the history out.
      */
-    record Row(int address, String bytes, String text, @Nullable String symbol, boolean current, boolean ran) {
+    record Row(int address, String bytes, String text, @Nullable String symbol,
+               boolean current, boolean ran, int prgOffset) {
     }
 
     private final DefaultListModel<Row> model = new DefaultListModel<>();
@@ -99,6 +100,8 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
      * Where to list from, or -1 to follow the PC.
      */
     private int origin = -1;
+    private int rawOrigin = -1;
+    private byte[] rawPRG;
 
     /**
      * The row of the instruction about to run, or -1, and whether the view still has to be brought
@@ -172,7 +175,7 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
         var row = list.getSelectedValue();
 
         if (row != null) {
-            return row.address();
+            return row.prgOffset() >= 0 ? -1 : row.address();
         }
 
         return currentIndex >= 0 && currentIndex < model.getSize()
@@ -198,18 +201,30 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
     void clear() {
         snapshot = null;
         currentIndex = -1;
+        rawOrigin = -1;
+        rawPRG = null;
 
         model.clear();
     }
 
     /** Lists from an address selected in the source view. */
     void goTo(final int address) {
+        rawOrigin = -1;
         origin = address & 0xFFFF;
         from.setText(String.format("$%04X", origin));
+        from.setToolTipText("List from an address instead of the PC, in hex. Enter or Go.");
 
-        if (snapshot != null) {
-            rebuild();
-        }
+        rebuild();
+    }
+
+    /** Lists physical PRG bytes even when their bank is not currently mapped into CPU space. */
+    void goToPRG(final int offset, final byte[] prgROM) {
+        if (offset < 0 || offset >= prgROM.length) return;
+        rawOrigin = offset;
+        rawPRG = prgROM;
+        from.setText(String.format("PRG $%05X", offset));
+        from.setToolTipText("Static PRG disassembly. Relative targets assume a $8000 bank base.");
+        rebuild();
     }
 
     /**
@@ -236,6 +251,11 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
     private void rebuild() {
         model.clear();
         currentIndex = -1;
+
+        if (rawOrigin >= 0 && rawPRG != null) {
+            rebuildRawPRG();
+            return;
+        }
 
         if (snapshot == null) {
             return;
@@ -281,6 +301,32 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
         SwingUtilities.invokeLater(this::scrollToCurrent);
     }
 
+    private void rebuildRawPRG() {
+        var at = rawOrigin;
+        for (var i = 0; i < FROM_ADDRESS && at < rawPRG.length; i++) {
+            var opcode = rawPRG[at] & 0xFF;
+            var length = Disassembler.lengthOf(opcode);
+            var address = 0x8000 + (at & 0x7FFF);
+            if (at + length > rawPRG.length) {
+                model.addElement(new Row(address, String.format("%02X", opcode),
+                        String.format(".byte $%02X", opcode), null, false, false, at));
+                at++;
+                continue;
+            }
+            var bytes = new int[length];
+            for (var byteIndex = 0; byteIndex < length; byteIndex++) {
+                bytes[byteIndex] = rawPRG[at + byteIndex] & 0xFF;
+            }
+            var line = Disassembler.of(address, bytes);
+            model.addElement(new Row(address, line.hex(), line.text(),
+                    null, false, false, at));
+            at += length;
+        }
+        list.clearSelection();
+        scrollPending = true;
+        SwingUtilities.invokeLater(this::scrollToCurrent);
+    }
+
     /**
      * Puts the current row a third of the way down the view, so that some history is above it and
      * most of the view is what comes next.
@@ -311,10 +357,10 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
 
         try {
             origin = text.isEmpty() ? -1 : Addresses.parse(text);
+            rawOrigin = -1;
+            from.setToolTipText("List from an address instead of the PC, in hex. Enter or Go.");
 
-            if (snapshot != null) {
-                rebuild();
-            }
+            rebuild();
         } catch (IllegalArgumentException e) {
             from.selectAll();
         }
@@ -328,7 +374,7 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
             symbol = sourceProgram.firstSymbolAt(snapshot.prgOffset(address), address);
         }
 
-        return new Row(address, line.hex(), line.text(), symbol, current, ran);
+        return new Row(address, line.hex(), line.text(), symbol, current, ran, -1);
     }
 
     /**
@@ -355,6 +401,7 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
         list.setSelectedIndex(index);
 
         var row = model.get(index);
+        if (row.prgOffset() >= 0) return;
         var menu = new JPopupMenu();
 
         var toggle = new JMenuItem(breakpoints.contains(row.address())
@@ -403,7 +450,8 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
 
                 // A click in the gutter is the breakpoint gesture every debugger has; a double
                 // click anywhere on the row is the same thing for people who do not know that.
-                if (index >= 0 && (e.getClickCount() == 2 || e.getX() < Renderer.GUTTER)) {
+                if (index >= 0 && model.get(index).prgOffset() < 0
+                        && (e.getClickCount() == 2 || e.getX() < Renderer.GUTTER)) {
                     actions.toggleBreakpoint(model.get(index).address());
                 }
             }
@@ -496,7 +544,7 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
         private void paintGutter(final Graphics2D g2) {
             var middle = getHeight() / 2;
 
-            if (breakpoints.contains(row.address())) {
+            if (row.prgOffset() < 0 && breakpoints.contains(row.address())) {
                 g2.setColor(Theme.breakpoint());
 
                 // Hollow when there is a condition: a point that only sometimes stops.
@@ -526,7 +574,9 @@ final class DisassemblyPanel extends JPanel implements AppearanceAware {
             var x = GUTTER;
 
             g2.setColor(colour(Theme.muted()));
-            g2.drawString(String.format("$%04X", row.address()), x, baseline);
+            g2.drawString(row.prgOffset() < 0
+                    ? String.format("$%04X", row.address())
+                    : String.format("$%05X", row.prgOffset()), x, baseline);
             x += column * 7;
 
             g2.setColor(colour(Theme.dim()));

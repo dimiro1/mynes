@@ -4,6 +4,7 @@ import com.github.dimiro1.mynes.CPU;
 import com.github.dimiro1.mynes.MMU;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.PPU;
+import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.mappers.Mapper;
 
 import java.util.Collections;
@@ -36,7 +37,7 @@ public final class Debugger {
      * How far the machine is meant to get before it stops again.
      */
     private enum Stepping {
-        NONE, INSTRUCTION, FRAME
+        NONE, INSTRUCTION, FRAME, RASTER
     }
 
     /**
@@ -110,6 +111,9 @@ public final class Debugger {
          * One frame was asked for, and it has been drawn.
          */
         FRAME,
+
+        /** The beam reached the requested scanline and dot. */
+        RASTER,
 
         /**
          * Somebody pressed Break.
@@ -338,6 +342,10 @@ public final class Debugger {
 
     private Stepping stepping = Stepping.NONE;
     private boolean haltAsked;
+    private Region region;
+    private long rasterFrame;
+    private int rasterScanline;
+    private int rasterDot;
 
     /**
      * What a watched access left behind, for {@link #afterInstruction} to report once the
@@ -346,6 +354,7 @@ public final class Debugger {
     private int hitAddress = -1;
     private int hitValue = -1;
     private Access hitAccess;
+    private boolean editingRAM;
 
     // ============================================================================== being attached
 
@@ -357,6 +366,7 @@ public final class Debugger {
      * machine nobody is watching costs it nothing at all.
      */
     public void attach(final NES nes) {
+        region = nes.getRegion();
         memory = nes.getMemory();
         cpu = nes.getCPU();
         ppu = nes.getPPU();
@@ -445,6 +455,14 @@ public final class Debugger {
             return new Stop(Reason.STEP, pc, null, -1, -1, wasPC);
         }
 
+        if (stepping == Stepping.RASTER && ppu.getFrame() >= rasterFrame
+                && (ppu.getFrame() > rasterFrame
+                || ppu.getScanline() > rasterScanline
+                || ppu.getScanline() == rasterScanline && ppu.getDot() >= rasterDot)) {
+            stepping = Stepping.NONE;
+            return new Stop(Reason.RASTER, pc, null, -1, -1, wasPC);
+        }
+
         if (haltAsked) {
             haltAsked = false;
 
@@ -478,6 +496,7 @@ public final class Debugger {
      * really is in memory and can be looked at.
      */
     public void onWrite(final int address, final int value) {
+        if (editingRAM) return;
         if (watchWriteAt[address] && hitAddress < 0) {
             hitAddress = address;
             hitValue = value;
@@ -561,6 +580,38 @@ public final class Debugger {
     public void stepFrame() {
         stepping = Stepping.FRAME;
         haltAsked = false;
+    }
+
+    /** Stops at the first instruction boundary at or after a beam position, in this or the next frame. */
+    public void runToRaster(final int scanline, final int dot) {
+        if (scanline < 0 || scanline >= region.scanlinesPerFrame()
+                || dot < 0 || dot > 340) {
+            throw new IllegalArgumentException("raster position is outside the frame");
+        }
+        rasterScanline = scanline;
+        rasterDot = dot;
+        rasterFrame = ppu.getFrame();
+        if (ppu.getScanline() > scanline
+                || ppu.getScanline() == scanline && ppu.getDot() >= dot) {
+            rasterFrame++;
+        }
+        stepping = Stepping.RASTER;
+        haltAsked = false;
+    }
+
+    /** Changes RAM while stopped, without treating the debugger's own write as a watchpoint hit. */
+    public void writeRAM(final int address, final int value) {
+        var location = address & 0xFFFF;
+        if (location >= 0x2000 && (location < 0x6000 || location >= 0x8000)) {
+            throw new IllegalArgumentException("address is not RAM: $" +
+                    String.format("%04X", location));
+        }
+        editingRAM = true;
+        try {
+            memory.write(location, value);
+        } finally {
+            editingRAM = false;
+        }
     }
 
     // ============================================================================== the points

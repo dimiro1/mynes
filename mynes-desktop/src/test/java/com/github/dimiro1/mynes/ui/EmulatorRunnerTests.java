@@ -236,6 +236,21 @@ class EmulatorRunnerTests {
         assertTrue(nes.getPPU().getFrame() > before, "a frame should have gone by");
     }
 
+    @Test
+    void aRasterStopRunsFromAPausedMachine() throws Exception {
+        runner.start();
+        runner.breakNow();
+        waitForStop();
+
+        runner.runToRaster(40, 50);
+
+        assertEquals(Debugger.Reason.RASTER, waitForStop().reason());
+        var ppu = nes.getPPU();
+        assertTrue(ppu.getScanline() > 40
+                || ppu.getScanline() == 40 && ppu.getDot() >= 50);
+        assertTrue(runner.isPaused());
+    }
+
     /**
      * The spin at the end of the program jumps to itself, so a step taken from a breakpoint on it
      * lands straight back on the same breakpoint. Both stop the machine in the same place and the

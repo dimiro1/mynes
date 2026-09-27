@@ -12,6 +12,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JTabbedPane;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JTextField;
 import javax.swing.JTree;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreePath;
@@ -108,6 +111,20 @@ class DebuggerPanelTests {
     }
 
     @Test
+    void rasterButtonStaysBesideTheDotInput() {
+        var view = new DebuggerPanel(nes, runner, debugger);
+        Views.paint(view);
+
+        var button = buttonNamed(view, "Run to Raster");
+        assertNotNull(button);
+        var row = button.getParent();
+        assertEquals(6, row.getComponentCount());
+        var dot = (JTextField) row.getComponent(3);
+        assertTrue(button.getX() - (dot.getX() + dot.getWidth()) <= 16);
+        assertTrue(((JLabel) row.getComponent(5)).getToolTipText().contains("0–261"));
+    }
+
+    @Test
     void stateTreeAndDetailTabsKeepTheCodeViewUncluttered() {
         var view = new DebuggerPanel(nes, runner, debugger);
         view.stopped(new Debugger.Stop(Debugger.Reason.STEP, 0x8000, null, -1, -1, 0x8000));
@@ -157,6 +174,17 @@ class DebuggerPanelTests {
                 if (found != null) {
                     return found;
                 }
+            }
+        }
+        return null;
+    }
+
+    private static JButton buttonNamed(final Container parent, final String name) {
+        for (var child : parent.getComponents()) {
+            if (child instanceof JButton button && name.equals(button.getText())) return button;
+            if (child instanceof Container container) {
+                var found = buttonNamed(container, name);
+                if (found != null) return found;
             }
         }
         return null;

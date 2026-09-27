@@ -12,6 +12,7 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
@@ -25,6 +26,7 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.function.BiConsumer;
 
 /**
  * A hex view of the CPU's address space.
@@ -84,10 +86,12 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
     private final JScrollPane scroll = new JScrollPane(table);
     private final JTextField address = new JTextField(7);
     private final JComboBox<Landmark> landmarks = new JComboBox<>(Landmark.values());
+    private final JButton write = new JButton("Write...");
     private final JLabel selected = new JLabel(" ");
 
     private MachineSnapshot snapshot;
     private MachineSnapshot previousStop;
+    private BiConsumer<Integer, Integer> writer = (address, value) -> {};
 
     /**
      * The address a watchpoint caught on the last stop, or -1.
@@ -95,7 +99,7 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
     private int hit = -1;
 
     MemoryPanel() {
-        super(new MigLayout("insets 4 8 8 8, fill", "[][grow][][][]", "[][grow,fill][]"));
+        super(new MigLayout("insets 4 8 8 8, fill", "[][grow][][][][]", "[][grow,fill][]"));
 
         table.setFont(Theme.MONOSPACED);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
@@ -125,6 +129,9 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
         DebuggerIcons.set(go, DebuggerIcons.Symbol.GO);
         go.setToolTipText("Jump to that address");
         go.addActionListener(e -> goToTyped());
+        write.setToolTipText("Change the selected RAM byte while stopped");
+        write.setEnabled(false);
+        write.addActionListener(e -> writeSelectedByte());
 
         landmarks.setToolTipText("Somewhere worth looking");
         landmarks.addActionListener(e -> goToLandmark());
@@ -138,9 +145,10 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
         add(new JLabel(""), "growx");
         add(address, "gapleft 8, gapright 4");
         add(go, "gapright 8");
+        add(write, "gapright 8");
         add(landmarks, "wrap");
-        add(scroll, "span 5, grow, wrap");
-        add(selected, "span 5, growx");
+        add(scroll, "span 6, grow, wrap");
+        add(selected, "span 6, growx");
 
         bindGoTo();
     }
@@ -172,6 +180,14 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
 
         model.setSnapshot(null);
         selected.setText(" ");
+    }
+
+    void setWriter(final BiConsumer<Integer, Integer> writer) {
+        this.writer = writer;
+    }
+
+    void setStopped(final boolean stopped) {
+        write.setEnabled(stopped);
     }
 
     /**
@@ -293,6 +309,31 @@ final class MemoryPanel extends JPanel implements AppearanceAware {
 
         selected.setText(String.format("$%04X = $%02X  %d  %%%s%s",
                 at, value, value, binary, earlier));
+    }
+
+    private void writeSelectedByte() {
+        var row = table.getSelectedRow();
+        var column = table.getSelectedColumn();
+        var location = row < 0 || column < 0 ? -1 : MemoryModel.addressAt(row, column);
+        if (snapshot == null || location < 0
+                || location >= 0x2000 && (location < 0x6000 || location >= 0x8000)) {
+            JOptionPane.showMessageDialog(this, "Select a RAM byte first.",
+                    "Write RAM", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        var entered = JOptionPane.showInputDialog(this,
+                String.format("New value at $%04X (hex):", location),
+                String.format("$%02X", snapshot.read(location)));
+        if (entered == null) return;
+        try {
+            var word = entered.trim().replaceFirst("^(?:\\$|0[xX])", "");
+            var value = Integer.parseInt(word, 16);
+            if (value < 0 || value > 0xFF) throw new NumberFormatException();
+            writer.accept(location, value);
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, "Enter one hex byte from $00 to $FF.",
+                    "Write RAM", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private boolean changedAt(final int address) {

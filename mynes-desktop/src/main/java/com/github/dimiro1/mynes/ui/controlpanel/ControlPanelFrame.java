@@ -41,6 +41,7 @@ import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.function.Consumer;
+import java.util.Set;
 
 /**
  * One window over everything the machine is doing, and every lever on it.
@@ -191,6 +192,27 @@ public final class ControlPanelFrame extends JFrame {
             final Debugger points,
             final Cart cart,
             final NESPalette colours) {
+        setMachine(nes, runner, points, cart, colours, false);
+    }
+
+    public void setMachine(
+            final NES nes,
+            final EmulatorRunner runner,
+            final Debugger points,
+            final Cart cart,
+            final NESPalette colours,
+            final boolean reload) {
+        setMachine(nes, runner, points, cart, colours, reload, Set.copyOf(points.prgBreakpoints()));
+    }
+
+    public void setMachine(
+            final NES nes,
+            final EmulatorRunner runner,
+            final Debugger points,
+            final Cart cart,
+            final NESPalette colours,
+            final boolean reload,
+            final Set<Integer> previousPRGBreakpoints) {
 
         if (this.runner != null) {
             this.runner.setFrameObserver(null);
@@ -204,7 +226,7 @@ public final class ControlPanelFrame extends JFrame {
             debugger = new DebuggerPanel(nes, runner, points, cart);
             debugger.installKeysIn(getRootPane());
         } else {
-            debugger.setMachine(nes, runner, cart);
+            debugger.setMachine(nes, runner, cart, reload, previousPRGBreakpoints);
         }
 
         var inFront = tabs.getSelectedIndex();

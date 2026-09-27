@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Runs a debugger against a cartridge built here rather than against a real one, so that every
@@ -340,6 +341,16 @@ class DebuggerTests {
         debugger.run();
 
         assertFalse(debugger.isArmed());
+    }
+
+    @Test
+    void aDebuggerRamEditDoesNotTriggerItsOwnWatchpoint() {
+        debugger.addWatchpoint(0x20, Debugger.Access.WRITE);
+        debugger.writeRAM(0x20, 0x42);
+
+        assertEquals(0x42, nes.getMemory().peek(0x20));
+        assertNull(debugger.afterInstruction(nes.getCPU().getPC(), nes.getCPU().getPC()));
+        assertThrows(IllegalArgumentException.class, () -> debugger.writeRAM(0x2000, 0x42));
     }
 
     @Test

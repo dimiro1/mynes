@@ -190,6 +190,27 @@ final class SourcePanel extends JPanel implements AppearanceAware {
         scrollToCurrent();
     }
 
+    /** Opens a profile location without marking it as the current program counter. */
+    void navigateTo(final SourceProgram.SourceLine line) {
+        if (program == null || !program.files().contains(line.file())) return;
+        if (displayedFile != line.file()) {
+            choosingFile = true;
+            files.setSelectedItem(line.file());
+            choosingFile = false;
+            rebuild(line.file());
+        }
+        try {
+            var start = listing.getLineStartOffset(line.number() - 1);
+            var end = listing.getLineEndOffset(line.number() - 1);
+            listing.requestFocusInWindow();
+            listing.select(start, end);
+            selected = line;
+            scrollToLine(line);
+        } catch (BadLocationException ignored) {
+            // The recorded line may be past the end of a source file edited since the build.
+        }
+    }
+
     void setBreakpoints(final Set<Integer> breaks) {
         breakpoints = breaks;
         refreshDecorations();
@@ -322,11 +343,13 @@ final class SourcePanel extends JPanel implements AppearanceAware {
     }
 
     private void scrollToCurrent() {
-        if (current == null || displayedFile != current.file()) {
+        scrollToLine(current);
+    }
+
+    private void scrollToLine(final @Nullable SourceProgram.SourceLine line) {
+        if (line == null || displayedFile != line.file()) {
             return;
         }
-
-        var line = current;
 
         SwingUtilities.invokeLater(() -> {
             try {

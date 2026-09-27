@@ -47,6 +47,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 // Explicitly, because java.awt.* is on demand above and brings a List of its own with it.
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -192,6 +193,7 @@ public class GameUIFrame extends JFrame {
      * cartridge can be moved, renamed or unplugged without the emulator being anywhere near it.
      */
     private final JMenu fileMenuOpenRecent = new JMenu("Open Recent");
+    private final JMenuItem fileMenuReload = new JMenuItem("Reload ROM and Symbols");
 
     /**
      * The two pictures, kept because they are the items in an always-enabled menu that need a
@@ -439,6 +441,8 @@ public class GameUIFrame extends JFrame {
         // and this window has already spent its unmodified function keys.
         fileMenuOpenRecent.setMnemonic(KeyEvent.VK_R);
         fileMenu.add(fileMenuOpenRecent);
+        fileMenuReload.setEnabled(false);
+        fileMenu.add(fileMenuReload);
 
         // A function key, for the reasons the two quick state items are on function keys: it is in
         // the same physical place on every keyboard layout, it is the key every emulator since ZSNES
@@ -673,6 +677,12 @@ public class GameUIFrame extends JFrame {
         fileMenuOpen.addActionListener(e -> {
             if (fileChooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
                 open(fileChooser.getSelectedFile(), null, null);
+            }
+        });
+        fileMenuReload.addActionListener(e -> {
+            if (romPath != null) {
+                open(romPath.toFile(), romEntry,
+                        patchPath == null ? null : patchPath.toFile(), true);
             }
         });
 
@@ -2200,8 +2210,12 @@ public class GameUIFrame extends JFrame {
      *              in and, if it holds several, where the question is asked.
      */
     private void open(final File rom, final String entry, final File patch) {
+        open(rom, entry, patch, false);
+    }
+
+    private void open(final File rom, final String entry, final File patch, final boolean reload) {
         try {
-            loadRom(rom, entry, patch);
+            loadRom(rom, entry, patch, reload);
         } catch (IOException | RuntimeException e) {
             report("Could not load " + rom.getName(), e);
         }
@@ -2219,7 +2233,8 @@ public class GameUIFrame extends JFrame {
      *                  what came out of the zip when the file was one, which is the only thing an
      *                  offset in a patch could be counted from.
      */
-    private void loadRom(final File selectedFile, final String wantedEntry, final File patchFile)
+    private void loadRom(final File selectedFile, final String wantedEntry, final File patchFile,
+                         final boolean reload)
             throws IOException {
         logger.log(Level.INFO, "loading rom " + selectedFile.getName());
 
@@ -2260,7 +2275,8 @@ public class GameUIFrame extends JFrame {
                 loaded,
                 selectedFile.toPath().toAbsolutePath(),
                 name,
-                patchFile == null ? null : patchFile.toPath().toAbsolutePath());
+                patchFile == null ? null : patchFile.toPath().toAbsolutePath(),
+                reload);
 
         // After the cartridge has loaded rather than when the file was picked, so that a file which
         // turned out not to be one is not offered again from the menu. Written out at once, since
@@ -2402,6 +2418,12 @@ public class GameUIFrame extends JFrame {
      */
     private void startMachine(
             final Cart cart, final Path rom, final String entry, final Path patch) {
+        startMachine(cart, rom, entry, patch, false);
+    }
+
+    private void startMachine(
+            final Cart cart, final Path rom, final String entry, final Path patch,
+            final boolean reload) {
         // Before the outgoing machine is let go of, and while its runner is stopped so it is safe to
         // read from here. Both changing cartridges and cycling the power come through here, and a
         // power cycle that lost the last hour of a game would be a cruel way to find that out.
@@ -2450,7 +2472,7 @@ public class GameUIFrame extends JFrame {
         // A new cartridge deserves a clean slate, but a power cycle does not: the breakpoints are
         // the reason somebody cycles the power. Asked before the field is reassigned, since that is
         // the whole of the difference between the two.
-        var sameCartridge = cart == this.cart;
+        var sameCartridge = cart == this.cart || reload;
 
         if (!sameCartridge) {
             debugger.clear();
@@ -2506,6 +2528,8 @@ public class GameUIFrame extends JFrame {
 
         // The watchpoints have to be wired to this machine's MMU rather than the last one's. Same
         // window as the two lines above: the runner does not exist yet, so this thread owns it.
+        var previousPRGBreakpoints = reload
+                ? Set.copyOf(debugger.prgBreakpoints()) : Set.<Integer>of();
         debugger.attach(nes);
 
         // A movie carries the codes it was recorded with, and they win: the cartridge a code was
@@ -2586,7 +2610,8 @@ public class GameUIFrame extends JFrame {
         }
 
         if (controlPanel != null) {
-            controlPanel.setMachine(nes, runner, debugger, cart, config.palette(currentRegion()));
+            controlPanel.setMachine(nes, runner, debugger, cart,
+                    config.palette(currentRegion()), reload, previousPRGBreakpoints);
         }
 
         // Posted before the thread exists, so they are the first things that run on it: a machine
@@ -2599,6 +2624,7 @@ public class GameUIFrame extends JFrame {
         debugMenu.setEnabled(true);
         fileMenuScreenshot.setEnabled(true);
         fileMenuCopyScreenshot.setEnabled(true);
+        fileMenuReload.setEnabled(romPath != null);
 
         // A trace is per machine and the last one was stopped as this one was built, so this is the
         // one place the item comes back on.

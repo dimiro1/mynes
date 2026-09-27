@@ -6,6 +6,7 @@ import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
+import com.github.dimiro1.mynes.debug.ExecutionProfile;
 import com.github.dimiro1.mynes.ui.EmulatorRunner;
 import com.github.dimiro1.mynes.ui.MenuKey;
 import com.github.dimiro1.mynes.ui.Readout;
@@ -19,12 +20,14 @@ import javax.swing.JPanel;
 import javax.swing.JRootPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
+import javax.swing.JTextField;
 import javax.swing.JOptionPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
@@ -70,6 +73,10 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
     private final SourcePanel source = new SourcePanel(new Sources());
     private final JTabbedPane code = new JTabbedPane();
     private final MemoryPanel memory = new MemoryPanel();
+    private final WatchesPanel watches = new WatchesPanel(this::writeRAM);
+    private final ProfilerPanel profiler = new ProfilerPanel(
+            this::toggleProfile, this::resetProfile, this::refreshProfile,
+            this::showProfileLocation);
     private final JTabbedPane details = new JTabbedPane();
     private final RegistersPanel registers = new RegistersPanel(this::showInMemory);
     private final PointsPanel points;
@@ -82,6 +89,9 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
     private final JButton step = new JButton("Step Into");
     private final JButton stepOver = new JButton("Step Over");
     private final JButton stepFrame = new JButton("Step Frame");
+    private final JTextField rasterLine = new JTextField("0", 3);
+    private final JTextField rasterDot = new JTextField("0", 3);
+    private final JButton runRaster = new JButton("Run to Raster");
 
     private NES nes;
     private EmulatorRunner runner;
@@ -89,6 +99,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
     private MachineSnapshot snapshot;
     private SourceProgram sourceProgram;
     private Path sourceRoot;
+    private ExecutionProfile profile;
+    private boolean profiling;
 
     private final SystemFileChooser debugChooser = new SystemFileChooser();
     private final SystemFileChooser sourceChooser = new SystemFileChooser();
@@ -128,6 +140,7 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         this.debugger = debugger;
         this.cart = cart;
         this.points = new PointsPanel(new Editing());
+        memory.setWriter(this::writeRAM);
 
         var filter = new SystemFileChooser.FileNameExtensionFilter("ld65 debug information", "dbg");
         debugChooser.addChoosableFileFilter(filter);
@@ -151,12 +164,18 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         step.addActionListener(e -> stepInstruction());
         stepOver.addActionListener(e -> stepOver());
         stepFrame.addActionListener(e -> stepOneFrame());
+        runRaster.addActionListener(e -> runToRaster());
 
         run.setToolTipText("Let the machine go (F5)");
         breakNow.setToolTipText("Stop at the next instruction");
         step.setToolTipText("Run one instruction (F10)");
         stepOver.setToolTipText("Run through a JSR call (Shift+F10)");
         stepFrame.setToolTipText("Run to the end of the frame (F8)");
+        runRaster.setToolTipText("Resume until the beam reaches this position; stop at the next CPU instruction. If already passed, stop in the next frame.");
+        rasterLine.setToolTipText("Scanline in decimal: 0–261 for NTSC, 0–311 for PAL");
+        rasterDot.setToolTipText("Dot in decimal: 0–340");
+        rasterLine.setFont(Theme.MONOSPACED);
+        rasterDot.setFont(Theme.MONOSPACED);
 
         DebuggerIcons.set(run, DebuggerIcons.Symbol.RUN);
         DebuggerIcons.set(breakNow, DebuggerIcons.Symbol.BREAK);
@@ -164,12 +183,26 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         DebuggerIcons.set(stepOver, DebuggerIcons.Symbol.OVER);
         DebuggerIcons.set(stepFrame, DebuggerIcons.Symbol.FRAME);
 
-        var controls = new JPanel(new MigLayout("insets 8 8 4 8, gap 4", "[][][][][]push", ""));
+        var rasterEntry = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        rasterEntry.add(new JLabel("Line"));
+        rasterEntry.add(rasterLine);
+        rasterEntry.add(new JLabel("Dot"));
+        rasterEntry.add(rasterDot);
+        rasterEntry.add(runRaster);
+        var rasterInfo = Theme.note(rasterEntry.getFont().canDisplay('ⓘ') ? "ⓘ" : "(i)");
+        rasterInfo.setToolTipText("<html><b>Run to Raster</b><br>Enter decimal line 0–261 (NTSC) "
+                + "or 0–311 (PAL), and dot 0–340.<br>Stops at the next CPU instruction "
+                + "after the beam reaches that position.<br>If it has already passed, "
+                + "the stop occurs in the next frame.</html>");
+        rasterEntry.add(rasterInfo);
+
+        var controls = new JPanel(new MigLayout("insets 8 8 4 8, gap 4", "[][][][][][grow,fill]", "[]"));
         controls.add(run);
         controls.add(breakNow);
         controls.add(step);
         controls.add(stepOver);
         controls.add(stepFrame);
+        controls.add(rasterEntry, "align left");
 
         code.addTab("Source", source);
         code.addTab("Disassembly", disassembly);
@@ -183,6 +216,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         registers.setPreferredSize(new Dimension(280, 460));
         registers.setMinimumSize(new Dimension(230, 160));
         details.addTab("Memory", memory);
+        details.addTab("Watches", watches);
+        details.addTab("Profile", profiler);
         details.addTab("Breakpoints / Watchpoints", points);
         details.setSelectedComponent(memory);
         details.setPreferredSize(new Dimension(1100, 260));
@@ -278,18 +313,62 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
     }
 
     public void setMachine(final NES nes, final EmulatorRunner runner, final Cart cart) {
+        setMachine(nes, runner, cart, false);
+    }
+
+    public void setMachine(final NES nes, final EmulatorRunner runner, final Cart cart,
+                           final boolean reload) {
+        setMachine(nes, runner, cart, reload, Set.copyOf(debugger.prgBreakpoints()));
+    }
+
+    public void setMachine(final NES nes, final EmulatorRunner runner, final Cart cart,
+                           final boolean reload, final Set<Integer> previousPRGBreakpoints) {
         var sameCartridge = this.cart.sha256().equals(cart.sha256());
+        var resumeProfiling = profiling;
+        profiling = false;
+        profile = null;
+        profiler.clear();
+        var selectedLine = reload ? source.selectedLine() : null;
+
+        if (reload && sourceProgram != null) {
+            var previous = sourceProgram;
+            try {
+                var rebuilt = Cc65DebugInfo.read(
+                        previous.debugFile(), cart.prgROM(), sourceRoot);
+                var relocated = rebuilt.relocateBreakpointsFrom(
+                        previous, previousPRGBreakpoints);
+                Set.copyOf(debugger.prgBreakpoints()).forEach(debugger::removePRGBreakpoint);
+                relocated.forEach(debugger::addPRGBreakpoint);
+                sourceProgram = rebuilt;
+                selectedLine = rebuilt.correspondingLine(selectedLine);
+                try {
+                    associations.remember(cart.sha256(), rebuilt.debugFile(), sourceRoot);
+                } catch (IOException e) {
+                    logger.log(System.Logger.Level.WARNING,
+                            "could not remember reloaded debug symbols", e);
+                }
+            } catch (IOException | RuntimeException e) {
+                logger.log(System.Logger.Level.WARNING, "could not reload debug symbols", e);
+                sourceProgram = null;
+                sourceRoot = null;
+                selectedLine = null;
+                JOptionPane.showMessageDialog(this,
+                        "The ROM reloaded, but its debug symbols could not be attached: "
+                                + e.getMessage(), "Debug Information", JOptionPane.WARNING_MESSAGE);
+            }
+        }
 
         this.nes = nes;
         this.runner = runner;
         this.cart = cart;
         snapshot = null;
 
-        if (!sameCartridge) {
+        if ((!sameCartridge && !reload) || (reload && sourceProgram == null)) {
             sourceProgram = null;
             sourceRoot = null;
             source.detach();
             disassembly.setSourceProgram(null);
+            watches.setSourceProgram(null);
             code.setSelectedComponent(disassembly);
         }
 
@@ -298,8 +377,11 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         // but the listing and the memory are emptied rather than left to be believed.
         disassembly.clear();
         memory.clear();
+        watches.clearMachine();
         registers.reset();
         registers.setSourceProgram(sourceProgram);
+        watches.setSourceProgram(sourceProgram);
+        profiler.setSourceProgram(sourceProgram);
 
         // Read again rather than left alone, because a new cartridge is the one machine change that
         // clears them: the points are the user's while the game is the same game, and a list of
@@ -318,9 +400,14 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
 
         running();
 
-        if (!sameCartridge) {
+        if (reload && sourceProgram != null) {
+            disassembly.setSourceProgram(sourceProgram);
+            source.show(sourceProgram, selectedLine, prgBreaks);
+            code.setSelectedComponent(source);
+        } else if (!sameCartridge) {
             restoreSources();
         }
+        if (resumeProfiling) toggleProfile();
     }
 
     /**
@@ -341,6 +428,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
         disassembly.show(snapshot, breaks, conditions);
         registers.show(snapshot);
         memory.show(snapshot, stop);
+        memory.setStopped(true);
+        watches.show(snapshot);
         points.show(breaks, conditions, prgBreaks, sourceProgram,
                 Map.copyOf(debugger.watchpoints()));
 
@@ -350,7 +439,7 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             source.show(sourceProgram, sourceLine, prgBreaks);
         }
 
-        status.setText(describe(stop, sourceLine));
+        status.setText(describe(stop, sourceLine, snapshot));
         dot.setColour(Theme.stopped());
 
         run.setEnabled(true);
@@ -397,6 +486,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
 
         registers.stale();
         source.clearMachine();
+        memory.setStopped(false);
+        watches.stale();
         status.setText("Running");
         dot.setColour(Theme.running());
 
@@ -414,6 +505,7 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
      * and the only way out buried in the Machine menu, which looks exactly like a crash.
      */
     public void closing() {
+        if (profiling) toggleProfile();
         // Run to Here and Step Over leave a temporary point while the machine is running. Closing
         // the view must not let that hidden point freeze the game a moment later.
         if (runToAddress >= 0) {
@@ -457,6 +549,104 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
 
     private void stepOneFrame() {
         runner.stepFrame();
+    }
+
+    private void writeRAM(final int address, final int value) {
+        writeRAM(address, value, 1);
+    }
+
+    private void writeRAM(final int address, final int value, final int width) {
+        if (!stoppedByUs) return;
+        var activeRunner = runner;
+        var activeMachine = nes;
+        activeRunner.post(() -> {
+            if (!activeRunner.isPaused()) return;
+            debugger.writeRAM(address, value);
+            if (width == 2) debugger.writeRAM(address + 1, value >>> 8);
+            var updated = MachineSnapshot.of(activeMachine, debugger);
+            SwingUtilities.invokeLater(() -> {
+                if (runner != activeRunner || !stoppedByUs) return;
+                snapshot = updated;
+                memory.show(updated, null);
+                registers.show(updated);
+                watches.show(updated);
+            });
+        });
+    }
+
+    private void toggleProfile() {
+        var activeRunner = runner;
+        var activeMachine = nes;
+        if (profiling) {
+            profiling = false;
+            profiler.setRecording(false);
+            var measured = profile;
+            activeRunner.post(() -> {
+                activeMachine.getCPU().removeEventListener(measured);
+                var result = measured.snapshot();
+                SwingUtilities.invokeLater(() -> {
+                    if (runner == activeRunner) profiler.show(result);
+                });
+            });
+        } else {
+            if (profile == null) profile = new ExecutionProfile(activeMachine);
+            var measured = profile;
+            profiling = true;
+            profiler.setRecording(true);
+            activeRunner.post(() -> activeMachine.getCPU().addEventListener(measured));
+        }
+    }
+
+    private void resetProfile() {
+        if (profile == null) return;
+        var measured = profile;
+        var activeRunner = runner;
+        activeRunner.post(() -> {
+            measured.reset();
+            var result = measured.snapshot();
+            SwingUtilities.invokeLater(() -> {
+                if (runner == activeRunner) profiler.show(result);
+            });
+        });
+    }
+
+    private void refreshProfile() {
+        if (profile == null) return;
+        var measured = profile;
+        var activeRunner = runner;
+        activeRunner.post(() -> {
+            var result = measured.snapshot();
+            SwingUtilities.invokeLater(() -> {
+                if (runner == activeRunner) profiler.show(result);
+            });
+        });
+    }
+
+    private void showProfileLocation(final SourceProgram.SourceLine line, final int prgOffset) {
+        if (line != null && sourceProgram != null) {
+            source.navigateTo(line);
+            code.setSelectedComponent(source);
+        } else if (cart != null && prgOffset >= 0 && prgOffset < cart.prgROM().length) {
+            disassembly.goToPRG(prgOffset, cart.prgROM());
+            code.setSelectedComponent(disassembly);
+        }
+    }
+
+    private void runToRaster() {
+        try {
+            var line = Integer.parseInt(rasterLine.getText().trim());
+            var dot = Integer.parseInt(rasterDot.getText().trim());
+            if (line < 0 || line >= nes.getRegion().scanlinesPerFrame() || dot < 0 || dot > 340) {
+                throw new NumberFormatException();
+            }
+            runner.runToRaster(line, dot);
+            running();
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Enter a scanline from 0 to " + (nes.getRegion().scanlinesPerFrame() - 1)
+                            + " and a dot from 0 to 340.",
+                    "Raster Position", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void toggleBreakpointAtSelection() {
@@ -573,6 +763,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             source.detach();
             disassembly.setSourceProgram(null);
             registers.setSourceProgram(null);
+            watches.setSourceProgram(null);
+            profiler.setSourceProgram(null);
             code.setSelectedComponent(disassembly);
             edit(() -> offsets.forEach(debugger::removePRGBreakpoint));
 
@@ -637,6 +829,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             sourceRoot = resolvedRoot;
             disassembly.setSourceProgram(loaded);
             registers.setSourceProgram(loaded);
+            watches.setSourceProgram(loaded);
+            profiler.setSourceProgram(loaded);
 
             var line = snapshot == null ? null
                     : loaded.lineAt(snapshot.prgOffset(snapshot.cpu().pc()));
@@ -673,6 +867,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             sourceRoot = remembered.sourceRoot();
             disassembly.setSourceProgram(loaded);
             registers.setSourceProgram(loaded);
+            watches.setSourceProgram(loaded);
+            profiler.setSourceProgram(loaded);
             source.show(loaded, null, knownPRGBreakpoints);
             code.setSelectedComponent(source);
         } catch (IOException | RuntimeException e) {
@@ -743,7 +939,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
     }
 
     private static String describe(
-            final Debugger.Stop stop, final SourceProgram.SourceLine sourceLine) {
+            final Debugger.Stop stop, final SourceProgram.SourceLine sourceLine,
+            final MachineSnapshot snapshot) {
         var stopped = "Stopped  ·  " + switch (stop.reason()) {
             case BREAKPOINT -> String.format("breakpoint at $%04X", stop.pc());
             case WATCHPOINT -> String.format(
@@ -754,6 +951,8 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
                     stop.by());
             case STEP -> String.format("stepped to $%04X", stop.pc());
             case FRAME -> String.format("end of frame, at $%04X", stop.pc());
+            case RASTER -> String.format("raster at line %d dot %d, at $%04X",
+                    snapshot.machine().scanline(), snapshot.machine().dot(), stop.pc());
             case ASKED -> String.format("at $%04X", stop.pc());
         };
 

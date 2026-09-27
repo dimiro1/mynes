@@ -203,6 +203,10 @@ final class SourceProgram {
         return ramSymbols;
     }
 
+    int executableLineCount() {
+        return (int) lines.values().stream().filter(SourceLine::hasCode).count();
+    }
+
     boolean hasMissingFiles() {
         return files.stream().anyMatch(file -> file.path() == null);
     }
@@ -261,6 +265,30 @@ final class SourceProgram {
         }
 
         return null;
+    }
+
+    @Nullable SourceLine correspondingLine(final SourceLine previous) {
+        if (previous == null) return null;
+        return files.stream()
+                .filter(file -> file.recordedPath().equals(previous.file().recordedPath()))
+                .findFirst()
+                .map(file -> line(file, previous.number()))
+                .orElse(null);
+    }
+
+    Set<Integer> relocateBreakpointsFrom(
+            final SourceProgram previous, final Set<Integer> offsets) {
+        var moved = new LinkedHashSet<Integer>();
+        for (var offset : offsets) {
+            var oldLine = previous.lineForBreakpoint(offset);
+            if (oldLine == null) {
+                if (offset >= 0 && offset < lineAtPRG.length) moved.add(offset);
+                continue;
+            }
+            var newLine = correspondingLine(oldLine);
+            if (newLine != null) moved.addAll(newLine.breakpointOffsets());
+        }
+        return Collections.unmodifiableSet(moved);
     }
 
     private void addSourceSymbol(final Location location, final Symbol symbol) {

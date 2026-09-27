@@ -101,6 +101,11 @@ class SourcePanelTests {
         assertEquals(String.join("\n", file.text()), listing.getText());
         assertNotNull(listing.getTokenListForLine(1));
 
+        var target = program.lineAt(1);
+        panel.navigateTo(target);
+        assertEquals(target, panel.selectedLine());
+        assertEquals("jmp reset", listing.getSelectedText().trim());
+
         panel.clearMachine();
         panel.setBreakpoints(Set.of());
 

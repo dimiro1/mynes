@@ -50,6 +50,10 @@ You can set conditional breakpoints and read or write watchpoints. The toolbar h
 
 For ca65/ld65 projects, attach the build's `.dbg` file in the Source tab. The debugger follows the current source line, shows symbols, and allows breakpoints in the source margin. These breakpoints keep their location when the cartridge switches PRG banks. Build with `ca65 -g` and `ld65 --dbgfile game.dbg` to generate the file.
 
+After rebuilding, choose **File > Reload ROM and Symbols**. MyNES reads the ROM and attached `.dbg` file again, keeps CPU breakpoints and watches, and moves source breakpoints to their new PRG offsets by source file and line. A failed ROM load leaves the running machine alone.
+
+Enter a decimal **Line** (0–261 for NTSC, 0–311 for PAL) and **Dot** (0–340), then choose **Run to Raster**. The debugger stops at the first CPU instruction boundary after the beam reaches that position; if it has already passed, it stops in the next frame. The **Watches** tab accepts RAM symbols or hex addresses; append `:16` for a little-endian word. While stopped, edit a watch value or select a RAM byte in **Memory** and choose **Write...**. The **Profile** tab counts executed PRG instructions and CPU run cycles by source line, and reports source-line coverage when a `.dbg` file is attached. Start profiling only for the passage you want to measure, then Stop or Refresh to inspect it. Double-click a profile location to open its source line or raw PRG bytes in the code viewer.
+
 ![Source view and RAM variables from a dino-god build](shots/source-debugger.png)
 
 The other Control Panel tabs show:

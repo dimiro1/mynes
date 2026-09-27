@@ -757,6 +757,11 @@ public class EmulatorRunner {
         post(debugger::stepFrame);
     }
 
+    /** Runs to the first instruction boundary after the requested beam position. */
+    public void runToRaster(final int scanline, final int dot) {
+        post(() -> debugger.runToRaster(scanline, dot));
+    }
+
     /**
      * Stops the machine at the next instruction boundary -- so within a frame, since a machine on
      * the fast path finishes the frame it is in first.
