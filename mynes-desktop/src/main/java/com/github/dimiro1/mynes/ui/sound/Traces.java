@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.sound;
 
 import com.github.dimiro1.mynes.APUChannel;
+import com.github.dimiro1.mynes.ui.debugger.Theme;
 
 import java.awt.Color;
 
@@ -17,19 +18,26 @@ import java.awt.Color;
  * sampled -- three different things, three unrelated hues.
  */
 final class Traces {
-    private static final Color[] COLOURS = {
+    private static final Color[] LIGHT = {
             new Color(0x1A7F37),  // pulse 1, the green everything else here uses for "going"
             new Color(0x2DA44E),  // pulse 2, the same green a shade lighter
             new Color(0x0550AE),  // triangle, the blue the disassembly uses for an address
             new Color(0x953800),  // noise, the orange it uses for an immediate
             new Color(0x8250DF),  // DMC, the purple it uses for a branch
     };
+    private static final Color[] DARK = {
+            new Color(0x56D364),
+            new Color(0x7EE787),
+            new Color(0x79C0FF),
+            new Color(0xF2B17A),
+            new Color(0xD2A8FF),
+    };
 
     private Traces() {
     }
 
     static Color colourOf(final APUChannel channel) {
-        return COLOURS[channel.ordinal()];
+        return (Theme.isDark() ? DARK : LIGHT)[channel.ordinal()];
     }
 
     /**

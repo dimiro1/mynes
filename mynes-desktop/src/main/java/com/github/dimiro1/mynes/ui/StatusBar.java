@@ -52,7 +52,7 @@ import java.util.function.ToIntFunction;
  * thread and hands it over, the way it does for the title bar -- which carries a shorter version
  * still of the same sentence, for the window list rather than for the player.
  */
-final class StatusBar extends JPanel {
+final class StatusBar extends JPanel implements AppearanceAware {
 
     /**
      * What goes between two things the bar has to say. A middle dot rather than a comma or a pipe:
@@ -201,8 +201,12 @@ final class StatusBar extends JPanel {
         // The description recedes and the other two do not. It is the longest thing here and the
         // least urgent -- it says what was set up before the game started, where the rate and the
         // activity are about the machine right now.
-        machine.setForeground(colour("Label.disabledForeground", Color.GRAY));
+        refreshAppearance();
+    }
 
+    @Override
+    public void refreshAppearance() {
+        machine.setForeground(colour("Label.disabledForeground", Color.GRAY));
         setBorder(BorderFactory.createMatteBorder(
                 1, 0, 0, 0, colour("Separator.foreground", Color.GRAY)));
     }

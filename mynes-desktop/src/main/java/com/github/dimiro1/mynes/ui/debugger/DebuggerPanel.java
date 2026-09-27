@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
 import com.github.dimiro1.mynes.debug.Condition;
@@ -60,7 +61,7 @@ import java.util.Set;
  * and nothing else. The dividers remember nothing between sessions, which is deliberate for now --
  * a view that opened at a size chosen for the last bug is a small trap.
  */
-public final class DebuggerPanel extends JPanel {
+public final class DebuggerPanel extends JPanel implements AppearanceAware {
     private static final System.Logger logger = System.getLogger("Debugger");
 
     private final Debugger debugger;
@@ -75,6 +76,7 @@ public final class DebuggerPanel extends JPanel {
 
     private final Dot dot = new Dot();
     private final JLabel status = new JLabel("Running");
+    private final JLabel hints = new JLabel();
     private final JButton run = new JButton("Run");
     private final JButton breakNow = new JButton("Break");
     private final JButton step = new JButton("Step Into");
@@ -190,7 +192,7 @@ public final class DebuggerPanel extends JPanel {
         var top = split(JSplitPane.HORIZONTAL_SPLIT, registers, code, 0.26);
         var body = split(JSplitPane.VERTICAL_SPLIT, top, details, 0.64);
 
-        var hints = new JLabel(hints());
+        hints.setText(hints());
         hints.setForeground(Theme.muted());
         hints.setFont(hints.getFont().deriveFont(11f));
 
@@ -204,6 +206,12 @@ public final class DebuggerPanel extends JPanel {
         add(strip);
 
         running();
+    }
+
+    @Override
+    public void refreshAppearance() {
+        hints.setForeground(Theme.muted());
+        dot.setColour(stoppedByUs ? Theme.stopped() : Theme.running());
     }
 
     private static JSplitPane split(

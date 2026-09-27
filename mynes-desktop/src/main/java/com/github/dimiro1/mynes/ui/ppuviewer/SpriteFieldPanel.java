@@ -16,29 +16,25 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 
 /**
- * Where the sixty four sprites are, drawn over the screen they are on.
+ * Where the sixty four sprites are, outlined over the screen they are on.
  * <p>
- * The picture already shows the sprites that are on screen. What it cannot show is the ones that are
- * <em>not</em> -- parked at Y=$F0 because the game is done with them, left over from the last level,
- * or sitting one pixel off an edge -- and "why has that enemy not appeared" is a question about
- * exactly those. So every sprite is drawn here whatever its coordinates, and the eight the hardware
- * would have kept on a given line are still eight in the picture rather than here.
+ * The picture already contains sprites the PPU rendered. Painting OAM sprites over it again would
+ * double them when the game moves between the frame and the OAM sweep. The table beside the picture
+ * shows every OAM sprite, including those the PPU did not render; selecting one outlines its OAM
+ * position here.
  * <p>
- * <b>The frame goes behind them with its brightness taken off</b>, because half of that question is
- * where in the level the sprite is: a lone eight by eight square on a flat field says a sprite is at
- * (72, 140) and nothing about whether that is inside the pipe it is supposed to come out of. The
- * sprites are drawn over the top at full strength, so an on-screen one lands on itself and the ones
- * the picture never had stand out from it.
+ * <b>The frame keeps its original colours</b>, so the preview matches the game and the palette
+ * viewer.
  * <p>
  * <b>All 240 lines are here, and the sixteen a television hid are shaded</b> rather than cropped
- * away: a sprite that has been pushed into the overscan is one the player cannot see, which is the
- * same question as a sprite parked at Y=$F0 and deserves the same answer. It also keeps this picture
- * the same shape as the one in the game window, which draws the 224 in front of the bezel.
+ * away: a sprite that has been pushed into the overscan is one the player cannot see. It also
+ * keeps this picture the same shape as the one in the game window, which draws the 224 in front of
+ * the bezel.
  * <p>
  * The Y byte in OAM is one less than the line the sprite is drawn on, because the hardware compares
  * it against the line it is evaluating and draws on the next one. The table beside this shows the
- * byte, since that is what is in memory and what a watchpoint would catch; this draws it where the
- * sprite really lands.
+ * byte, since that is what is in memory and what a watchpoint would catch; the outline marks where
+ * the sprite really lands.
  */
 final class SpriteFieldPanel extends JComponent {
     private static final Color EDGE = new Color(1.0f, 1.0f, 1.0f, 0.25f);
@@ -51,8 +47,6 @@ final class SpriteFieldPanel extends JComponent {
     private static final int SCALE = 2;
 
     private final PPU ppu;
-    private final BufferedImage[] sprites;
-
     private final BufferedImage screen = new BufferedImage(
             PPU.SCREEN_WIDTH, PPU.SCREEN_HEIGHT, BufferedImage.TYPE_INT_RGB);
 
@@ -66,10 +60,7 @@ final class SpriteFieldPanel extends JComponent {
     private int height = 8;
     private int[] selected = new int[0];
 
-    SpriteFieldPanel(
-            final BufferedImage[] sprites, final PPU ppu, final NESPalette palette) {
-
-        this.sprites = sprites;
+    SpriteFieldPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.colours = palette.colours();
 
@@ -92,7 +83,7 @@ final class SpriteFieldPanel extends JComponent {
 
         height = spriteHeight;
 
-        Screen.drawDimmed(pixels, ppu, colours, null);
+        Screen.draw(pixels, ppu, colours);
 
         repaint();
     }
@@ -147,22 +138,6 @@ final class SpriteFieldPanel extends JComponent {
                     RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
             g2.drawImage(screen, 0, 0, getWidth(), getHeight(), null);
 
-            // Backwards, so that sprite 0 ends up on top: the hardware gives the lowest numbered
-            // sprite priority over the ones after it, and a field that drew them in order would
-            // show the opposite.
-            for (var i = sprites.length - 1; i >= 0; i--) {
-                g2.drawImage(
-                        sprites[i],
-                        x[i] * SCALE,
-                        (y[i] + 1) * SCALE,
-                        8 * SCALE,
-                        height * SCALE,
-                        null);
-            }
-
-            // After the sprites, so one parked behind the bezel is still drawn and still visible
-            // through the shading -- which is the difference between "you cannot see it" and "it
-            // is not there".
             Screen.paintOverscan(g2, 0, 0, SCALE);
 
             g2.setColor(EDGE);

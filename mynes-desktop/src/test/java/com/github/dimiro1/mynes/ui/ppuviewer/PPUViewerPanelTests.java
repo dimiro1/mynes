@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.Cart;
 import com.github.dimiro1.mynes.NES;
+import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.palette.Palettes;
 import com.github.dimiro1.mynes.ui.Views;
 import org.junit.jupiter.api.BeforeAll;
@@ -11,17 +12,16 @@ import javax.swing.JCheckBox;
 import javax.swing.JTable;
 import java.awt.Container;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Builds all three views and makes them draw a machine.
  * <p>
- * Nothing here asserts on what they look like -- that is a job for eyes, and the pictures they draw
- * are the reason they exist. What it catches is the class of mistake that only shows up once the
- * thing is actually built and painted: a raster written past its end, a table renderer that throws
- * on its first row, a tall sprite decoded off the end of the pattern tables. All of those compile
- * perfectly.
+ * Most tests here catch mistakes that only show up once a view is built and painted: a raster
+ * written past its end, a table renderer that throws on its first row, or a tall sprite decoded
+ * off the end of the pattern tables. The sprite preview also checks a painted pixel's brightness.
  * <p>
  * These used to be windows and used to be skipped on any machine without a display, which is every
  * machine that runs the build. They are panels now, so this runs everywhere; {@link Views} is what
@@ -65,6 +65,36 @@ class PPUViewerPanelTests {
         view.setPalette(Palettes.defaultPalette());
         view.refresh();
         Views.paint(view);
+    }
+
+    @Test
+    void theSpritePreviewKeepsTheFramesOriginalBrightness() {
+        var frame = nes.getPPU().getFrameBuffer();
+        var x = 30;
+        var y = 100;
+        var index = y * PPU.SCREEN_WIDTH + x;
+        var original = frame[index];
+        var palette = Palettes.defaultPalette();
+        try {
+            frame[index] = 0x30;
+            var field = new SpriteFieldPanel(nes.getPPU(), palette);
+            field.setPositions(new int[SPRITES], new int[SPRITES], 8);
+            field.setSize(field.getPreferredSize());
+
+            var painted = new BufferedImage(field.getWidth(), field.getHeight(), BufferedImage.TYPE_INT_RGB);
+            var graphics = painted.createGraphics();
+            try {
+                field.paint(graphics);
+            } finally {
+                graphics.dispose();
+            }
+
+            assertEquals(
+                    palette.colours()[0x30] & 0xFFFFFF,
+                    painted.getRGB(x * 2, y * 2) & 0xFFFFFF);
+        } finally {
+            frame[index] = original;
+        }
     }
 
     /**

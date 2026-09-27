@@ -124,7 +124,7 @@ public final class OAMViewerPanel extends JPanel {
     public OAMViewerPanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
         this.palette = palette;
-        this.field = new SpriteFieldPanel(sprites, ppu, palette);
+        this.field = new SpriteFieldPanel(ppu, palette);
 
         for (var i = 0; i < SPRITES; i++) {
             order[i] = i;

@@ -1,5 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.formdev.flatlaf.FlatLaf;
+
 import javax.swing.BorderFactory;
 import javax.swing.JLabel;
 import javax.swing.UIManager;
@@ -18,8 +20,7 @@ import java.util.Locale;
  * The structural ones -- muted text, the accent, selection -- come out of the look and feel, so
  * that the window keeps looking like the rest of the program if the theme ever changes, with a
  * plain fallback for a machine that fell back to Metal. The syntax colours are this window's own:
- * a look and feel has no opinion about what colour a branch is. They are picked to read on FlatLaf
- * Light's white, which is the one theme the program ships.
+ * a look and feel has no opinion about what colour a branch is. Each has a light and dark version.
  * <p>
  * Hue is carrying meaning here, so the choices are not arbitrary: warm for a value, cool for a
  * place, and the same red for a breakpoint wherever one is drawn -- the gutter, the points table,
@@ -31,18 +32,13 @@ public final class Theme {
      */
     static final Font MONOSPACED = new Font(Font.MONOSPACED, Font.PLAIN, 12);
 
-    private static final Color FLOW = new Color(0x8250DF);
-    private static final Color DATA = new Color(0x0550AE);
-    private static final Color MATH = new Color(0x116329);
-    private static final Color IMMEDIATE = new Color(0x953800);
-    private static final Color ADDRESS = new Color(0x0A3069);
-    private static final Color REGISTER = new Color(0x6639BA);
+    public static boolean isDark() {
+        return FlatLaf.isLafDark();
+    }
 
-    private static final Color BREAKPOINT = new Color(0xD73A49);
-    private static final Color RUNNING = new Color(0x2DA44E);
-    private static final Color STOPPED = new Color(0xBF8700);
-    private static final Color STACK_POINTER = new Color(0x1A7F37);
-    private static final Color CHANGED = new Color(0x9A6700);
+    private static Color pick(final int light, final int dark) {
+        return new Color(isDark() ? dark : light);
+    }
 
     private Theme() {
     }
@@ -53,7 +49,7 @@ public final class Theme {
      * were most of what made it look old.
      */
     public static JLabel heading(final String text) {
-        var label = new JLabel(text.toUpperCase(Locale.ROOT));
+        var label = new MutedLabel(text.toUpperCase(Locale.ROOT));
 
         label.setFont(label.getFont().deriveFont(Font.BOLD, 11f));
         label.setForeground(muted());
@@ -70,7 +66,7 @@ public final class Theme {
      * which is three places for the same three lines to drift apart in.
      */
     public static JLabel note(final String text) {
-        var label = new JLabel(text);
+        var label = new MutedLabel(text);
 
         label.setForeground(muted());
         label.setFont(label.getFont().deriveFont(11f));
@@ -114,27 +110,27 @@ public final class Theme {
     }
 
     static Color breakpoint() {
-        return BREAKPOINT;
+        return pick(0xD73A49, 0xFF7B72);
     }
 
     public static Color running() {
-        return RUNNING;
+        return pick(0x2DA44E, 0x56D364);
     }
 
     public static Color stopped() {
-        return STOPPED;
+        return pick(0xBF8700, 0xE3B341);
     }
 
     static Color stackPointer() {
-        return STACK_POINTER;
+        return pick(0x1A7F37, 0x7EE787);
     }
 
     static Color changed() {
-        return CHANGED;
+        return pick(0x9A6700, 0xE3B341);
     }
 
     static Color changedRow() {
-        return tint(CHANGED, 0.14f);
+        return tint(changed(), 0.14f);
     }
 
     /**
@@ -146,14 +142,14 @@ public final class Theme {
 
     static Color colourFor(final Syntax.Kind kind) {
         return switch (kind) {
-            case FLOW -> FLOW;
-            case DATA -> DATA;
-            case MATH -> MATH;
+            case FLOW -> pick(0x8250DF, 0xD2A8FF);
+            case DATA -> pick(0x0550AE, 0x79C0FF);
+            case MATH -> pick(0x116329, 0x7EE787);
             case MISC -> muted();
-            case ILLEGAL -> BREAKPOINT;
-            case IMMEDIATE -> IMMEDIATE;
-            case ADDRESS -> ADDRESS;
-            case REGISTER -> REGISTER;
+            case ILLEGAL -> breakpoint();
+            case IMMEDIATE -> pick(0x953800, 0xF2B17A);
+            case ADDRESS -> pick(0x0A3069, 0x9ECBFF);
+            case REGISTER -> pick(0x6639BA, 0xBC8CFF);
             case PUNCTUATION -> muted();
             case TEXT -> foreground();
         };
@@ -181,5 +177,17 @@ public final class Theme {
         var colour = UIManager.getColor(key);
 
         return colour == null ? fallback : colour;
+    }
+
+    private static final class MutedLabel extends JLabel {
+        MutedLabel(final String text) {
+            super(text);
+        }
+
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            setForeground(muted());
+        }
     }
 }

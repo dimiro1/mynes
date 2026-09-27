@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui.debugger;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.Controller;
 import com.github.dimiro1.mynes.ui.Readout;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.ui.sound.Notes;
 
 import javax.swing.BorderFactory;
@@ -29,7 +30,7 @@ import java.util.function.IntConsumer;
  * listing until they are needed. Values come only from a stop snapshot or a frame readout; painting
  * and expanding the tree never reads the running machine.
  */
-final class RegistersPanel extends JPanel {
+final class RegistersPanel extends JPanel implements AppearanceAware {
     private static final String[] CPU = {"PC", "A", "X", "Y", "SP", "P", "flags", "cycles"};
     private static final String[] PPU = {
             "frame", "beam", "NMI", "background", "sprite layer", "render", "sprites",
@@ -59,6 +60,7 @@ final class RegistersPanel extends JPanel {
             return item.tip;
         }
     };
+    private final JScrollPane scroll = new JScrollPane(tree);
     private final IntConsumer showInMemory;
 
     private MachineSnapshot snapshot;
@@ -115,10 +117,16 @@ final class RegistersPanel extends JPanel {
             }
         });
 
-        var scroll = new JScrollPane(tree);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
         setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 8));
         add(scroll, BorderLayout.CENTER);
+    }
+
+    @Override
+    public void refreshAppearance() {
+        tree.setBackground(Theme.background());
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        tree.repaint();
     }
 
     void setSourceProgram(final SourceProgram program) {

@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.MenuKey;
 import net.miginfocom.swing.MigLayout;
@@ -38,7 +39,7 @@ import java.awt.event.KeyEvent;
  * somebody is most likely looking for -- the one at the PC, the top of the stack, and the one a
  * watchpoint just caught -- are the three that are coloured.
  */
-final class MemoryPanel extends JPanel {
+final class MemoryPanel extends JPanel implements AppearanceAware {
     /**
      * The window the PPU and the controllers answer on, which {@code peek} deliberately reads as
      * zero rather than for real. Faded, so that a row of zeros there is not mistaken for a machine
@@ -80,6 +81,7 @@ final class MemoryPanel extends JPanel {
 
     private final MemoryModel model = new MemoryModel();
     private final JTable table = new JTable(model);
+    private final JScrollPane scroll = new JScrollPane(table);
     private final JTextField address = new JTextField(7);
     private final JComboBox<Landmark> landmarks = new JComboBox<>(Landmark.values());
     private final JLabel selected = new JLabel(" ");
@@ -127,7 +129,6 @@ final class MemoryPanel extends JPanel {
         landmarks.setToolTipText("Somewhere worth looking");
         landmarks.addActionListener(e -> goToLandmark());
 
-        var scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
 
         var heading = Theme.heading("Memory");
@@ -142,6 +143,13 @@ final class MemoryPanel extends JPanel {
         add(selected, "span 5, growx");
 
         bindGoTo();
+    }
+
+    @Override
+    public void refreshAppearance() {
+        selected.setForeground(Theme.muted());
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        table.repaint();
     }
 
     /**

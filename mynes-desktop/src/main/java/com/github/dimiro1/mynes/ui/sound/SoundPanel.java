@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui.sound;
 import com.github.dimiro1.mynes.APU;
 import com.github.dimiro1.mynes.APUChannel;
 import com.github.dimiro1.mynes.ui.Readout;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.ui.debugger.Theme;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.Nullable;
@@ -31,7 +32,7 @@ import java.util.Map;
  * The meters are peaks over that quarter second rather than levels: a level sampled four times a
  * second from a wave oscillating hundreds of times a second is a random number.
  */
-public final class SoundPanel extends JPanel {
+public final class SoundPanel extends JPanel implements AppearanceAware {
     private static final String NOTHING = "—";
 
     /**
@@ -143,7 +144,7 @@ public final class SoundPanel extends JPanel {
         for (var channel : APUChannel.values()) {
             var name = new JLabel(channel.label());
             var trace = new Scope(
-                    Traces.colourOf(channel),
+                    () -> Traces.colourOf(channel),
                     Traces.fullScaleOf(channel),
                     VOICE_HEIGHT,
                     false);
@@ -232,6 +233,21 @@ public final class SoundPanel extends JPanel {
         if (split.isSelected()) {
             drawTheVoices(readout);
         }
+    }
+
+    @Override
+    public void refreshAppearance() {
+        for (var channel : APUChannel.values()) {
+            var colour = Traces.colourOf(channel);
+            names.get(channel).setForeground(colour);
+            if (keyboardNames.containsKey(channel)) {
+                keyboardNames.get(channel).setForeground(colour);
+            }
+            if (last != null) {
+                rows.get(channel).show(last.voice(channel), last.peak(channel));
+            }
+        }
+        repaint();
     }
 
     /**

@@ -8,6 +8,7 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.util.function.Supplier;
 
 /**
  * The waveform the five voices add up to, over the last frame.
@@ -40,7 +41,7 @@ final class Scope extends JComponent {
      */
     private static final double FULL_SCALE = Short.MAX_VALUE * 0.2;
 
-    private final Color colour;
+    private final Supplier<Color> colour;
     private final double fullScale;
 
     /**
@@ -59,14 +60,15 @@ final class Scope extends JComponent {
      * The mixed output, scaled to what a game actually puts out.
      */
     Scope() {
-        this(Theme.running(), FULL_SCALE, HEIGHT, true);
+        this(Theme::running, FULL_SCALE, HEIGHT, true);
     }
 
     /**
      * One voice on its own, in its own colour and against its own full scale -- see
      * {@link Traces#fullScaleOf}.
      */
-    Scope(final Color colour, final double fullScale, final int height, final boolean centred) {
+    Scope(final Supplier<Color> colour, final double fullScale, final int height,
+            final boolean centred) {
         this.colour = colour;
         this.fullScale = fullScale;
         this.centred = centred;
@@ -97,7 +99,7 @@ final class Scope extends JComponent {
 
             g2.setRenderingHint(
                     RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(colour);
+            g2.setColor(colour.get());
 
             var previous = zero;
 

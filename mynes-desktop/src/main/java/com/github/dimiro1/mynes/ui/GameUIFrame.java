@@ -343,7 +343,13 @@ public class GameUIFrame extends JFrame {
     private boolean pausedInBackground;
 
     public GameUIFrame() {
+        this(Config.load(Config.DEFAULT_PATH));
+    }
+
+    GameUIFrame(final Config config) {
         super("MyNES");
+
+        this.config = config;
 
         // Both, in one filter rather than two: a collection is a folder of zips, and one that has
         // been half unpacked is a folder of both. Picking between two filters to see the file that
@@ -373,7 +379,6 @@ public class GameUIFrame extends JFrame {
         musicChooser.addChoosableFileFilter(musicFilter);
         musicChooser.setFileFilter(musicFilter);
 
-        config = Config.load(Config.DEFAULT_PATH);
         keyboardInput = new KeyboardInput(this, config.keyBindings());
 
         // Once, unlike the bindings: there is no dialog that moves this one, only the file.
@@ -592,6 +597,9 @@ public class GameUIFrame extends JFrame {
         // Under the sizes rather than beside the palette: what this changes is the shape of the
         // window, not the picture in it.
         settingsMenu.add(tick(switches.statusBar()));
+
+        settingsMenu.addSeparator();
+        settingsMenu.add(appearanceMenu());
 
         JMenu helpMenu = new JMenu("Help");
         helpMenu.setMnemonic(KeyEvent.VK_H);
@@ -1142,6 +1150,32 @@ public class GameUIFrame extends JFrame {
             group.add(item);
             menu.add(item);
         }
+    }
+
+    private JMenu appearanceMenu() {
+        var menu = new JMenu("Appearance");
+        var group = new ButtonGroup();
+
+        for (var appearance : Appearance.values()) {
+            var item = new JRadioButtonMenuItem(appearance.label());
+
+            item.setSelected(config.appearance() == appearance);
+            item.addActionListener(event -> {
+                if (config.appearance() == appearance) {
+                    return;
+                }
+
+                appearance.install();
+                appearance.refreshWindows();
+                config.setAppearance(appearance);
+                saveConfig();
+            });
+
+            group.add(item);
+            menu.add(item);
+        }
+
+        return menu;
     }
 
     /**

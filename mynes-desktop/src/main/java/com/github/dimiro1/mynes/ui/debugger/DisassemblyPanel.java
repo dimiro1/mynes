@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Disassembler;
 import net.miginfocom.swing.MigLayout;
@@ -53,7 +54,7 @@ import java.util.Set;
  * page of loads without reading a single mnemonic. {@link Syntax} decides what each piece is and
  * {@link Theme} what colour that is; this class only puts them where they go.
  */
-final class DisassemblyPanel extends JPanel {
+final class DisassemblyPanel extends JPanel implements AppearanceAware {
     /**
      * What a row can be asked to do, all of it posted onto the emulation thread by the window.
      */
@@ -84,6 +85,7 @@ final class DisassemblyPanel extends JPanel {
 
     private final DefaultListModel<Row> model = new DefaultListModel<>();
     private final JList<Row> list = new Listing();
+    private final JScrollPane scroll = new JScrollPane(list);
     private final JTextField from = new JTextField(10);
     private final Actions actions;
 
@@ -138,7 +140,6 @@ final class DisassemblyPanel extends JPanel {
             listFromTyped();
         });
 
-        var scroll = new JScrollPane(list);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
         scroll.getViewport().addComponentListener(new ComponentAdapter() {
             @Override
@@ -155,6 +156,12 @@ final class DisassemblyPanel extends JPanel {
         add(go, "gapright 4");
         add(toPC, "wrap");
         add(scroll, "span 5, grow");
+    }
+
+    @Override
+    public void refreshAppearance() {
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        list.repaint();
     }
 
     /**

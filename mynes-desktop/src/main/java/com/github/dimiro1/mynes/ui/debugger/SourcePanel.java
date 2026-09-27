@@ -1,9 +1,11 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import net.miginfocom.swing.MigLayout;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.fife.ui.rsyntaxtextarea.Token;
+import org.fife.ui.rsyntaxtextarea.TokenTypes;
 import org.fife.ui.rtextarea.IconRowEvent;
 import org.fife.ui.rtextarea.IconRowListener;
 import org.fife.ui.rtextarea.RTextScrollPane;
@@ -20,6 +22,7 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
 import javax.swing.text.BadLocationException;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -29,10 +32,12 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.InputEvent;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Set;
 
 /** A read-only, syntax-highlighted source listing over the linked bytes in a ca65 program. */
-final class SourcePanel extends JPanel {
+final class SourcePanel extends JPanel implements AppearanceAware {
     interface Actions {
         void attach();
 
@@ -76,10 +81,6 @@ final class SourcePanel extends JPanel {
         listing.setCodeFoldingEnabled(false);
         listing.setHighlightCurrentLine(false);
         listing.setAntiAliasingEnabled(true);
-        listing.setBackground(Theme.background());
-        listing.setForeground(Theme.foreground());
-        listing.setSelectionColor(Theme.selectionBackground());
-        listing.setSelectedTextColor(Theme.selectionForeground());
         listing.addMouseListener(new Mouse());
         listing.addCaretListener(event -> {
             if (!changingText) {
@@ -89,13 +90,11 @@ final class SourcePanel extends JPanel {
 
         scroll.setLineNumbersEnabled(true);
         scroll.setIconRowHeaderEnabled(true);
-        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
         scroll.getGutter().setLineNumberFont(Theme.MONOSPACED);
-        scroll.getGutter().setLineNumberColor(Theme.muted());
-        scroll.getGutter().setCurrentLineNumberColor(Theme.muted());
-        scroll.getGutter().setBorderColor(Theme.dim());
         scroll.getGutter().setIconRowHeaderInheritsGutterBackground(true);
         scroll.getGutter().addIconRowListener(new GutterClicks());
+
+        refreshAppearance();
 
         files.setEnabled(false);
         files.addActionListener(event -> {
@@ -124,6 +123,47 @@ final class SourcePanel extends JPanel {
         add(detach, "wrap");
         add(scroll, "span 5, grow, wrap");
         add(note, "span 5, growx");
+    }
+
+    @Override
+    public void refreshAppearance() {
+        var resource = "/org/fife/ui/rsyntaxtextarea/themes/"
+                + (Theme.isDark() ? "dark.xml" : "default.xml");
+
+        try (var in = RSyntaxTextArea.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException("missing source theme " + resource);
+            }
+            org.fife.ui.rsyntaxtextarea.Theme.load(in, Theme.MONOSPACED).apply(listing);
+        } catch (IOException e) {
+            throw new UncheckedIOException("could not load source theme " + resource, e);
+        }
+
+        if (Theme.isDark()) {
+            // The bundled theme's comments are too faint on FlatLaf's dark listing background.
+            // ca65 labels and immediate values use PREPROCESSOR, which also needs a little lift.
+            var scheme = listing.getSyntaxScheme();
+            var comments = new Color(0x9DAAB5);
+
+            scheme.getStyle(TokenTypes.COMMENT_EOL).foreground = comments;
+            scheme.getStyle(TokenTypes.COMMENT_MULTILINE).foreground = comments;
+            scheme.getStyle(TokenTypes.COMMENT_DOCUMENTATION).foreground = comments;
+            scheme.getStyle(TokenTypes.PREPROCESSOR).foreground = new Color(0xC5A5E8);
+            listing.setSyntaxScheme(scheme);
+        }
+
+        listing.setBackground(Theme.background());
+        listing.setForeground(Theme.foreground());
+        listing.setSelectionColor(Theme.selectionBackground());
+        listing.setSelectedTextColor(Theme.selectionForeground());
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        scroll.getGutter().setBackground(Theme.background());
+        scroll.getGutter().setLineNumberFont(Theme.MONOSPACED);
+        scroll.getGutter().setLineNumberColor(Theme.muted());
+        scroll.getGutter().setCurrentLineNumberColor(Theme.muted());
+        scroll.getGutter().setBorderColor(Theme.dim());
+        scroll.getGutter().setIconRowHeaderInheritsGutterBackground(true);
+        refreshDecorations();
     }
 
     void show(

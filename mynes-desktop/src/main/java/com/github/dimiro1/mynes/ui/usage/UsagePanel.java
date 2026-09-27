@@ -2,6 +2,7 @@ package com.github.dimiro1.mynes.ui.usage;
 
 import com.github.dimiro1.mynes.debug.Usage;
 import com.github.dimiro1.mynes.ui.Readout;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.ui.debugger.Theme;
 import net.miginfocom.swing.MigLayout;
 
@@ -20,6 +21,7 @@ import java.awt.Rectangle;
 import java.util.EnumMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * How much of its frame the game is using, and how much of the machine's memory.
@@ -60,7 +62,7 @@ import java.util.Map;
  * Started again once a game is playing, the same map is 18% of the zero page and 13% of the work
  * RAM, which is the game.
  */
-public final class UsagePanel extends JPanel implements Scrollable {
+public final class UsagePanel extends JPanel implements Scrollable, AppearanceAware {
     private static final String NOTHING = "—";
 
     /**
@@ -83,6 +85,14 @@ public final class UsagePanel extends JPanel implements Scrollable {
     private final JLabel writes = value();
 
     private final Map<Usage.Area, Area> areas = new EnumMap<>(Usage.Area.class);
+
+    @Override
+    public void refreshAppearance() {
+        for (var area : areas.values()) {
+            area.place.setForeground(Theme.muted());
+        }
+        repaint();
+    }
 
     public UsagePanel(final Runnable forget) {
         setLayout(new MigLayout("insets 10, gapy 3, wrap 1, fillx", "[grow, fill]", ""));
@@ -241,9 +251,9 @@ public final class UsagePanel extends JPanel implements Scrollable {
     private static JPanel legend() {
         var panel = new JPanel(new MigLayout("insets 0, gapx 6", "", ""));
 
-        panel.add(new Swatch(Theme.muted()));
+        panel.add(new Swatch(Theme::muted));
         panel.add(Theme.note("ever written"), "gapright 18");
-        panel.add(new Swatch(Theme.running()));
+        panel.add(new Swatch(Theme::running));
         panel.add(Theme.note("written in the last quarter second"));
 
         return panel;
@@ -253,9 +263,9 @@ public final class UsagePanel extends JPanel implements Scrollable {
      * One colour of the legend, at the size of the text beside it.
      */
     private static final class Swatch extends JComponent {
-        private final Color colour;
+        private final Supplier<Color> colour;
 
-        Swatch(final Color colour) {
+        Swatch(final Supplier<Color> colour) {
             this.colour = colour;
 
             setPreferredSize(new Dimension(10, 10));
@@ -264,7 +274,7 @@ public final class UsagePanel extends JPanel implements Scrollable {
 
         @Override
         protected void paintComponent(final Graphics g) {
-            g.setColor(colour);
+            g.setColor(colour.get());
             g.fillRect(0, 0, getWidth(), getHeight());
         }
     }
@@ -276,16 +286,18 @@ public final class UsagePanel extends JPanel implements Scrollable {
         private final Usage.Area area;
         private final MemoryStrip strip = new MemoryStrip();
         private final JLabel used = value();
+        private final JLabel place;
 
         Area(final Usage.Area area) {
             this.area = area;
+            this.place = place();
         }
 
         void addTo(final JPanel parent) {
             var header = new JPanel(new MigLayout("insets 0, gapx 12", "[90][54][grow][]", ""));
 
             header.add(new JLabel(NAMES.get(area)));
-            header.add(place());
+            header.add(place);
             header.add(new JLabel());
             header.add(used);
 

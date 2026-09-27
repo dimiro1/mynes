@@ -3,6 +3,7 @@ package com.github.dimiro1.mynes.ui.events;
 import com.github.dimiro1.mynes.Region;
 import com.github.dimiro1.mynes.debug.Debugger;
 import com.github.dimiro1.mynes.ui.Readout;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.ui.debugger.Theme;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.Nullable;
@@ -41,7 +42,7 @@ import java.util.function.Consumer;
  * recorded. Sound is the one worth switching off, since a music driver writes twenty or thirty
  * registers a frame and none of them is where a raster bug lives.
  */
-public final class EventsPanel extends JPanel {
+public final class EventsPanel extends JPanel implements AppearanceAware {
     private static final String NOTHING = "—";
 
     /**
@@ -140,6 +141,14 @@ public final class EventsPanel extends JPanel {
     public void show(final Readout readout) {
         last = readout;
         redraw();
+    }
+
+    @Override
+    public void refreshAppearance() {
+        for (var entry : filters.entrySet()) {
+            entry.getValue().setForeground(EventColours.of(entry.getKey().kinds[0]));
+        }
+        raster.repaint();
     }
 
     // ================================================================================== internals

@@ -36,6 +36,8 @@ Video options include twelve palettes, NTSC and CRT filters, overscan, and TV as
 
 Keys for both players can be changed under **Settings > Controller…**. Player two has no default keys. Gamepads and the Zapper are not supported yet.
 
+Choose **Settings > Appearance > Light** or **Dark** to change the window theme. The choice takes effect immediately and is remembered for the next run.
+
 ## Debugging
 
 Open **Debug > Control Panel** or press **Cmd/Ctrl+D**. The Debugger tab has source code or disassembly in the center. The tree on the left has CPU, PPU, APU, input, stack, and RAM values. Memory and breakpoints are below the code.
@@ -85,6 +87,7 @@ Settings are stored in `~/.mynes/config.properties`. Most can also be changed in
 ```properties
 rewind.seconds=30
 audio.latency-ms=60
+ui.theme=dark
 ```
 
 ## Headless mode

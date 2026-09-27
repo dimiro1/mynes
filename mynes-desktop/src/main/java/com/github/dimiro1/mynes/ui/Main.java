@@ -1,6 +1,5 @@
 package com.github.dimiro1.mynes.ui;
 
-import com.formdev.flatlaf.FlatLightLaf;
 import com.github.dimiro1.mynes.headless.Headless;
 
 import javax.swing.*;
@@ -72,12 +71,13 @@ public class Main {
 
         // Inside the branch that needs it: the look and feel loads a native library and wakes the
         // whole toolkit up, neither of which a headless run has any use for.
-        FlatLightLaf.setup();
+        var config = Config.load(Config.DEFAULT_PATH);
+        config.appearance().install();
 
         logger.log(Level.INFO, "MyNES");
 
         SwingUtilities.invokeLater(() -> {
-            var frame = new GameUIFrame();
+            var frame = new GameUIFrame(config);
             frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
             frame.setVisible(true);
         });

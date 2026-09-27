@@ -64,6 +64,26 @@ class ConfigTests {
         return new RecentRom(directory.resolve(name), null, null);
     }
 
+    @Test
+    void appearanceDefaultsToLightAndRoundTripsDark() throws IOException {
+        var config = Config.load(config());
+        assertSame(Appearance.LIGHT, config.appearance());
+
+        config.setAppearance(Appearance.DARK);
+        config.save(config());
+
+        assertSame(Appearance.DARK, Config.load(config()).appearance());
+        assertTrue(Files.readString(config()).contains("ui.theme=dark"));
+    }
+
+    @Test
+    void invalidAppearanceFallsBackToLight() throws IOException {
+        assertSame(Appearance.LIGHT,
+                Config.load(write("ui.theme=unknown\n")).appearance());
+        assertSame(Appearance.DARK,
+                Config.load(write("ui.theme= DARK \n")).appearance());
+    }
+
     @Nested
     @DisplayName("loading the status bar")
     class LoadingStatusBar {

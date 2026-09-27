@@ -2,7 +2,6 @@ package com.github.dimiro1.mynes.ui.ppuviewer;
 
 import com.github.dimiro1.mynes.PPU;
 import com.github.dimiro1.mynes.video.FrameRenderer;
-import org.jetbrains.annotations.Nullable;
 
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -12,9 +11,9 @@ import java.awt.Graphics2D;
  * <p>
  * A viewer over OAM or over palette RAM can say what is in a byte perfectly and still leave the
  * only question worth asking unanswered, which is where on the screen that byte lands. So both of
- * them draw the frame underneath and take the brightness off everything the question is not about.
- * Dimming rather than outlining, because the regions are not always rectangles a box could go
- * round: a background palette's share of the screen is whatever shape the attribute bytes make.
+ * them draw the frame underneath. The sprite view keeps its original colours. The palette view
+ * dims pixels outside a selected palette, because those regions are not always rectangles a box
+ * could go round: a background palette's share of the screen follows the attribute bytes.
  * <p>
  * <b>All 240 lines of it, unlike everywhere else in the front end</b>, which is why the shading at
  * the top and the bottom is here too. The window draws the 224 a television left outside its bezel,
@@ -31,8 +30,7 @@ import java.awt.Graphics2D;
 final class Screen {
     /**
      * How much light a pixel keeps when it is not what is being asked about. Low enough that a lit
-     * region reads as lit at a glance, high enough that the picture underneath is still a picture
-     * rather than a silhouette -- knowing <em>where</em> in the level a sprite is needs the level.
+     * region reads as lit at a glance, high enough that the picture underneath is still visible.
      */
     private static final int DIM_PERCENT = 30;
 
@@ -61,21 +59,20 @@ final class Screen {
     /**
      * The same frame with the light taken off everything that is not being asked about.
      *
-     * @param lit which pixels keep their brightness. <b>Null dims the whole picture</b>, which is
-     *            what a window that draws its own answer over the top wants.
+     * @param lit which pixels keep their brightness.
      */
     static void drawDimmed(
             final int[] into,
             final PPU ppu,
             final int[] colours,
-            final @Nullable boolean[] lit) {
+            final boolean[] lit) {
 
         var frame = ppu.getFrameBuffer();
 
         for (var i = 0; i < into.length; i++) {
             var colour = colours[frame[i] & 0x1FF];
 
-            into[i] = lit != null && lit[i] ? colour : dim(colour);
+            into[i] = lit[i] ? colour : dim(colour);
         }
     }
 

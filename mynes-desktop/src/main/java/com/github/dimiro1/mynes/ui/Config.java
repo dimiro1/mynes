@@ -61,6 +61,7 @@ public final class Config {
     private static final String SCREENSHOT_SCALE_KEY = "video.screenshot.scale";
     private static final String TV_ASPECT_KEY = "video.tv-aspect";
     private static final String STATUS_BAR_KEY = "ui.status-bar";
+    private static final String APPEARANCE_KEY = "ui.theme";
     private static final String REGION_KEY = "emulation.region";
     private static final String FAST_FORWARD_KEY = "emulation.fast-forward";
     private static final String PAUSE_IN_BACKGROUND_KEY = "emulation.pause-in-background";
@@ -290,6 +291,7 @@ public final class Config {
     private ScreenScale screenScale;
     private ScreenScale screenshotScale;
     private boolean statusBar;
+    private Appearance appearance;
     private RegionSetting region;
     private EmulationSpeed fastForwardSpeed;
     private boolean pauseInBackground;
@@ -326,6 +328,7 @@ public final class Config {
             final ScreenScale screenScale,
             final ScreenScale screenshotScale,
             final boolean statusBar,
+            final Appearance appearance,
             final RegionSetting region,
             final EmulationSpeed fastForwardSpeed,
             final boolean pauseInBackground,
@@ -350,6 +353,7 @@ public final class Config {
         this.screenScale = screenScale;
         this.screenshotScale = screenshotScale;
         this.statusBar = statusBar;
+        this.appearance = appearance;
         this.region = region;
         this.fastForwardSpeed = fastForwardSpeed;
         this.pauseInBackground = pauseInBackground;
@@ -400,6 +404,7 @@ public final class Config {
                 screenScaleFrom(properties, SCALE_KEY, ScreenScale.defaultScale()),
                 screenScaleFrom(properties, SCREENSHOT_SCALE_KEY, ScreenScale.defaultScreenshotScale()),
                 flagFrom(properties, STATUS_BAR_KEY, true),
+                Appearance.byId(properties.getProperty(APPEARANCE_KEY, Appearance.LIGHT.id())),
                 regionFrom(properties),
                 fastForwardSpeedFrom(properties),
                 flagFrom(properties, PAUSE_IN_BACKGROUND_KEY, true),
@@ -837,6 +842,12 @@ public final class Config {
                 .append(statusBar)
                 .append("\n\n");
 
+        text.append("# The window's colours; light or dark.\n")
+                .append(APPEARANCE_KEY)
+                .append('=')
+                .append(appearance.id())
+                .append("\n\n");
+
         text.append(REGION_HEADER)
                 .append(REGION_KEY)
                 .append('=')
@@ -1119,6 +1130,14 @@ public final class Config {
 
     public void setStatusBar(final boolean statusBar) {
         this.statusBar = statusBar;
+    }
+
+    public Appearance appearance() {
+        return appearance;
+    }
+
+    public void setAppearance(final Appearance appearance) {
+        this.appearance = appearance;
     }
 
     /**

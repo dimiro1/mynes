@@ -116,7 +116,7 @@ final class DebuggerIcons {
                 return Theme.muted();
             }
 
-            // The app ships a light theme; keep the icons legible if a dark look and feel is used.
+            // The icons need enough contrast on either look and feel.
             var background = Theme.background();
             var dark = background.getRed() * 299 + background.getGreen() * 587
                     + background.getBlue() * 114 < 128_000;

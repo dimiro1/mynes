@@ -1,6 +1,7 @@
 package com.github.dimiro1.mynes.ui.debugger;
 
 import com.formdev.flatlaf.FlatClientProperties;
+import com.github.dimiro1.mynes.ui.AppearanceAware;
 import com.github.dimiro1.mynes.debug.Condition;
 import com.github.dimiro1.mynes.debug.Debugger;
 import net.miginfocom.swing.MigLayout;
@@ -33,7 +34,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /** Breakpoints and watchpoints in one list, with a single place to add or remove them. */
-final class PointsPanel extends JPanel {
+final class PointsPanel extends JPanel implements AppearanceAware {
     interface Points {
         void breakAt(int address, Condition condition);
         void watchAt(int address, Debugger.Access on);
@@ -58,6 +59,7 @@ final class PointsPanel extends JPanel {
 
     private final Model model = new Model();
     private final JTable table = new JTable(model);
+    private final JScrollPane scroll = new JScrollPane(table);
     private final JTextField entry = new JTextField(12);
     private final JComboBox<Debugger.Access> facing = new JComboBox<>(Debugger.Access.values());
     private final JLabel complaint = new JLabel(" ");
@@ -154,13 +156,19 @@ final class PointsPanel extends JPanel {
         watchRow.add(addWatch);
         watchRow.add(clear);
 
-        var scroll = new JScrollPane(table);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
         add(header);
         add(scroll, "grow, hmin 70");
         add(entryRow, "growx");
         add(watchRow, "growx");
         add(complaint, "growx");
+    }
+
+    @Override
+    public void refreshAppearance() {
+        complaint.setForeground(Theme.breakpoint());
+        scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        table.repaint();
     }
 
     @Override
