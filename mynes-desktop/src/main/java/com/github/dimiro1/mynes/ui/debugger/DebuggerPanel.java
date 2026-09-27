@@ -505,6 +505,7 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
      * and the only way out buried in the Machine menu, which looks exactly like a crash.
      */
     public void closing() {
+        profiler.closeExpandedGraph();
         if (profiling) toggleProfile();
         // Run to Here and Step Over leave a temporary point while the machine is running. Closing
         // the view must not let that hidden point freeze the game a moment later.
@@ -583,6 +584,7 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             var measured = profile;
             activeRunner.post(() -> {
                 activeMachine.getCPU().removeEventListener(measured);
+                measured.pause();
                 var result = measured.snapshot();
                 SwingUtilities.invokeLater(() -> {
                     if (runner == activeRunner) profiler.show(result);
@@ -593,7 +595,10 @@ public final class DebuggerPanel extends JPanel implements AppearanceAware {
             var measured = profile;
             profiling = true;
             profiler.setRecording(true);
-            activeRunner.post(() -> activeMachine.getCPU().addEventListener(measured));
+            activeRunner.post(() -> {
+                measured.resume();
+                activeMachine.getCPU().addEventListener(measured);
+            });
         }
     }
 

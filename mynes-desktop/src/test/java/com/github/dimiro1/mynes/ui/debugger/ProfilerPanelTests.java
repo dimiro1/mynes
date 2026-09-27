@@ -31,9 +31,18 @@ class ProfilerPanelTests {
             navigatedOffset.set(offset);
         });
         panel.setSourceProgram(program);
+        var graphLocation = new ExecutionProfile.FlameNode(
+                new ExecutionProfile.Frame(ExecutionProfile.FrameKind.LOCATION, 4, 0x8004),
+                10, 30, 10, 30, List.of());
+        var otherLocation = new ExecutionProfile.FlameNode(
+                new ExecutionProfile.Frame(ExecutionProfile.FrameKind.LOCATION, 20, 0x8014),
+                5, 20, 5, 20, List.of());
+        var graphRoot = new ExecutionProfile.FlameNode(
+                new ExecutionProfile.Frame(ExecutionProfile.FrameKind.ROOT, -1, -1),
+                0, 0, 15, 50, List.of(graphLocation, otherLocation));
         panel.show(new ExecutionProfile.Snapshot(List.of(
                 new ExecutionProfile.Entry(4, 10, 30),
-                new ExecutionProfile.Entry(20, 5, 20)), 15, 50));
+                new ExecutionProfile.Entry(20, 5, 20)), 15, 50, graphRoot));
         Views.paint(panel);
 
         var table = Views.find(panel, JTable.class);
@@ -44,6 +53,22 @@ class ProfilerPanelTests {
         doubleClick(table, 1);
         assertNull(navigatedLine.get());
         assertEquals(20, navigatedOffset.get());
+
+        var graph = Views.find(panel, FlameGraphPanel.class);
+        Views.paint(graph);
+        graph.dispatchEvent(new MouseEvent(graph, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, 20, 165, 1, false, MouseEvent.BUTTON1));
+        graph.dispatchEvent(new MouseEvent(graph, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, 20, 165, 2, false, MouseEvent.BUTTON1));
+        assertNull(navigatedLine.get());
+        assertEquals(20, navigatedOffset.get());
+        Views.paint(graph);
+        graph.dispatchEvent(new MouseEvent(graph, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, 20, 190, 1, false, MouseEvent.BUTTON1));
+        graph.dispatchEvent(new MouseEvent(graph, MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, 20, 190, 2, false, MouseEvent.BUTTON1));
+        assertEquals(line, navigatedLine.get());
+        assertEquals(4, navigatedOffset.get());
     }
 
     private static void doubleClick(final JTable table, final int row) {

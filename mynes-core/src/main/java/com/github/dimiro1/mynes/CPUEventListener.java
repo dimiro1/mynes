@@ -32,4 +32,8 @@ public interface CPUEventListener {
             final int opcodeLength,
             final long cycles
     );
+
+    /** Called when a hardware NMI or IRQ is serviced, before its handler's first instruction. */
+    default void onInterrupt(final boolean nmi, final int returnPC) {
+    }
 }

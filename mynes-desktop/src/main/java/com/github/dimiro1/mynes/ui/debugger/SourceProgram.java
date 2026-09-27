@@ -56,6 +56,13 @@ final class SourceProgram {
         }
     }
 
+    /** The physical bytes emitted by an ld65 procedure scope. */
+    record FunctionRange(String name, int prgOffset, int size, @Nullable Location definition) {
+        FunctionRange(final String name, final int prgOffset, final int size) {
+            this(name, prgOffset, size, null);
+        }
+    }
+
     record SourceLine(SourceFile file, int number, String text, List<Range> ranges) {
         /** Every place execution may enter for this line, in PRG order and only once. */
         Set<Integer> breakpointOffsets() {
@@ -97,6 +104,8 @@ final class SourceProgram {
     private final List<SourceFile> files;
     private final Map<FileLine, SourceLine> lines;
     private final SourceLine[] lineAtPRG;
+    private final String[] functionAtPRG;
+    private final SourceLine[] functionDefinitionAtPRG;
     private final Map<Integer, List<Symbol>> symbolsAtPRG;
     private final Map<Integer, List<Symbol>> symbolsAtAddress;
     private final Map<String, List<Symbol>> symbolsByName;
@@ -112,12 +121,26 @@ final class SourceProgram {
             final List<Symbol> symbols,
             final int prgBytes,
             final List<String> warnings) {
+        this(debugFile, files, ranges, preferredLines, symbols, prgBytes, warnings, List.of());
+    }
+
+    SourceProgram(
+            final Path debugFile,
+            final List<SourceFile> files,
+            final Map<Integer, Map<Integer, List<Range>>> ranges,
+            final List<SourceLine> preferredLines,
+            final List<Symbol> symbols,
+            final int prgBytes,
+            final List<String> warnings,
+            final List<FunctionRange> functions) {
 
         this.debugFile = debugFile;
         this.files = List.copyOf(files);
         this.warnings = List.copyOf(warnings);
         this.lines = new LinkedHashMap<>();
         this.lineAtPRG = new SourceLine[prgBytes];
+        this.functionAtPRG = new String[prgBytes];
+        this.functionDefinitionAtPRG = new SourceLine[prgBytes];
         this.symbolsAtPRG = new LinkedHashMap<>();
         this.symbolsAtAddress = new LinkedHashMap<>();
         this.symbolsByName = new LinkedHashMap<>();
@@ -168,6 +191,19 @@ final class SourceProgram {
             }
         }
 
+        // The narrowest nested procedure owns a byte when scope spans overlap.
+        functions.stream().sorted(Comparator.comparingInt(FunctionRange::size).reversed())
+                .forEach(function -> {
+                    var until = Math.min(functionAtPRG.length,
+                            function.prgOffset() + function.size());
+                    var definition = function.definition() == null ? null
+                            : line(function.definition().file(), function.definition().line());
+                    for (var offset = Math.max(0, function.prgOffset()); offset < until; offset++) {
+                        functionAtPRG[offset] = function.name();
+                        functionDefinitionAtPRG[offset] = definition;
+                    }
+                });
+
         for (var symbol : symbols) {
             symbolsAtAddress.computeIfAbsent(symbol.value() & 0xFFFF, ignored -> new ArrayList<>())
                     .add(symbol);
@@ -217,6 +253,39 @@ final class SourceProgram {
 
     @Nullable SourceLine lineAt(final int prgOffset) {
         return prgOffset >= 0 && prgOffset < lineAtPRG.length ? lineAtPRG[prgOffset] : null;
+    }
+
+    @Nullable String functionAt(final int prgOffset) {
+        if (prgOffset < 0 || prgOffset >= functionAtPRG.length) return null;
+        if (functionAtPRG[prgOffset] != null) return functionAtPRG[prgOffset];
+        var exact = symbolsAtPRG.getOrDefault(prgOffset, List.of());
+        return exact.stream().filter(symbol -> symbol.kind().equals("lab"))
+                .map(Symbol::name).findFirst().orElse(null);
+    }
+
+    /** The label that defines a called procedure, rather than its first generated instruction. */
+    @Nullable SourceLine functionDefinitionAt(final int prgOffset, final int cpuAddress) {
+        if (prgOffset >= 0 && prgOffset < functionDefinitionAtPRG.length
+                && functionDefinitionAtPRG[prgOffset] != null) {
+            return functionDefinitionAtPRG[prgOffset];
+        }
+        var name = functionAt(prgOffset);
+        if (name == null) return null;
+        var named = symbolsByName.getOrDefault(name, List.of());
+        for (var symbol : named) {
+            if (symbol.prgOffset() != null && symbol.prgOffset() == prgOffset
+                    && symbol.definition() != null) {
+                var definition = symbol.definition();
+                return line(definition.file(), definition.line());
+            }
+        }
+        for (var symbol : named) {
+            if (symbol.value() == (cpuAddress & 0xFFFF) && symbol.definition() != null) {
+                var definition = symbol.definition();
+                return line(definition.file(), definition.line());
+            }
+        }
+        return null;
     }
 
     List<Symbol> symbolsAt(final int prgOffset, final int cpuAddress) {

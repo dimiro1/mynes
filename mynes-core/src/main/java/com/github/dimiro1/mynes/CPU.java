@@ -463,10 +463,9 @@ public class CPU {
     /**
      * Told whenever an interrupt is served, or null for nobody.
      * <p>
-     * Its own slot rather than another method on {@link CPUEventListener}, because the two are
-     * asked for separately and cost differently: a step listener is called 1.8 million times a
-     * second and an interrupt listener a handful of times a frame, so something that wants only
-     * the second should not be put on the first list.
+     * Its own slot because a step listener is called 1.8 million times a second and an interrupt
+     * listener only a handful of times a frame. Step listeners that are already registered also
+     * receive interrupt callbacks, which lets the profiler keep its call paths in one listener.
      *
      * @see InterruptListener
      */
@@ -795,6 +794,10 @@ public class CPU {
                 // reported -- a program that runs BRK at all is one a breakpoint suits better.
                 if (interruptListener != null) {
                     interruptListener.onInterrupt(interruptVector == NMI_VECTOR, pc);
+                }
+                if (!speculating) {
+                    listeners.forEach(listener ->
+                            listener.onInterrupt(interruptVector == NMI_VECTOR, pc));
                 }
 
                 incIntTick();

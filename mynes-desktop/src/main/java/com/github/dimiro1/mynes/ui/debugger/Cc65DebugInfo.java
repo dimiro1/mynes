@@ -30,7 +30,11 @@ final class Cc65DebugInfo {
     private record LineRecord(int id, int file, int line, int type, List<Integer> spans) {
     }
 
+    private record ScopeRecord(String name, @Nullable Integer symbol, List<Integer> spans) {
+    }
+
     private record SymbolRecord(
+            int id,
             String name,
             String kind,
             int value,
@@ -52,6 +56,7 @@ final class Cc65DebugInfo {
         var segments = new LinkedHashMap<Integer, Segment>();
         var spans = new LinkedHashMap<Integer, Span>();
         var lines = new ArrayList<LineRecord>();
+        var scopes = new ArrayList<ScopeRecord>();
         var symbols = new ArrayList<SymbolRecord>();
 
         for (var number = 0; number < records.size(); number++) {
@@ -116,14 +121,25 @@ final class Cc65DebugInfo {
                             integer(required(values, "line")),
                             integer(values.getOrDefault("type", "0")),
                             ids(values.get("span"))));
+                    case "scope" -> {
+                        Integer symbolId = null;
+                        if (values.containsKey("sym")) {
+                            symbolId = integer(values.get("sym"));
+                        }
+                        scopes.add(new ScopeRecord(
+                                values.getOrDefault("name", ""),
+                                symbolId,
+                                ids(values.get("span"))));
+                    }
                     case "sym" -> symbols.add(new SymbolRecord(
+                            integer(required(values, "id")),
                             required(values, "name"),
                             values.getOrDefault("type", "symbol"),
                             integer(required(values, "val")),
                             values.containsKey("seg") ? integer(values.get("seg")) : null,
                             values.containsKey("def") ? integer(values.get("def")) : null,
                             ids(values.get("ref"))));
-                    default -> { /* The source view has no use for modules, scopes, types or csym. */ }
+                    default -> { /* The source view has no use for modules, types or csym. */ }
                 }
             } catch (NumberFormatException e) {
                 throw bad(debugFile, number, "invalid number", e);
@@ -240,6 +256,26 @@ final class Cc65DebugInfo {
                     references));
         }
 
+        var functions = new ArrayList<SourceProgram.FunctionRange>();
+        var symbolsById = new HashMap<Integer, SymbolRecord>();
+        symbols.forEach(symbol -> symbolsById.put(symbol.id(), symbol));
+        for (var scope : scopes) {
+            if (scope.symbol() == null || scope.name().isBlank()) continue;
+            var symbol = symbolsById.get(scope.symbol());
+            var definition = symbol == null || symbol.definition() == null ? null
+                    : locationOf(linesById.get(symbol.definition()), resolvedById);
+            for (var spanId : scope.spans()) {
+                var span = spans.get(spanId);
+                if (span == null) continue;
+                var range = rangeOf(segments.get(span.segment()), span,
+                        outputBases, prgROM.length);
+                if (range != null) {
+                    functions.add(new SourceProgram.FunctionRange(
+                            scope.name(), range.prgOffset(), range.size(), definition));
+                }
+            }
+        }
+
         return new SourceProgram(
                 debugFile.toAbsolutePath().normalize(),
                 sourceFiles,
@@ -247,7 +283,8 @@ final class Cc65DebugInfo {
                 preferred,
                 sourceSymbols,
                 prgROM.length,
-                warnings);
+                warnings,
+                functions);
     }
 
     private static @Nullable SourceProgram.Location locationOf(

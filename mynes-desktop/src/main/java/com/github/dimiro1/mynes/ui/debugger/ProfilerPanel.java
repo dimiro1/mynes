@@ -5,15 +5,25 @@ import com.github.dimiro1.mynes.ui.AppearanceAware;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
+import javax.swing.JTabbedPane;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
+import java.awt.Dialog;
 import java.awt.FlowLayout;
+import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -50,24 +60,60 @@ final class ProfilerPanel extends JPanel implements AppearanceAware {
     private final ProfileModel model = new ProfileModel();
     private final JTable table = new JTable(model);
     private final JScrollPane scroll = new JScrollPane(table);
+    private final FlameGraphPanel flameGraph;
+    private final JScrollPane flameScroll;
+    private final JPanel flameTab = new JPanel(new BorderLayout());
+    private final JPanel flameView = new JPanel(new BorderLayout());
+    private final JLabel expandedHint = new JLabel(
+            "Flame graph is open in a separate window.", JLabel.CENTER);
+    private final JButton maximize = new JButton("Maximize");
+    private final JTabbedPane views = new JTabbedPane();
 
     private SourceProgram program;
     private ExecutionProfile.Snapshot snapshot;
+    private JDialog graphWindow;
 
     ProfilerPanel(final Runnable toggleAction, final Runnable resetAction,
                   final Runnable refreshAction, final Navigator navigateAction) {
         super(new BorderLayout(0, 6));
+        flameGraph = new FlameGraphPanel((line, offset) -> {
+            closeExpandedGraph();
+            navigateAction.navigate(line, offset);
+        });
+        flameScroll = new JScrollPane(flameGraph);
         toggle.addActionListener(e -> toggleAction.run());
         var reset = new JButton("Reset");
         reset.addActionListener(e -> resetAction.run());
         var refresh = new JButton("Refresh");
         refresh.addActionListener(e -> refreshAction.run());
+        var resetZoom = new JButton("Reset Zoom");
+        resetZoom.setToolTipText("Show the whole flame graph; click a frame to zoom in");
+        resetZoom.addActionListener(e -> flameGraph.resetZoom());
+        var back = new JButton("Back");
+        back.setToolTipText("Return to the previous flame graph zoom");
+        back.addActionListener(e -> flameGraph.zoomBack());
+        flameGraph.setZoomChanged(() -> back.setEnabled(flameGraph.canZoomBack()));
+        var balanceWidths = new JCheckBox("Balance widths", true);
+        balanceWidths.setToolTipText("Square-root scaling reveals smaller paths; hover for exact run cycles");
+        balanceWidths.addActionListener(e ->
+                flameGraph.setBalancedWidths(balanceWidths.isSelected()));
+        maximize.setToolTipText("Show the flame graph in a large window");
+        maximize.addActionListener(e -> maximizeGraph());
 
         var controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         controls.add(toggle);
         controls.add(reset);
         controls.add(refresh);
         controls.add(summary);
+
+        var graphControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        graphControls.add(balanceWidths);
+        graphControls.add(back);
+        graphControls.add(resetZoom);
+        graphControls.add(maximize);
+        flameView.add(graphControls, BorderLayout.NORTH);
+        flameView.add(flameScroll, BorderLayout.CENTER);
+        flameTab.add(flameView, BorderLayout.CENTER);
 
         table.setFont(Theme.MONOSPACED);
         table.setRowHeight(table.getFontMetrics(Theme.MONOSPACED).getHeight() + 5);
@@ -85,15 +131,21 @@ final class ProfilerPanel extends JPanel implements AppearanceAware {
                 navigateAction.navigate(row.line(), row.prgOffset());
             }
         });
+        views.addTab("Hotspots", scroll);
+        views.addTab("Flame Graph", flameTab);
+        flameScroll.getVerticalScrollBar().setUnitIncrement(25);
         setBorder(BorderFactory.createEmptyBorder(4, 8, 8, 8));
         add(controls, BorderLayout.NORTH);
-        add(scroll, BorderLayout.CENTER);
+        add(views, BorderLayout.CENTER);
         refreshAppearance();
     }
 
     @Override
     public void refreshAppearance() {
         scroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        flameScroll.setBorder(BorderFactory.createLineBorder(Theme.dim()));
+        expandedHint.setForeground(Theme.muted());
+        flameGraph.refreshAppearance();
         table.repaint();
     }
 
@@ -116,10 +168,60 @@ final class ProfilerPanel extends JPanel implements AppearanceAware {
         setRecording(false);
         summary.setText("Start profiling to measure executed code.");
         model.setRows(List.of());
+        flameGraph.clear();
+    }
+
+    void closeExpandedGraph() {
+        if (graphWindow != null) graphWindow.dispose();
+    }
+
+    private void maximizeGraph() {
+        if (graphWindow != null) {
+            graphWindow.dispose();
+            return;
+        }
+
+        var owner = SwingUtilities.getWindowAncestor(this);
+        var window = new JDialog(owner, "Flame Graph", Dialog.ModalityType.MODELESS);
+        graphWindow = window;
+        window.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        window.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(final WindowEvent event) {
+                graphWindow = null;
+                window.getContentPane().remove(flameView);
+                flameTab.remove(expandedHint);
+                flameTab.add(flameView, BorderLayout.CENTER);
+                maximize.setText("Maximize");
+                flameTab.revalidate();
+                flameTab.repaint();
+            }
+        });
+
+        flameTab.remove(flameView);
+        flameTab.add(expandedHint, BorderLayout.CENTER);
+        flameTab.revalidate();
+        flameTab.repaint();
+        window.add(flameView, BorderLayout.CENTER);
+        maximize.setText("Restore");
+
+        var configuration = owner == null
+                ? GraphicsEnvironment.getLocalGraphicsEnvironment()
+                        .getDefaultScreenDevice().getDefaultConfiguration()
+                : owner.getGraphicsConfiguration();
+        var bounds = configuration.getBounds();
+        var insets = Toolkit.getDefaultToolkit().getScreenInsets(configuration);
+        window.setBounds(bounds.x + insets.left, bounds.y + insets.top,
+                bounds.width - insets.left - insets.right,
+                bounds.height - insets.top - insets.bottom);
+        window.setVisible(true);
     }
 
     private void rebuild() {
         if (snapshot == null) return;
+        flameGraph.show(snapshot, program);
+        SwingUtilities.invokeLater(() -> flameScroll.getVerticalScrollBar()
+                .setValue(flameScroll.getVerticalScrollBar().getMaximum()));
         Map<Object, Totals> totals = new HashMap<>();
         var covered = new HashSet<SourceProgram.SourceLine>();
         for (var entry : snapshot.entries()) {

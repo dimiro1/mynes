@@ -50,6 +50,11 @@ class Cc65DebugInfoTests {
         assertEquals(java.util.Set.of(1), program.lineAt(1).breakpointOffsets());
         assertEquals("reset", program.firstSymbolAt(0, 0xC000));
         assertEquals("loop", program.firstSymbolAt(1, 0xC001));
+        assertEquals("reset", program.functionAt(0));
+        assertEquals("loop", program.functionAt(3));
+        assertEquals(program.lineAt(0), program.functionDefinitionAt(0, 0xC000));
+        assertEquals(4, program.functionDefinitionAt(3, 0xC003).number(),
+                "a scope navigates to its symbol definition, not an instruction inside it");
         assertEquals(java.util.List.of("counter"),
                 program.ramSymbols().stream().map(SourceProgram.Symbol::name).toList());
         var reset = program.symbolAt(program.lineAt(1), "reset");
@@ -213,8 +218,10 @@ class Cc65DebugInfoTests {
                 span\tid=0,seg=0,start=0,size=1
                 span\tid=1,seg=0,start=1,size=2
                 span\tid=2,seg=0,start=3,size=3
+                scope\tid=1,name="reset",mod=0,type=scope,size=1,parent=0,sym=0,span=0
+                scope\tid=2,name="loop",mod=0,type=scope,size=5,parent=0,sym=1,span=1+2
                 sym\tid=0,name="reset",addrsize=absolute,val=0xC000,seg=0,type=lab,def=0,ref=1
-                sym\tid=1,name="loop",addrsize=absolute,val=0xC001,seg=0,type=lab
+                sym\tid=1,name="loop",addrsize=absolute,val=0xC001,seg=0,type=lab,def=1
                 sym\tid=2,name="counter",addrsize=zeropage,val=0x0020,type=lab
                 sym\tid=3,name="limit",addrsize=zeropage,val=0x000A,type=equ
                 """.formatted(source, Files.size(source), rom);
