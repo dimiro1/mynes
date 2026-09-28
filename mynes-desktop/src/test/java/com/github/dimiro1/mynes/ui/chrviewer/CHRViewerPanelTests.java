@@ -9,11 +9,15 @@ import org.junit.jupiter.api.Test;
 
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import java.awt.Dimension;
 import java.awt.Container;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Builds the view over character memory and makes it draw a cartridge's tiles.
@@ -85,6 +89,57 @@ class CHRViewerPanelTests {
         Views.paint(view);
     }
 
+    @Test
+    void selectingAnotherTileDoesNotMoveTheCentredPanel() {
+        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette());
+        var grid = Views.find(view, TilesViewerPanel.class);
+        Dimension before = view.getPreferredSize();
+
+        grid.dispatchEvent(new MouseEvent(grid, MouseEvent.MOUSE_PRESSED,
+                0, 0, 36, 36, 1, false));
+        assertEquals(0x11, grid.selectedTile());
+        assertEquals(before, view.getPreferredSize());
+        grid.dispatchEvent(new MouseEvent(grid, MouseEvent.MOUSE_PRESSED,
+                0, 0, 68, 68, 1, false));
+        assertEquals(0x22, grid.selectedTile());
+        assertEquals(before, view.getPreferredSize());
+    }
+
+    @Test
+    void usageAndPatternBytesStayTogetherInTheInspector() {
+        var view = new CHRViewerPanel(cart, nes.getPPU(), Palettes.defaultPalette());
+        Views.paint(view);
+        var usage = labelStartingWith(view, "Nametables:");
+        var patternBytes = Views.find(view, javax.swing.JTextArea.class);
+
+        assertEquals(patternBytes.getX(), usage.getX());
+        assertTrue(usage.getY() < patternBytes.getY());
+        assertTrue(usage.getWidth() >= usage.getPreferredSize().width);
+    }
+
+    @Test
+    void bankSwitchingDoesNotTurnPhysicalChrBanksIntoPpuAddresses() {
+        var image = new byte[16 + 0x4000 + 0x4000];
+        image[0] = 'N';
+        image[1] = 'E';
+        image[2] = 'S';
+        image[3] = 0x1A;
+        image[4] = 1;
+        image[5] = 2;
+        image[6] = 0x30; // CNROM: two physical 8 KB CHR banks.
+        var switchingCart = Cart.load(image, "banked-tiles.nes");
+        var switchingNes = new NES(switchingCart);
+        var view = new CHRViewerPanel(
+                switchingCart, switchingNes.getPPU(), Palettes.defaultPalette());
+        var selector = combos(view).getFirst();
+
+        assertEquals(2, selector.getItemCount());
+        switchingCart.mapper().prgWrite(0x8000, 1);
+        view.refresh();
+        assertTrue(labels(view).stream().anyMatch(label -> label.contains("08 09 0A 0B")));
+        assertTrue(labels(view).stream().anyMatch(label -> label.contains("CHR ROM $02000")));
+    }
+
     /**
      * The palette chooser, told from the bank chooser by what is in it rather than by which came
      * first: an order is exactly the thing that would change silently.
@@ -102,6 +157,34 @@ class CHRViewerPanelTests {
         collect(root, found);
 
         return found;
+    }
+
+    private static List<String> labels(final Container root) {
+        var found = new ArrayList<String>();
+        for (var child : root.getComponents()) {
+            if (child instanceof JLabel label) {
+                found.add(label.getText());
+            }
+            if (child instanceof Container inner) {
+                found.addAll(labels(inner));
+            }
+        }
+        return found;
+    }
+
+    private static JLabel labelStartingWith(final Container root, final String prefix) {
+        for (var child : root.getComponents()) {
+            if (child instanceof JLabel label && label.getText().startsWith(prefix)) {
+                return label;
+            }
+            if (child instanceof Container inner) {
+                var found = labelStartingWith(inner, prefix);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     @SuppressWarnings("unchecked")

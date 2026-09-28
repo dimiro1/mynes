@@ -104,6 +104,11 @@ public final class NametableViewerPanel extends JPanel {
         nametables.setPalette(palette);
     }
 
+    /** Outlines occurrences of a pattern tile in the four nametable panes. */
+    public void showPattern(final int address) {
+        nametables.showPattern(address);
+    }
+
     /**
      * One sweep. Called once directly as the view is built as well as by the timer: a view that
      * waited for its first tick would come up blank for a quarter of a second, and one painted into

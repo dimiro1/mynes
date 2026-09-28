@@ -233,6 +233,13 @@ public final class ControlPanelFrame extends JFrame {
 
         instruments = new Instruments(
                 nes, cart, colours, this::recordEventReads, this::forgetUsage);
+        instruments.tiles.setUseNavigation(address -> {
+            instruments.nametables.showPattern(address);
+            select("Nametables");
+        }, address -> {
+            instruments.sprites.showPattern(address);
+            select("Sprites");
+        });
 
         tabs.removeAll();
 

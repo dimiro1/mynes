@@ -203,6 +203,35 @@ public final class OAMViewerPanel extends JPanel {
         refresh();
     }
 
+    /** Selects the OAM entries that currently draw this pattern tile. */
+    public void showPattern(final int address) {
+        refresh();
+        adjustingSelection = true;
+        try {
+            table.clearSelection();
+            var first = -1;
+            for (var row = 0; row < rows; row++) {
+                var sprite = order[row];
+                var tile = bytes[sprite * 4 + 1];
+                var matches = height == 16
+                        ? (address & 0x1FE0) == (((tile & 1) << 12) | ((tile & 0xFE) << 4))
+                        : address == ppu.getSpritePatternTable() + tile * 16;
+                if (matches) {
+                    table.addRowSelectionInterval(row, row);
+                    if (first < 0) {
+                        first = row;
+                    }
+                }
+            }
+            field.setSelected(spritesIn(table.getSelectedRows()));
+            if (first >= 0) {
+                table.scrollRectToVisible(table.getCellRect(first, 0, true));
+            }
+        } finally {
+            adjustingSelection = false;
+        }
+    }
+
     /**
      * One sweep: the 256 bytes, then the 64 tiles they name.
      * <p>

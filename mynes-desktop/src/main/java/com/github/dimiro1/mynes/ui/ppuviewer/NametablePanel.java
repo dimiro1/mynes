@@ -51,6 +51,7 @@ final class NametablePanel extends JComponent {
 
     private static final Color GRID = new Color(1.0f, 1.0f, 1.0f, 0.10f);
     private static final Color SCROLL = new Color(1.0f, 0.25f, 0.25f, 0.9f);
+    private static final Color MATCH = new Color(1.0f, 0.86f, 0.1f, 0.9f);
 
     private final PPU ppu;
 
@@ -67,6 +68,7 @@ final class NametablePanel extends JComponent {
     private NESPalette palette;
     private boolean gridVisible;
     private boolean scrollVisible = true;
+    private int highlightedPattern = -1;
 
     NametablePanel(final PPU ppu, final NESPalette palette) {
         this.ppu = ppu;
@@ -87,6 +89,11 @@ final class NametablePanel extends JComponent {
 
     void setScrollVisible(final boolean visible) {
         scrollVisible = visible;
+        repaint();
+    }
+
+    void showPattern(final int address) {
+        highlightedPattern = address;
         repaint();
     }
 
@@ -180,6 +187,24 @@ final class NametablePanel extends JComponent {
 
                 for (var y = 0; y < HEIGHT; y += TILE) {
                     g2.drawLine(0, y, WIDTH, y);
+                }
+            }
+
+            if (highlightedPattern >= 0
+                    && (highlightedPattern & 0xF000) == ppu.getBackgroundPatternTable()) {
+                var tile = (highlightedPattern & 0x0FFF) / 16;
+                g2.setColor(MATCH);
+                for (var table = 0; table < 4; table++) {
+                    var base = 0x2000 + table * 0x400;
+                    for (var row = 0; row < ROWS; row++) {
+                        for (var column = 0; column < COLUMNS; column++) {
+                            if (ppu.peekVRAM(base + row * COLUMNS + column) == tile) {
+                                var x = (table & 1) * SCREEN_WIDTH + column * TILE;
+                                var y = (table >> 1) * SCREEN_HEIGHT + row * TILE;
+                                g2.drawRect(x, y, TILE - 1, TILE - 1);
+                            }
+                        }
+                    }
                 }
             }
 

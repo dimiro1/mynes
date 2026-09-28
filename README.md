@@ -71,6 +71,8 @@ The other Control Panel tabs show:
 | Usage | CPU time used in recent frames |
 | Events | Register writes and interrupts by scanline and dot |
 
+In **Tiles**, choose the PPU pattern table at `$0000` or `$1000` to inspect the CHR data currently mapped there. The header shows its physical 1 KB CHR banks. Select a tile with the mouse or arrow keys to see its PPU address, CHR offset, pattern bytes, pixel colours, and current uses. **Show in Nametables** outlines matching background cells; **Show in Sprites** selects matching OAM entries. The 8×16 option displays actual sprite pairs, and Zoom enlarges the tile sheet.
+
 ![Sound debugger with channel notes, keyboards, and waveforms](shots/sound-viewer.png)
 
 The Control Panel also has CPU tracing and MIDI export.
