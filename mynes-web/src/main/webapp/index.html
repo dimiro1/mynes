@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyNES — Browser Edition</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="teavm/classes.wasm-runtime.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        <div>
+          <p class="eyebrow">Browser edition</p>
+          <h1>MyNES</h1>
+        </div>
+      </div>
+      <span id="status" class="status" data-state="loading" role="status">Loading emulator…</span>
+    </header>
+
+    <section class="player" aria-label="NES player" id="drop-zone">
+      <div class="display-frame">
+        <div class="display">
+          <canvas id="screen" width="256" height="240" aria-label="NES screen"></canvas>
+          <div class="empty-state" id="empty-state">
+            <span class="empty-symbol" aria-hidden="true">✦</span>
+            <p class="empty-kicker">Player one, ready</p>
+            <h2>Drop a game to begin</h2>
+            <p>Choose a <code>.nes</code> file below, or drop it here.</p>
+          </div>
+          <div class="drop-prompt" id="drop-prompt" hidden>Drop your .nes file here</div>
+        </div>
+      </div>
+      <div class="toolbar" aria-label="Player controls">
+        <div class="toolbar-main">
+          <label class="file-button">Open ROM<input id="rom" type="file" accept=".nes,application/octet-stream" disabled></label>
+          <button id="pause" type="button" disabled>Pause</button>
+          <button id="reset" type="button" disabled>Reset</button>
+        </div>
+        <label class="sound"><input id="sound" type="checkbox" checked><span>Sound</span></label>
+      </div>
+    </section>
+
+    <div class="details">
+      <div>
+        <p class="detail-label">Now playing</p>
+        <p id="game-name" class="game-name">No game loaded</p>
+      </div>
+      <p class="privacy-note">Your ROM stays in this browser.</p>
+    </div>
+
+    <section class="controls" aria-label="Keyboard controls">
+      <h2>Controls</h2>
+      <div class="key-list">
+        <span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> Move</span>
+        <span><kbd>X</kbd> A</span>
+        <span><kbd>Z</kbd> B</span>
+        <span><kbd>Enter</kbd> Start</span>
+        <span><kbd>Shift</kbd> Select</span>
+      </div>
+      <p>A standard gamepad works too.</p>
+    </section>
+  </main>
+</body>
+</html>

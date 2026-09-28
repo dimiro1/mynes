@@ -1,0 +1,147 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0c1117;
+  color: #e8edf0;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: radial-gradient(ellipse 70% 45% at 50% -10%, #1e3740 0%, transparent 75%), #0c1117;
+}
+
+main { max-width: 930px; margin: 0 auto; padding: 34px 24px 56px; }
+
+.page-header, .brand, .details, .toolbar, .toolbar-main { display: flex; align-items: center; }
+.page-header { justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.brand { gap: 14px; }
+.brand-mark {
+  display: grid;
+  grid-template-columns: repeat(2, 11px);
+  grid-template-rows: repeat(2, 11px);
+  gap: 3px;
+  transform: rotate(-12deg);
+}
+.brand-mark span { display: block; border-radius: 2px; background: #7ee0b4; }
+.brand-mark span:nth-child(2), .brand-mark span:nth-child(3) { background: #35a97f; }
+.eyebrow, .detail-label, .empty-kicker {
+  margin: 0;
+  color: #8de1bb;
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+h1 { margin: 1px 0 0; font-size: 2rem; line-height: 1; letter-spacing: -.045em; }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  max-width: 55%;
+  padding: 7px 12px;
+  border: 1px solid #354c4b;
+  border-radius: 999px;
+  background: #172725;
+  color: #bdd8cb;
+  font-size: .8rem;
+  text-align: right;
+}
+.status::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: #78dbae; box-shadow: 0 0 9px #5dcf9e88; }
+.status[data-state="loading"]::before, .status[data-state="paused"]::before { background: #d9ad68; box-shadow: none; }
+.status[data-state="error"] { border-color: #7c4444; background: #301d23; color: #ffc4c4; }
+.status[data-state="error"]::before { background: #ff8b8b; box-shadow: none; }
+
+.player {
+  padding: 17px;
+  border: 1px solid #34414a;
+  border-radius: 18px;
+  background: linear-gradient(155deg, #222d36, #172129 68%);
+  box-shadow: 0 24px 70px #0005, inset 0 1px #ffffff0d;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.player.dragging { border-color: #81e4b6; box-shadow: 0 0 0 3px #81e4b633, 0 24px 70px #0005; }
+.display-frame {
+  width: min(100%, 640px);
+  margin: 0 auto;
+  padding: 8px;
+  border: 1px solid #060b0e;
+  border-radius: 10px;
+  background: #0b1116;
+  box-shadow: inset 0 2px 8px #000a, 0 1px #ffffff0b;
+}
+.display { position: relative; aspect-ratio: 256 / 240; overflow: hidden; border-radius: 3px; background: #080d11; }
+canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.empty-state, .drop-prompt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.empty-state { padding: 24px; background: radial-gradient(circle at center, #1b3838 0%, #101e25 48%, #091218 100%); }
+.empty-symbol { color: #83e4b9; font-size: 3rem; line-height: 1; text-shadow: 0 0 35px #69cda2; }
+.empty-kicker { margin-top: 25px; }
+.empty-state h2 { margin: 8px 0 7px; font-size: clamp(1.35rem, 4vw, 2rem); letter-spacing: -.04em; }
+.empty-state p:last-child { margin: 0; color: #a9bec3; font-size: .9rem; }
+.empty-state code { color: #ddf2e9; }
+.drop-prompt { z-index: 2; padding: 20px; border: 3px dashed #8fe7bb; background: #102924ee; color: #e5fff2; font-size: 1.5rem; font-weight: 750; }
+
+.toolbar { justify-content: space-between; gap: 16px; max-width: 640px; margin: 16px auto 1px; }
+.toolbar-main { gap: 9px; flex-wrap: wrap; }
+button, .file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid #53616a;
+  border-radius: 9px;
+  background: #2b3942;
+  color: #e8edf0;
+  font: inherit;
+  font-size: .88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s ease, transform .15s ease;
+}
+button:hover:not(:disabled), .file-button:hover:not(:has(input:disabled)) { background: #3a4e59; transform: translateY(-1px); }
+button:disabled, .file-button:has(input:disabled) { opacity: .5; cursor: default; }
+.file-button { background: #70d9aa; border-color: #91efc0; color: #092419; }
+.file-button:hover:not(:has(input:disabled)) { background: #94ebc0; }
+input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.file-button:focus-within, button:focus-visible, .sound:focus-within { outline: 2px solid #a8f0c9; outline-offset: 3px; }
+.sound { display: inline-flex; align-items: center; gap: 9px; padding: 9px; color: #c7d4d7; font-size: .85rem; white-space: nowrap; cursor: pointer; }
+.sound input { accent-color: #76d9ab; width: 17px; height: 17px; margin: 0; cursor: pointer; }
+
+.details { justify-content: space-between; gap: 16px; padding: 19px 4px 16px; border-bottom: 1px solid #2c3940; }
+.detail-label { color: #8aa7a5; }
+.game-name { margin: 5px 0 0; font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; }
+.privacy-note { margin: 0; color: #9bb1b3; font-size: .83rem; text-align: right; }
+.controls { padding: 19px 4px 0; }
+.controls h2 { margin: 0 0 12px; font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; color: #a9c4bd; }
+.key-list { display: flex; flex-wrap: wrap; gap: 11px 25px; color: #c5d0d2; font-size: .85rem; }
+.key-list span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+kbd { display: inline-block; min-width: 25px; padding: 4px 6px; border: 1px solid #4a5a61; border-bottom-width: 2px; border-radius: 5px; background: #1f2b32; color: #e9f3f0; font: inherit; font-size: .76rem; text-align: center; }
+.controls p { margin: 12px 0 0; color: #8fa5a8; font-size: .81rem; }
+
+@media (max-width: 650px) {
+  main { padding: 20px 12px 36px; }
+  .page-header { margin-bottom: 17px; }
+  h1 { font-size: 1.6rem; }
+  .status { max-width: 50%; font-size: .72rem; }
+  .player { padding: 9px; border-radius: 13px; }
+  .display-frame { padding: 5px; }
+  .toolbar { margin: 12px 3px 3px; align-items: start; }
+  .toolbar-main { gap: 7px; }
+  button, .file-button { padding: 8px 11px; min-height: 39px; }
+  .sound { padding: 8px 0; }
+  .details { align-items: start; }
+  .privacy-note { max-width: 38%; }
+}
+
+@media (max-width: 430px) {
+  .toolbar { flex-direction: column; gap: 7px; }
+  .empty-kicker { margin-top: 14px; }
+  .empty-symbol { font-size: 2rem; }
+  .empty-state p:last-child { font-size: .78rem; }
+}

@@ -45,11 +45,14 @@ jobs:
       - name: Smoke test the distribution
         run: ./scripts/smoke-distribution.sh
 
-      # Named without a path so that `sha256sum -c SHA256SUMS` works next to the downloaded zip.
+      - name: Smoke test the web distribution
+        run: ./scripts/smoke-web-distribution.sh
+
+      # Basenames only, so `sha256sum -c SHA256SUMS` works beside the downloaded zips.
       - name: Checksum
-        working-directory: mynes-desktop/target
         run: |
-          sha256sum mynes-*.zip > SHA256SUMS
+          (cd mynes-desktop/target && sha256sum mynes-*.zip) > SHA256SUMS
+          (cd mynes-web/target && sha256sum mynes-web-*.zip) >> SHA256SUMS
           cat SHA256SUMS
 
       # gh rather than one of the release actions. It is already on the runner, it is three lines
@@ -62,4 +65,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
               --generate-notes \
               mynes-desktop/target/mynes-*.zip \
-              mynes-desktop/target/SHA256SUMS
+              mynes-web/target/mynes-web-*.zip \
+              SHA256SUMS

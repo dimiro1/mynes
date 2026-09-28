@@ -266,6 +266,15 @@ public record Cart(
      * @see <a href="https://www.nesdev.org/wiki/NES_2.0">NESdev: NES 2.0</a>
      */
     public static Cart load(final byte[] bytes, final String filename) {
+        return load(bytes, filename, sha256(bytes));
+    }
+
+    /**
+     * Loads a cartridge with a digest already calculated by the caller. Browser frontends can
+     * supply Web Crypto's SHA-256 here, since TeaVM has no java.security.MessageDigest.
+     * The digest must be the lowercase hex SHA-256 of the complete, unmodified file.
+     */
+    public static Cart load(final byte[] bytes, final String filename, final String sha256) {
         var buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
 
         var header = new byte[INES_HEADER_SIZE];
@@ -352,7 +361,7 @@ public record Cart(
 
         return new Cart(
                 filename, prgROM, chrROM, mapper, mapperNumber, submapper, mirror, hasBattery,
-                format, ram, timing(format, header, tailIsClean), sha256(bytes));
+                format, ram, timing(format, header, tailIsClean), sha256);
     }
 
     /**

@@ -1,0 +1,61 @@
+name: Web
+
+# The published page uses the same static ZIP attached to releases. GitHub Pages must use
+# "GitHub Actions" as its publishing source in the repository settings.
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build static distribution
+        run: mvn -B -pl mynes-web -am package -DskipTests --file pom.xml
+
+      - name: Smoke test static distribution
+        run: ./scripts/smoke-web-distribution.sh
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Unpack static site
+        run: |
+          mkdir -p target/web-site
+          unzip -q mynes-web/target/mynes-web-*.zip -d target/web-site
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/web-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -12,6 +12,8 @@ Run `./mynes` on macOS or Linux, or `mynes.bat` on Windows. You can also run `ja
 
 Open a `.nes` file or a `.zip` through **File > Open…**. Drag and drop also works. ROMs are not included.
 
+Once the repository's Pages source is set to GitHub Actions, the browser edition will be at [dimiro1.github.io/mynes](https://dimiro1.github.io/mynes/). Its static `mynes-web-<version>.zip` is also attached to each release for self-hosting; using it requires a browser, not Java.
+
 ## Playing
 
 MyNES supports NTSC and PAL, iNES and NES 2.0, and twelve mapper families. If a game runs at the wrong speed, change the region under **Machine > Region**.
@@ -122,6 +124,21 @@ mvn -q compile exec:exec
 ```
 
 Run `mvn test` for the test suite. [CLAUDE.md](CLAUDE.md) has the design notes and detailed test results. Dendy mode is not supported yet.
+
+### Browser edition
+
+The `mynes-web` module compiles the existing core to WebAssembly GC with [TeaVM](https://teavm.org/). To build the static distribution, use Java 25 and Maven:
+
+```sh
+mvn -pl mynes-web -am package -DskipTests
+mkdir -p mynes-web/target/site
+unzip -q mynes-web/target/mynes-web-*.zip -d mynes-web/target/site
+python3 -m http.server 8080 --directory mynes-web/target/site
+```
+
+Open `http://localhost:8080`, choose a local `.nes` file, and play with the keyboard or a standard gamepad. The browser reads the file locally; no ROM is uploaded. Browsers require HTTP to load the Wasm file. The ZIP contains only static files and can be served by any static host. The Pages workflow deploys this same ZIP on pushes to `master` after **Settings → Pages → Build and deployment → Source** is set to **GitHub Actions**.
+
+This prototype supports the core's ROM formats and mappers, video with the built-in NESdev palette, audio, player-one input, pause, and reset. Desktop features such as saves, rewind, filters, and the debugger are not wired up here yet.
 
 ## License
 

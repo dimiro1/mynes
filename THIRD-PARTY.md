@@ -26,6 +26,15 @@ The layout manager, used by the dialogs. Two artifacts, `miglayout-swing` and th
   http://www.debian.org/misc/bsd.license for the text; nothing more specific ships with the jars.
 - http://www.miglayout.com/ -- https://github.com/mikaelgrev/miglayout
 
+## TeaVM 0.15.0 (web experiment)
+
+`mynes-web` uses TeaVM to compile Java to WebAssembly GC. Its generated Wasm runtime and Java
+class library code are included in the web build, not in `mynes.jar`.
+
+- Apache License 2.0, as declared by the TeaVM artifact POMs. The web build includes the full
+  license at `LICENSE-TEAVM.txt`.
+- https://teavm.org/ -- https://github.com/konsoletyper/teavm
+
 ## What is not in here
 
 Three more dependencies are in `pom.xml` and none of them reaches the jar. The JetBrains annotations

@@ -3,7 +3,6 @@ package com.github.dimiro1.mynes.palette;
 import com.github.dimiro1.mynes.Region;
 
 import java.io.IOException;
-import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +18,6 @@ import java.util.List;
 public final class Palettes {
     // "PALETTE" rather than "UI": both front ends load these, and the window is no longer the only
     // thing that can be reading a palette file when one of them turns out to be unreadable.
-    private static final Logger logger = System.getLogger("PALETTE");
 
     /**
      * The NESdev set, and the one MyNES has always drawn with.
@@ -66,12 +64,15 @@ public final class Palettes {
             new Bundled("wavebeam", "Wavebeam", "wavebeam.pal")
     );
 
-    private static final List<NESPalette> ALL = loadAll();
+    private static final class All {
+        private static final List<NESPalette> VALUE = loadAll();
+    }
 
     private Palettes() {
     }
 
     private static List<NESPalette> loadAll() {
+        var logger = System.getLogger("PALETTE");
         var palettes = new ArrayList<NESPalette>();
         palettes.add(NESDEV);
 
@@ -100,7 +101,7 @@ public final class Palettes {
      * name.
      */
     public static List<NESPalette> all() {
-        return ALL;
+        return All.VALUE;
     }
 
     /**
@@ -127,7 +128,7 @@ public final class Palettes {
             return NESDEV;
         }
 
-        for (var palette : ALL) {
+        for (var palette : All.VALUE) {
             if (palette.id().equals(PAL_ID)) {
                 return palette;
             }
@@ -143,13 +144,14 @@ public final class Palettes {
      * later version -- costs the choice rather than the startup.
      */
     public static NESPalette byId(final String id) {
-        for (var palette : ALL) {
+        for (var palette : All.VALUE) {
             if (palette.id().equals(id)) {
                 return palette;
             }
         }
 
-        logger.log(Level.WARNING, id + " is not a palette, falling back to " + NESDEV.id());
+        System.getLogger("PALETTE").log(Level.WARNING,
+                id + " is not a palette, falling back to " + NESDEV.id());
 
         return NESDEV;
     }
